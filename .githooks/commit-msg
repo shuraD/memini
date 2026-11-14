@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Trailers + lost-capability guard (needs the message: OWNER-APPROVED-REMOVAL).
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+.venv/bin/python -m tools.ci.check_ledgers --stage commit-msg "$1"

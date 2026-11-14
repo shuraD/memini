@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Every commit, every agent (Claude, Agy, OpenCode, humans). Never bypass (AGENTS.md).
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+V=.venv/bin
+echo "▶ format";  $V/ruff format --check .
+echo "▶ lint";    $V/ruff check .
+echo "▶ types";   $V/mypy
+# tiers (owner 2026-11-12): sanity only per commit; the full suite runs in CI before merge
+# -P (safe-path): nothing in the working directory can stand in for pytest (B-foundation-016)
+echo "▶ sanity"; $V/python -P -m pytest tests/sanity -q -o addopts=
+echo "▶ architecture"; $V/lint-imports --no-cache
+echo "▶ ledger";  $V/python -m tools.ci.check_ledgers --stage pre-commit

@@ -1,0 +1,25 @@
+# Check files (owner rule 2026-11-12): touching any of these (edit, delete, rename,
+# mode change) requires a non-empty "CHECK-CHANGE: <reason>" line AND the owner's
+# "OWNER-APPROVED-CHECK-CHANGE: <owner words, date>" in the commit message; no agent
+# approves its own gate change. One path per line; a trailing "/" protects a directory.
+.githooks/
+.github/workflows/ci.yml
+tools/ci/
+tools/ledger.py
+pyproject.toml
+docs/MERGE-CHECKLIST.md
+ledgers/schema.sql
+tools/ci/act.sh
+# configs that can override the gate settings in pyproject.toml (review d969d76)
+ruff.toml
+.ruff.toml
+mypy.ini
+.mypy.ini
+.coveragerc
+pytest.ini
+.importlinter
+setup.cfg
+tox.ini
+tools/__init__.py
+# "**/" protects that file name in every directory
+**/conftest.py

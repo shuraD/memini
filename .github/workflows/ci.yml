@@ -1,0 +1,54 @@
+# The full gate. Runs locally with `act` (Docker); the same file runs on GitHub if a
+# remote is ever added (owner approval required). Fast subset = .githooks/pre-commit.
+name: ci
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+      - name: Install
+        run: uv sync --frozen
+      - name: Format
+        run: uv run ruff format --check .
+      - name: Lint
+        run: uv run ruff check .
+      - name: Types
+        run: uv run mypy
+      # B-foundation-016: pytest runs in safe-path mode and the step trusts the junit report,
+      # not the exit code: every collected test must run and pass, and nothing else may run.
+      # The gate itself also runs with -P, by path (it imports only the stdlib), so no root
+      # module can shadow its own imports (R3)
+      - name: "Tests - sanity, unit, gates + coverage (incl. every bug's regression test)"
+        run: uv run python -P tools/ci/pytest_gate.py tests/sanity tests/unit tests/gates -- --cov --cov-report=term-missing:skip-covered
+      - name: Architecture contracts
+        run: uv run lint-imports --no-cache
+      - name: Security
+        run: |
+          uv run bandit -q -r src tools -ll
+          uv run pip-audit
+      - name: Dependencies
+        run: uv run deptry .
+      - name: "Export gate - generic leak check of every tracked file (emails outside the public allow list, RFC 1918 addresses, home paths). The full private-pattern scan runs locally before a snapshot or release, and in the egress gateway."
+        run: |
+          export_dir="$(mktemp -d)"
+          git archive HEAD | tar -x -C "$export_dir"
+          uv run python -m tools.ci.export_gate --generic-only --allow tools/ci/export-allow.txt "$export_dir"
+      - name: "Ledger guards (features keep tests, fixed bugs keep regression tests, no lost feature, protected checks declared)"
+        run: uv run python -m tools.ci.check_ledgers --stage ci
+      - name: "Commit messages (Requirement / Implemented / Why, Change-Author) on every commit of the branch"
+        run: |
+          base=$(git merge-base main HEAD 2>/dev/null || git rev-parse HEAD~1)
+          for sha in $(git rev-list --reverse "$base"..HEAD); do
+            git log -1 --format=%B "$sha" > /tmp/msg.txt
+            uv run python -m tools.ci.check_ledgers --stage commit-msg /tmp/msg.txt || exit 1
+          done
+      - name: "Merge gate - review verdict verified (standards, expected vs implemented, knowledge drift)"
+        run: uv run python -m tools.ci.review_gate
+      - name: "Merge gate - acceptance benchmark (opt-in; needs local Neo4j and model providers)"
+        if: env.MEMINI_ACCEPTANCE == '1'
+        run: MEMINI_ACCEPTANCE=1 uv run python -m pytest tests/acceptance -q

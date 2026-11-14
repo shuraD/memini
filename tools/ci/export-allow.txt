@@ -1,0 +1,22 @@
+# Export gate allow list (public): literal strings the built-in detectors may let through.
+# It never overrides a deny pattern. Only strings that are already public belong here:
+# tests/gates/test_export_gate_generic.py fails on any entry that no tracked file uses.
+
+# the published security reporting address (owner decision T-106, 2026-11-14)
+sha1sha1sha1sha1024@gmail.com
+
+# fake identities used as test data in public tests (reserved or example domains, made-up names)
+t@example.invalid
+security-contact@example.org
+someone.private@example.com
+other.person@example.com
+10.1.2.3
+172.20.0.5
+192.168.7.9
+/Users/someone/
+/home/someone/
+# tests/gates/test_export_gate_generic.py planted cases
+a.person@example.com
+published@example.org
+10.0.0.7
+/home/someone-else/

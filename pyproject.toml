@@ -1,0 +1,88 @@
+[project]
+name = "memini"
+version = "0.0.1"
+description = "Memini: generic graph memory on Neo4j — hierarchical attributed communities with layered retrieval"
+requires-python = ">=3.12,<3.13"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+dependencies = [
+  "pyyaml>=6",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-cov>=5",
+  "ruff>=0.8",
+  "mypy>=1.13",
+  "bandit>=1.8",
+  "import-linter>=2.1",
+  "pip-audit>=2.7",
+  "deptry>=0.21",
+  "types-PyYAML",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memini"]
+
+# config/ (schema, prompts, flags) ships inside the package as memini/config (T-082), so an
+# installed Memini finds it; paths.config_dir() resolves it there.
+[tool.hatch.build.targets.wheel.force-include]
+"config" = "memini/config"
+
+# The sdist carries only what is needed to build and license the package. Without this list
+# hatchling ships every tracked file (reviews/, ledgers/, .githooks/, CLAUDE.md, the merge
+# checklist).
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/config", "/LICENSE", "/README.md", "/pyproject.toml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+# public-grade: errors, imports, bugbear, pyupgrade, security, simplify, ruff, docstrings (public API),
+# naming, comprehensions, return/raise hygiene, pathlib, print-in-library
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "D", "N", "C4", "RET", "RSE", "PTH", "T20", "PL"]
+ignore = ["D203", "D213", "D104", "PLR0913"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "D", "PLR2004"]
+"tools/**" = ["T20"]  # CLIs print
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+mypy_path = "src"
+files = ["src", "tools"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/sanity", "tests/unit", "tests/gates"]
+addopts = "-q"
+# the gates run pytest with python -P (B-foundation-016), which drops the working directory
+# from sys.path; the repo root is put back explicitly, after pytest itself is imported
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["src", "tools"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[tool.importlinter]
+root_package = "memini"
+
+[[tool.importlinter.contracts]]
+name = "Layers: infra < core < extensions; the core never imports an extension"
+type = "layers"
+layers = ["memini.extensions", "memini.core", "memini.infra"]
+
+[tool.deptry]
+known_first_party = ["memini"]

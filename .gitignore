@@ -1,0 +1,23 @@
+# private, never public (owner rule): own git repo
+docs/internal/
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+reports/
+.env
+.env.*
+# the variable NAMES (no values) are public
+!.env.example
+.DS_Store
+# editor and local tool state
+.idea/
+.claude/settings.local.json
+# agent role configuration is private (owner 2026-11-13: private repo + user level ~/.claude/agents)
+.claude
+.gemini
+.opencode
+# local ledger databases (built from ledgers/*.sql)
+ledgers/*.sqlite
