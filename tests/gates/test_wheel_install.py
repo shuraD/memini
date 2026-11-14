@@ -17,8 +17,10 @@ test: every file under the repository's ``config/`` must be present, byte for by
 installed configuration. The day the registry lands, it is guarded with no edit here.
 
 How: the module builds the wheel once with ``uv build``, creates a fresh virtualenv in a
-temporary directory with ``uv venv`` and installs the wheel with ``uv pip install`` (offline,
-from the cache that ``uv sync`` filled). Each probe runs that venv's python from a working
+temporary directory with ``uv venv`` and installs the wheel with ``uv pip install`` (it
+resolves the wheel's dependencies from the package index; ``--offline`` was dropped because
+``uv sync --frozen`` never caches the index metadata that offline resolution needs, so the
+install failed on every clean machine). Each probe runs that venv's python from a working
 directory outside the repository, with every ``GIT_*``, ``PYTHON*``, ``VIRTUAL_ENV`` and
 ``MEMINI_*`` variable removed, and prints what ``memini.infra.paths`` resolves as JSON.
 """
@@ -114,9 +116,7 @@ def venv_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
     made = _run([uv, "venv", "--quiet", "--python", sys.executable, str(venv)], work, env)
     assert made.returncode == 0, made.stderr
     python = venv / "bin" / "python"
-    installed = _run(
-        [uv, "pip", "install", "--offline", "--python", str(python), str(wheels[0])], work, env
-    )
+    installed = _run([uv, "pip", "install", "--python", str(python), str(wheels[0])], work, env)
     assert installed.returncode == 0, installed.stderr
     return python
 
