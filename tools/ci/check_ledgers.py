@@ -200,21 +200,31 @@ def check_change_problems_for_commits(
     return out
 
 
-def _branch_commits() -> list[tuple[str, str, list[str]]]:
-    """Return ``(sha, message, changed files)`` for every commit since the merge base with main."""
+def _branch_commits(base: str | None = None) -> list[tuple[str, str, list[str]]]:
+    """Return ``(sha, message, changed files)`` for every commit in the audit range.
+
+    ``base`` is a SHA (audit ``base..HEAD``) or ``ROOT`` (audit every commit from the first
+    one), as computed by ``tools/ci/audit_range.py``. ``None`` keeps the local rule: every
+    commit since the merge base with main.
+    """
 
     def git(*args: str) -> str:
         return subprocess.run(  # noqa: S603 — fixed args, no shell
             [_GIT, *args], capture_output=True, text=True, check=False, env=_git_env()
         ).stdout
 
-    base = git("merge-base", "main", "HEAD").strip() or git("rev-parse", "HEAD~1").strip()
-    shas = [s for s in git("rev-list", "--reverse", f"{base}..HEAD").split() if s]
+    if base is None:
+        base = git("merge-base", "main", "HEAD").strip() or git("rev-parse", "HEAD~1").strip()
+    revs = "HEAD" if base == ROOT_BASE else f"{base}..HEAD"
+    shas = [s for s in git("rev-list", "--reverse", revs).split() if s]
     return [
         (
             sha[:7],
             git("log", "-1", "--format=%B", sha),
-            [
+            # a root commit changes no earlier gate: there is nothing before it to protect
+            []
+            if _is_root(sha)
+            else [
                 f
                 for f in git("diff", "--name-only", "--no-renames", "-z", f"{sha}~1", sha).split(
                     "\0"
@@ -238,6 +248,46 @@ def _git_show(rev_path: str) -> str | None:
         [_GIT, "show", rev_path], capture_output=True, text=True, check=False, env=_git_env()
     )
     return res.stdout if res.returncode == 0 else None
+
+
+ROOT_BASE = "ROOT"
+
+
+def _is_root(rev: str) -> bool:
+    """Return True only for a real first commit in a full clone (B-007: never a shallow cut)."""
+    shallow = subprocess.run(  # noqa: S603 — fixed args, no shell
+        [_GIT, "rev-parse", "--is-shallow-repository"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_git_env(),
+    ).stdout.strip()
+    if shallow != "false":
+        return False
+    parents = subprocess.run(  # noqa: S603 — fixed args, no shell
+        [_GIT, "rev-list", "--parents", "-n", "1", rev],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_git_env(),
+    )
+    return parents.returncode == 0 and len(parents.stdout.split()) == 1
+
+
+def _parent_ledger(rev: str) -> sqlite3.Connection:
+    """Return the ledger before ``rev``: its parent's, or an EMPTY one for a true root commit.
+
+    The public repository starts from one root commit (ADR-0002); its seed row is checked
+    against nothing, as every row is new. A missing parent in a shallow checkout still fails
+    loudly in ``_ledger_at`` (B-007).
+    """
+    if _is_root(rev):
+        schema = _git_show(f"{rev}:ledgers/schema.sql")
+        if schema is None:
+            msg = f"cannot read ledgers/schema.sql at {rev!r}"
+            raise LedgerUnavailableError(msg)
+        return ledger.load_text(schema, dict.fromkeys(ROW_FILES, ""))
+    return _ledger_at(f"{rev}~1:")
 
 
 class LedgerUnavailableError(RuntimeError):
@@ -336,7 +386,7 @@ def _ledger_problems_for_commits(commits: list[tuple[str, str, list[str]]]) -> l
     out: list[str] = []
     for sha, message, _ in commits:
         try:
-            parent, mine = _ledger_at(f"{sha}~1:"), _ledger_at(f"{sha}:")
+            parent, mine = _parent_ledger(sha), _ledger_at(f"{sha}:")
         except (LedgerUnavailableError, ledger.LedgerFormatError) as e:
             out.append(f"commit {sha}: {e}")
             continue
@@ -374,10 +424,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--stage", choices=["pre-commit", "commit-msg", "ci"], required=True)
     ap.add_argument("message_file", nargs="?")
     ap.add_argument("--no-tests", action="store_true", help="skip test-id checks (guard tests)")
+    ap.add_argument(
+        "--base",
+        help="ci stage: audit base..HEAD (a SHA, or ROOT for every commit); see audit_range.py",
+    )
     args = ap.parse_args(argv)
     ci = args.stage == "ci"
     try:
-        head = _ledger_at("HEAD~1:" if ci else "HEAD:")
+        head = _parent_ledger("HEAD") if ci else _ledger_at("HEAD:")
         staged = _ledger_at("HEAD:" if ci else ":")
     except (LedgerUnavailableError, ledger.LedgerFormatError) as e:
         print(f"ledger check failed: {e}")
@@ -385,7 +439,7 @@ def main(argv: list[str] | None = None) -> int:
 
     problems: list[str] = []
     if ci:
-        commits = _branch_commits()
+        commits = _branch_commits(args.base)
         problems += check_change_problems_for_commits(commits)
         problems += _ledger_problems_for_commits(commits)
     if args.stage == "commit-msg":
