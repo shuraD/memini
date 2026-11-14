@@ -95,13 +95,42 @@ def audit_base(env: Mapping[str, str]) -> str:
     return _last_commit_or_root()
 
 
-def main() -> int:
-    """Print the audit base for the current event (from the environment)."""
+def validate_base(base: str) -> str | None:
+    """Return why ``base`` is not a usable audit base, or None when it is.
+
+    Fail closed (review of fix/ci-first-commit, F1): an empty, unknown or unrelated base must
+    stop the audits, never be read as "nothing to audit".
+    """
+    if base == ROOT:
+        return None
+    if not base.strip():
+        return "audit base is empty (did the Audit range step run?)"
+    if _git("rev-parse", "--verify", "--quiet", f"{base}^{{commit}}") is None:
+        return "audit base does not name a commit in this checkout"
+    if _git("merge-base", "--is-ancestor", base, "HEAD") is None:
+        return "audit base is not an ancestor of HEAD"
+    return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Print the audit base for the current event, or with ``--check BASE`` validate one."""
+    args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["--check"]:
+        problem = validate_base(args[1] if len(args) > 1 else "")
+        if problem:
+            print(f"audit range: ERROR: {problem}", file=sys.stderr)
+            return 2
+        return 0
     try:
-        print(audit_base(os.environ))
+        base = audit_base(os.environ)
     except AuditRangeError as exc:
         print(f"audit range: ERROR: {exc}", file=sys.stderr)
         return 2
+    problem = validate_base(base)
+    if problem:
+        print(f"audit range: ERROR: {problem}", file=sys.stderr)
+        return 2
+    print(base)
     return 0
 
 

@@ -20,8 +20,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tools.ci import audit_range
+
 _GIT = shutil.which("git") or "git"
 DEFAULT_ALLOW = Path(__file__).resolve().parent / "commit-identities.txt"
+DEFAULT_NAMES = Path(__file__).resolve().parent / "commit-names.txt"
 ROOT_BASE = "ROOT"
 
 
@@ -53,12 +56,30 @@ def load_allow(path: Path) -> frozenset[str]:
     return allowed
 
 
+def _load_names(path: Path) -> frozenset[str]:
+    """Read the allowed names (one per line, ``#`` comments); refuse a missing or empty list."""
+    if not path.is_file():
+        msg = f"name list not found: {path}"
+        raise IdentityConfigError(msg)
+    lines = (line.strip() for line in path.read_text(encoding="utf-8").splitlines())
+    names = frozenset(line for line in lines if line and not line.startswith("#"))
+    if not names:
+        msg = f"name list is empty: {path}"
+        raise IdentityConfigError(msg)
+    return names
+
+
+def _name(ident: str) -> str:
+    """Return the name in front of a ``Name <email> time zone`` identity line."""
+    return ident.partition("<")[0].strip()
+
+
 def _email(ident: str) -> str:
     """Return the email inside a ``Name <email> time zone`` identity line."""
     return ident.partition("<")[2].partition(">")[0].strip().lower()
 
 
-def pending_problems(allowed: frozenset[str]) -> list[str]:
+def pending_problems(allowed: frozenset[str], names: frozenset[str] | None = None) -> list[str]:
     """Problems with the identity git would use for the next commit (hook mode)."""
     problems = []
     for role, var in (("author", "GIT_AUTHOR_IDENT"), ("committer", "GIT_COMMITTER_IDENT")):
@@ -76,20 +97,28 @@ def pending_problems(allowed: frozenset[str]) -> list[str]:
                 f"next commit: {role} email is not on the identity allow list "
                 "(set a neutral identity: git config user.name / user.email)"
             )
+        if names is not None and (res.returncode != 0 or _name(res.stdout) not in names):
+            problems.append(f"next commit: {role} name is not on the name list")
     return problems
 
 
-def range_problems(base: str, allowed: frozenset[str]) -> list[str]:
+def range_problems(
+    base: str, allowed: frozenset[str], names: frozenset[str] | None = None
+) -> list[str]:
     """Problems for every commit in ``base..HEAD`` (or every commit, for ``ROOT``)."""
+    bad_base = audit_range.validate_base(base)
+    if bad_base:  # fail closed (review F1): never read a bad base as "nothing to audit"
+        raise IdentityConfigError(bad_base)
     revs = "HEAD" if base == ROOT_BASE else f"{base}..HEAD"
     problems = []
-    for line in _git("log", "--format=%h%x00%ae%x00%ce", revs).splitlines():
-        sha, author, committer = line.split("\0")
-        problems += [
-            f"commit {sha}: {role} email is not on the identity allow list"
-            for role, email in (("author", author), ("committer", committer))
-            if email.strip().lower() not in allowed
-        ]
+    log = _git("log", "--format=%h%x00%an%x00%ae%x00%cn%x00%ce", revs)
+    for line in log.splitlines():
+        sha, a_name, a_email, c_name, c_email = line.split("\0")
+        for role, name, email in (("author", a_name, a_email), ("committer", c_name, c_email)):
+            if email.strip().lower() not in allowed:
+                problems.append(f"commit {sha}: {role} email is not on the identity allow list")
+            if names is not None and name.strip() not in names:
+                problems.append(f"commit {sha}: {role} name is not on the name list")
     return problems
 
 
@@ -100,10 +129,16 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--pending", action="store_true", help="check the next commit's identity")
     mode.add_argument("--base", help="check base..HEAD (a SHA, or ROOT for every commit)")
     parser.add_argument("--allow", type=Path, default=DEFAULT_ALLOW, help="identity allow list")
+    parser.add_argument("--names", type=Path, help="also require names from this list")
     args = parser.parse_args(argv)
     try:
         allowed = load_allow(args.allow)
-        problems = pending_problems(allowed) if args.pending else range_problems(args.base, allowed)
+        names = _load_names(args.names) if args.names else None
+        problems = (
+            pending_problems(allowed, names)
+            if args.pending
+            else range_problems(args.base, allowed, names)
+        )
     except IdentityConfigError as exc:
         print(f"commit identity: ERROR: {exc}", file=sys.stderr)
         return 2

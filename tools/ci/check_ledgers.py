@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 from tools import ledger
+from tools.ci import audit_range
 from tools.ledger import ROW_FILES, _git_env
 
 APPROVAL_RE = re.compile(r"^OWNER-APPROVED-REMOVAL:\s*(.+?)\s*$", re.MULTILINE)
@@ -438,6 +439,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     problems: list[str] = []
+    if ci and args.base is not None:
+        # fail closed (review F1): a bad base must never mean "nothing to audit"
+        bad_base = audit_range.validate_base(args.base)
+        if bad_base:
+            print(f"ledger check failed: {bad_base}")
+            return 1
     if ci:
         commits = _branch_commits(args.base)
         problems += check_change_problems_for_commits(commits)

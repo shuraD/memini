@@ -10,8 +10,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # pull requests: audit the PR head itself, not GitHub's synthetic merge commit
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      # pull requests: audit the PR head itself, not GitHub's synthetic merge commit. This is a
+      # separate step, not a `ref:` input: any `ref:` input (even an empty one) stops act from
+      # using its local copy of the repository and makes checkout fetch from github.com.
+      - name: "Select the pull request head"
+        if: github.event_name == 'pull_request'
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git checkout --detach "$PR_HEAD_SHA"
       - uses: astral-sh/setup-uv@v5
       - name: Install
         run: uv sync --frozen
@@ -22,6 +28,7 @@ jobs:
           AUDIT_BASE_REF: origin/${{ github.base_ref || github.event.repository.default_branch }}
         run: |
           base="$(uv run python -P tools/ci/audit_range.py)"
+          test -n "$base"
           echo "audit base: $base"
           echo "MEMINI_AUDIT_BASE=$base" >> "$GITHUB_ENV"
       - name: Format
@@ -50,11 +57,12 @@ jobs:
           git archive HEAD | tar -x -C "$export_dir"
           uv run python -m tools.ci.export_gate --generic-only --allow tools/ci/export-allow.txt "$export_dir"
       - name: "Commit identities (author and committer emails on the public allow list; never printed)"
-        run: uv run python -m tools.ci.commit_identity --base "$MEMINI_AUDIT_BASE"
+        run: uv run python -m tools.ci.commit_identity --base "$MEMINI_AUDIT_BASE" --names tools/ci/commit-names.txt
       - name: "Ledger guards (features keep tests, fixed bugs keep regression tests, no lost feature, protected checks declared)"
         run: uv run python -m tools.ci.check_ledgers --stage ci --base "$MEMINI_AUDIT_BASE"
       - name: "Commit messages (Requirement / Implemented / Why, Change-Author) on every commit of the audit range"
         run: |
+          uv run python -P tools/ci/audit_range.py --check "$MEMINI_AUDIT_BASE"  # fail closed
           if [ "$MEMINI_AUDIT_BASE" = ROOT ]; then range=HEAD; else range="$MEMINI_AUDIT_BASE..HEAD"; fi
           echo "auditing $(git rev-list --count "$range") commit(s)"
           for sha in $(git rev-list --reverse "$range"); do

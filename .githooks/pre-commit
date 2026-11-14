@@ -12,4 +12,4 @@ echo "▶ sanity"; $V/python -P -m pytest tests/sanity -q -o addopts=
 echo "▶ architecture"; $V/lint-imports --no-cache
 echo "▶ ledger";  $V/python -m tools.ci.check_ledgers --stage pre-commit
 # no personal name or email in public commit metadata (vp-rnd for the owner, 2026-11-14)
-echo "▶ identity"; $V/python -m tools.ci.commit_identity --pending
+echo "▶ identity"; $V/python -m tools.ci.commit_identity --pending --names tools/ci/commit-names.txt
