@@ -49,6 +49,8 @@ jobs:
           export_dir="$(mktemp -d)"
           git archive HEAD | tar -x -C "$export_dir"
           uv run python -m tools.ci.export_gate --generic-only --allow tools/ci/export-allow.txt "$export_dir"
+      - name: "Commit identities (author and committer emails on the public allow list; never printed)"
+        run: uv run python -m tools.ci.commit_identity --base "$MEMINI_AUDIT_BASE"
       - name: "Ledger guards (features keep tests, fixed bugs keep regression tests, no lost feature, protected checks declared)"
         run: uv run python -m tools.ci.check_ledgers --stage ci --base "$MEMINI_AUDIT_BASE"
       - name: "Commit messages (Requirement / Implemented / Why, Change-Author) on every commit of the audit range"

@@ -1,0 +1,4 @@
+# Commit identities allowed in the public repository (author and committer email).
+# Personal identities never belong here: tools/ci/commit_identity.py refuses every other email.
+# Add the agents' GitHub App noreply addresses here when the GitHub flow is handed over.
+memini-author@example.invalid
