@@ -20,3 +20,8 @@ a.person@example.com
 published@example.org
 10.0.0.7
 /home/someone-else/
+
+# the neutral commit identity of the public repository (tools/ci/commit-identities.txt)
+memini-author@example.invalid
+# tests/gates/test_commit_identity.py stand-in for a personal address
+a.real.person@example.com
