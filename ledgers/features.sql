@@ -1031,3 +1031,12 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-004', 'tests/unit/test_schema_relationship_same_fact.py::test_node_property_queries_come_first_unchanged');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-004', 'tests/unit/test_schema_relationship_same_fact.py::test_relationships_follow_declaration_order');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-004', 'tests/unit/test_schema_relationship_same_fact.py::test_every_query_names_labels');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/core/schema.py-005', 'Make schema.is_local_uri answer through the infra database guard (memini', 'core', 'slice spec GS-23; acceptance tests sealed at eb670802d7', 'active', 'src/memini/core/schema.py', 'C-20261115-0167');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-005', 'tests/unit/test_schema_local_uri_guard.py::test_local_uris_are_accepted');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-005', 'tests/unit/test_schema_local_uri_guard.py::test_non_local_or_malformed_uris_are_refused');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-005', 'tests/unit/test_schema_local_uri_guard.py::test_allowed_hosts_env_does_not_widen_schema');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-005', 'tests/unit/test_schema_local_uri_guard.py::test_prod_host_env_is_not_checked_by_schema');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-005', 'tests/unit/test_schema_local_uri_guard.py::test_delegates_exactly_once_to_guard_check_uri');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-005', 'tests/unit/test_schema_local_uri_guard.py::test_guard_refusal_maps_to_false');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-005', 'tests/unit/test_schema_local_uri_guard.py::test_local_hosts_is_reexported_from_guard');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-005', 'tests/unit/test_schema_local_uri_guard.py::test_schema_defines_no_uri_regex');

@@ -17,11 +17,11 @@ from typing import Any
 import yaml
 
 from memini.infra import paths
+from memini.infra.graph import guard
 
 LAYERS = ("infra", "core", "extensions")
-LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+LOCAL_HOSTS = guard.LOCAL_HOSTS
 
-_URI_RE = re.compile(r"^[a-z0-9+]+://(?P<host>\[[^\]]+\]|[^:/]+)(?::\d+)?/?$")
 _NODE_PATTERN_RE = re.compile(r"\((?P<var>\w*)(?P<labels>(?::`?\w+`?)*)\s*(?P<props>\{[^}]*\})?\)")
 
 
@@ -445,12 +445,17 @@ def _relationship_duplicate_queries(
 
 
 def is_local_uri(uri: str) -> bool:
-    """Return True only for a database URI on this machine (production is never touched)."""
-    m = _URI_RE.match(uri.strip())
-    if not m:
+    """Return True only for a database URI on this machine (production is never touched).
+
+    The answer comes from the one database guard, :func:`guard.check_uri`, with no
+    allow-list and no production host, so only local hosts in an accepted URI shape
+    pass; no environment variable is read. Any refusal yields False (fail closed).
+    """
+    try:
+        guard.check_uri(uri)
+    except guard.UnsafeDatabaseError:
         return False
-    host = m.group("host").strip("[]").lower()
-    return host in LOCAL_HOSTS
+    return True
 
 
 def unlabeled_matches(cypher: str) -> list[str]:
