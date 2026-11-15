@@ -875,7 +875,6 @@ def test_ci_steps_are_read_from_the_workflow() -> None:
         "Format",
         "Lint",
         "Types",
-        "Tests",
         "Architecture contracts",
         "Export gate",
         "Commit identities",
@@ -884,12 +883,13 @@ def test_ci_steps_are_read_from_the_workflow() -> None:
     ):
         assert step in names
         assert gates.ci_step_script(ROOT / ".github" / "workflows" / "ci.yml", step)
-    tests_gate = next(g for g in cfg.gates if g.ci_step == "Tests")
+    # owner 2026-11-15 ("gates must be quick"): the per-slice tests gate is the fast tier, run
+    # in the sandbox; the full CI "Tests" step runs in GitHub CI on every push
+    tests_gate = next(g for g in cfg.gates if g.name == "tests")
     assert tests_gate.profiles
     assert tests_gate.forbid_output
-    assert "tools/ci/pytest_gate.py" in gates.ci_step_script(
-        ROOT / ".github" / "workflows" / "ci.yml", "Tests"
-    )
+    assert "tools/ci/pytest_gate.py" in tests_gate.run
+    assert tests_gate.sandbox
 
 
 def test_ci_step_with_an_expression_or_unknown_name_is_refused(tmp_path: Path) -> None:

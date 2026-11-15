@@ -45,6 +45,7 @@ class Gate:
     run: tuple[str, ...] = ()
     profiles: bool = False
     forbid_output: bool = False
+    sandbox: bool = False  # runs coder code: in the sandbox executor; else on the host
 
 
 @dataclass(frozen=True)
@@ -176,6 +177,7 @@ def _gates(raw: list[Mapping[str, Any]]) -> tuple[Gate, ...]:
                 run=tuple(g.get("run", ())),
                 profiles=bool(g.get("profiles", False)),
                 forbid_output=bool(g.get("forbid_output", False)),
+                sandbox=bool(g.get("sandbox", False)),
             )
         )
     return tuple(out)

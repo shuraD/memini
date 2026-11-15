@@ -262,11 +262,19 @@ class GateRun:
 
 
 def run_gates(
-    cfg: Config, executor: Executor, run: GateRun, stage: str, base: str
+    cfg: Config,
+    executor: Executor,
+    run: GateRun,
+    stage: str,
+    base: str,
+    *,
+    host: Executor | None = None,
 ) -> list[Failure]:
     """Run the configured gates of ``stage``; return a :class:`Failure` per failed run.
 
-    Profile-aware gates run once per env profile. The raw output goes only to ``log``.
+    Profile-aware gates run once per env profile. The raw output goes only to ``log``. A gate
+    marked ``sandbox`` (it runs coder code) uses ``executor``; the others (static and git
+    checks) use ``host`` when given, so they need no network or git refs in a container.
     """
     worktree, log = run.worktree, run.log
     failures = []
@@ -282,7 +290,8 @@ def run_gates(
             continue
         for prof in profs if gate.profiles else [Profile("defaults", {})]:
             env = {**run.env, "MEMINI_AUDIT_BASE": base, **prof.env}
-            res = executor.run(argv, cwd=worktree, env=env, timeout=cfg.gate_timeout_s)
+            runner = executor if gate.sandbox or host is None else host
+            res = runner.run(argv, cwd=worktree, env=env, timeout=cfg.gate_timeout_s)
             label = f"gate {gate.name}" + (f" [{prof.name}]" if gate.profiles else "")
             _log(log, f"{label} exit {res.code}", res.output)
             if res.code != 0:

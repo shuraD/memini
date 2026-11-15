@@ -175,8 +175,11 @@ class _Run:
         self.sandbox = (
             dockerexec.build_executor(cfg, cfg.env_allow) if cfg.executor == "docker" else None
         )
-        inner = self.sandbox or executor_for(cfg.executor, cfg.env_allow)
-        self.ex = _Watched(inner, self)
+        local = executor_for("local", cfg.env_allow)
+        # coder code (tests, sandbox gates, hold-out) runs in the sandbox when there is one;
+        # the agent CLIs, setup and the static/git gates always run on the host (workflow §8)
+        self.ex = _Watched(self.sandbox or local, self)
+        self.host = _Watched(local, self)
         self.repo = cfg.repo
         self.branch = cfg.branch_prefix + task_id
         self.wt = cfg.worktrees_dir / task_id
@@ -262,7 +265,7 @@ class _Run:
     # -------------------------------------------------------------- helpers
     def _setup(self, wt: Path) -> None:
         for cmd in self.cfg.setup:
-            res = self.ex.run(cmd, cwd=wt, env=self.gate_env, timeout=self.cfg.gate_timeout_s)
+            res = self.host.run(cmd, cwd=wt, env=self.gate_env, timeout=self.cfg.gate_timeout_s)
             if res.code != 0:
                 raise _Stop(FAILED, f"setup {' '.join(cmd)} failed: {res.output.strip()[-500:]}")
 
@@ -325,7 +328,7 @@ class _Run:
             reference_tools=tools,
         )
         stdin = prompt if cfg.engines[name].stdin else None
-        res = self.ex.run(
+        res = self.host.run(
             argv,
             cwd=workdir,
             stdin=stdin,
@@ -597,7 +600,7 @@ class _Run:
         self._fresh(self.gate_wt, snap)
         run = self._gate_run(self.gate_wt, snap, files)
         fails = gates.qa_test_failures(cfg, self.ex, run, files)
-        fails += gates.run_gates(cfg, self.ex, run, "slice", base)
+        fails += gates.run_gates(cfg, self.ex, run, "slice", base, host=self.host)
         return fails + self._holdout(snap)
 
     def _audit(self, qa_sha: str, snap: str, files: list[str]) -> audit.Verdict:
@@ -634,7 +637,7 @@ class _Run:
                     raise _Stop(REJECTED, "squash commit: " + "; ".join(cheats))
                 run = self._gate_run(self.merge_wt, squash, files)
                 fails = gates.qa_test_failures(cfg, self.ex, run, files)
-                fails += gates.run_gates(cfg, self.ex, run, "merge", main_sha)
+                fails += gates.run_gates(cfg, self.ex, run, "merge", main_sha, host=self.host)
                 fails += self._holdout(squash)
                 if fails:
                     reason = "; ".join(f.summary() for f in fails)

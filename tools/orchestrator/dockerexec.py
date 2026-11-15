@@ -34,6 +34,18 @@ from tools.orchestrator.config import Config
 from tools.orchestrator.executor import NO_REPLACE, Result, allowed_env
 
 _CONTEXT = ("pyproject.toml", "uv.lock")
+WORKDIR = "/slice"
+_EXTRAS = ".sandbox"  # host files a command names (outside the slice), shipped in the tar
+# host-only cache locations: meaningless (and read-only) inside the container
+_HOST_ONLY_ENV = ("XDG_CACHE_HOME", "UV_PYTHON_INSTALL_DIR")
+# the container's own writable places (/tmp is its tmpfs); uv uses the image venv as it is
+_CONTAINER_ENV = {
+    "HOME": "/tmp",  # noqa: S108 — the container's tmpfs, not a host directory
+    "TMPDIR": "/tmp",  # noqa: S108
+    "UV_CACHE_DIR": "/tmp/uv-cache",  # noqa: S108
+    "UV_NO_SYNC": "1",
+    "UV_OFFLINE": "1",
+}
 
 
 class DockerError(RuntimeError):
@@ -178,23 +190,24 @@ class DockerExecutor:
             self.ensure_image()
         except (DockerError, OSError, subprocess.SubprocessError) as exc:
             return Result(125, "", f"docker image unavailable: {exc}\n")
-        # the container provides its own PATH/HOME; forwarding the host's would hide the image
-        # venv and point HOME at a missing path. Everything else on the allow-list is passed.
+        # the container provides its own PATH; every other host path is replaced by a container
+        # one (a host path inside the read-only container is at best missing, at worst a leak)
         forward = [k for k in (*self.env_allow, *pass_env) if k not in ("PATH", "HOME")]
-        container_env = allowed_env(forward, env)
+        container_env = _container_env(allowed_env(forward, env), cwd)
+        extras: list[tuple[str, Path]] = []
         run_argv = docker_run_argv(
             self.cli,
             self.tag,
-            workdir="/slice",
+            workdir=WORKDIR,
             env=container_env,
             memory=self.memory,
             pids=self.pids,
         )
-        prelude = "tar xf - -C /slice && "  # unpack the slice piped on stdin
-        command = " ".join(_sh_quote(a) for a in argv)
+        prelude = f"tar xf - -C {WORKDIR} && "  # unpack the slice piped on stdin
+        command = " ".join(_sh_quote(a) for a in _container_argv(argv, cwd, extras))
         full = [*run_argv, "bash", "-c", f"{prelude}{command}"]
         try:
-            payload = _slice_tar(cwd)
+            payload = _slice_tar(cwd, extras)
             res = subprocess.run(  # noqa: S603 — docker CLI + our argv, no shell
                 full,
                 input=payload,
@@ -221,8 +234,50 @@ def _host_path() -> dict[str, str]:
     return {k: os.environ[k] for k in keep if k in os.environ}
 
 
-def _slice_tar(cwd: Path) -> bytes:
-    """Return a tar of the working directory's files, excluding .git and .venv."""
+def _container_env(env: Mapping[str, str], cwd: Path) -> dict[str, str]:
+    """Return ``env`` with container paths only: host caches dropped, homes and temp in /tmp."""
+    out = {k: _container_path(v, cwd) for k, v in env.items() if k not in _HOST_ONLY_ENV}
+    out.update(_CONTAINER_ENV)
+    out.setdefault("PYTHONPATH", "src:.")  # the slice's own code; the image installs no project
+    return out
+
+
+def _container_path(value: str, cwd: Path) -> str:
+    """Return ``value`` as its /slice path when it names a path under ``cwd``, else unchanged."""
+    if not value.startswith("/"):
+        return value
+    try:
+        rel = Path(value).resolve().relative_to(cwd.resolve())
+    except ValueError:
+        return value
+    return f"{WORKDIR}/{rel}" if str(rel) != "." else WORKDIR
+
+
+def _container_argv(argv: Sequence[str], cwd: Path, extras: list[tuple[str, Path]]) -> list[str]:
+    """Return ``argv`` for the container.
+
+    A host interpreter in front becomes the image's ``python``; a path under ``cwd`` becomes its
+    /slice path; another host file (the run's private pytest gate) is shipped in the slice tar
+    under ``.sandbox/`` and named there.
+    """
+    out = []
+    for i, arg in enumerate(argv):
+        path = Path(arg)
+        if i == 0 and path.is_absolute() and path.name.startswith("python"):
+            out.append("python")
+            continue
+        translated = _container_path(arg, cwd)
+        if translated != arg or not path.is_absolute() or not path.is_file():
+            out.append(translated)
+            continue
+        arcname = f"{_EXTRAS}/{len(extras)}-{path.name}"
+        extras.append((arcname, path))
+        out.append(f"{WORKDIR}/{arcname}")
+    return out
+
+
+def _slice_tar(cwd: Path, extras: Sequence[tuple[str, Path]] = ()) -> bytes:
+    """Return a tar of the working directory's files (no .git, no .venv) plus ``extras``."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tar:
         for item in sorted(cwd.rglob("*")):
@@ -230,6 +285,8 @@ def _slice_tar(cwd: Path) -> bytes:
             if ".git" in rel.parts or any(p.startswith(".venv") for p in rel.parts):
                 continue
             tar.add(item, arcname=str(rel), recursive=False)
+        for arcname, path in extras:
+            tar.add(path, arcname=arcname, recursive=False)
     return buf.getvalue()
 
 
