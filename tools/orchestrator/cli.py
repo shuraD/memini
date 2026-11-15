@@ -19,6 +19,7 @@ from tools.orchestrator import (
     dockerexec,
     gates,
     pipeline,
+    planstage,
     schedule,
     spec,
     specstage,
@@ -208,7 +209,9 @@ def _run_all(cfg: config.Config, args: argparse.Namespace) -> int:
 
 
 def _cmd_stage_run(cfg: config.Config, args: argparse.Namespace) -> int:
-    return specstage.run(cfg, stages.stage(cfg, args.stage), args.task_id)
+    stage_spec = stages.stage(cfg, args.stage)
+    job = planstage.PlanJob if stage_spec.kind == "plan" else None
+    return specstage.run(cfg, stage_spec, args.task_id, job)
 
 
 def _holdout_ready(cfg: config.Config, task_id: str) -> bool:

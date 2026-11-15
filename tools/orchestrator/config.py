@@ -77,6 +77,7 @@ class StageSpec:
     queue: Path
     next: str
     prompt: str
+    kind: str = "spec"  # what the stage's agent produces: "plan" (task lines) or "spec"
 
 
 @dataclass(frozen=True)
@@ -158,6 +159,8 @@ class Config:
     qa_gate_checks: Mapping[str, tuple[str, ...]] = dataclasses.field(default_factory=dict)
     # coding queues per work unit (owner 2026-11-15); a task whose module matches none goes to queue
     code_queues: Mapping[str, CodeQueue] = dataclasses.field(default_factory=dict)
+    # the plan stage refuses a module plan whose dependency chain needs more waves than this
+    plan_max_waves: int = 4
 
     @property
     def parallel(self) -> bool:
@@ -181,6 +184,7 @@ def _path(repo: Path, value: str) -> Path:
 
 
 CODE_STAGE = "code"  # the slice pipeline; its queue is ``queue``
+STAGE_KINDS = frozenset({"plan", "spec"})
 
 
 def _stages(repo: Path, raw: object, paths: Mapping[str, Path]) -> tuple[StageSpec, ...]:
@@ -201,7 +205,13 @@ def _stages(repo: Path, raw: object, paths: Mapping[str, Path]) -> tuple[StageSp
             if not item.get("queue") or _inside(queue, root):
                 msg = f"stage {name}: queue {queue} must be set and outside the repository"
                 raise ConfigError(msg)
-        out.append(StageSpec(name, queue, str(item.get("next", "")), str(item.get("prompt", name))))
+        kind = str(item.get("kind", "spec"))
+        if kind not in STAGE_KINDS:
+            msg = f"stage {name}: kind must be one of {sorted(STAGE_KINDS)}, not {kind!r}"
+            raise ConfigError(msg)
+        out.append(
+            StageSpec(name, queue, str(item.get("next", "")), str(item.get("prompt", name)), kind)
+        )
     names = [s.name for s in out]
     if len(set(names)) != len(names):
         msg = f"stage names must be unique: {names}"
@@ -450,6 +460,7 @@ def load_config(
         stages=stages,
         spec_dir=_path(repo, str(raw.get("spec_dir") or "../specs")),
         code_queues=_code_queues(repo, raw.get("code_queues", {}), paths),
+        plan_max_waves=int(raw.get("plan_max_waves", 4)),
         qa_gate_checks={
             str(k): tuple(str(a) for a in v) for k, v in raw.get("qa_gate_checks", {}).items()
         },

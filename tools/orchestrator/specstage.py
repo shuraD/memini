@@ -54,8 +54,8 @@ def known_ids(cfg: Config) -> set[str]:
     return ids
 
 
-def run(cfg: Config, stage_spec: StageSpec, task_id: str) -> int:
-    """Run the spec stage for ``task_id``; return 0 when it was handed on, else 1."""
+def run(cfg: Config, stage_spec: StageSpec, task_id: str, job: type[_Job] | None = None) -> int:
+    """Run a stage task (the spec stage by default); return 0 when it was handed on, else 1."""
     items = {i.task_id: i for i in stages.read_stage_queue(stage_spec.queue)}
     if task_id not in items:
         print(f"{stage_spec.name}/{task_id}: not in {stage_spec.queue}")
@@ -67,9 +67,9 @@ def run(cfg: Config, stage_spec: StageSpec, task_id: str) -> int:
                 print(f"{stage_spec.name}/{task_id}: already {rec.status(task_id)}")
                 return 1
             rec.set(task_id, stages.ACTIVE)
-            job = _Job(cfg, stage_spec, items[task_id])
+            runner = (job or _Job)(cfg, stage_spec, items[task_id])
             try:
-                job.go()
+                runner.go()
             except _Stop as stop:
                 rec.set(task_id, stop.status, stop.reason)
                 state.inbox_append(
@@ -104,11 +104,28 @@ class _Job:
         )
         self.calls = 0
 
-    def go(self) -> None:
-        cfg, item = self.cfg, self.item
-        target = spec_path(cfg, item)
-        if target.exists() or gates.has_holdout(cfg, item.task_id):
+    # ------------------------------------------------------------------ per stage kind
+    def writable(self) -> list[str]:
+        """Return the paths the agent may write."""
+        return [SPEC_FILE, *self.cfg.qa_allow]
+
+    def prompt_values(self) -> dict[str, str]:
+        """Return extra prompt placeholders of this stage kind."""
+        return {}
+
+    def preflight(self) -> None:
+        """Refuse before any agent runs when the output exists already (never overwritten)."""
+        target = spec_path(self.cfg, self.item)
+        if target.exists() or gates.has_holdout(self.cfg, self.item.task_id):
             raise _Stop(FAILED, f"{target} or its hold-out exists already: nothing overwritten")
+
+    def finish(self, result: list[str]) -> None:
+        """Seal the accepted output and hand the task on."""
+        self._seal(result, spec_path(self.cfg, self.item))
+
+    def go(self) -> None:
+        cfg = self.cfg
+        self.preflight()
         if self.wt.exists():
             raise _Stop(FAILED, f"{self.wt} exists from an earlier run: inspect and remove it")
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -123,13 +140,13 @@ class _Job:
         failures = "none (first attempt)"
         for attempt in (1, 2):
             self._agent(sources, failures)
-            problems, tests = self._check()
+            problems, result = self._check()
             if not problems:
                 break
             if attempt == 2:  # noqa: PLR2004 — one retry
                 raise _Stop(REJECTED, "; ".join(problems)[:1500])
             failures = "Fix only these problems:\n- " + "\n- ".join(problems)
-        self._seal(tests, target)
+        self.finish(result)
         gitops.git(cfg.repo, "worktree", "remove", "--force", str(self.wt))
 
     # ------------------------------------------------------------------ inputs
@@ -169,7 +186,7 @@ class _Job:
         settings = engine.settings(
             cfg,
             self.wt,
-            writable=[SPEC_FILE, *cfg.qa_allow],
+            writable=self.writable(),
             guard_config=guard,
             protected=[*cfg.protected, "**/conftest.py"],
         )
@@ -185,6 +202,7 @@ class _Job:
             qa_allow=", ".join(cfg.qa_allow),
             allow=", ".join(cfg.allow),
             failures=failures,
+            **self.prompt_values(),
         )
         argv = engine.command(
             cfg, name, "qa", workdir=self.wt, settings=settings_path, prompt=prompt
