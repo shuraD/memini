@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -2048,3 +2049,49 @@ def test_a_holdout_finds_the_repository_like_the_unit_test_it_was_written_as(
     )
     out = pipeline.run_task(_cfg(env), _task(env))
     assert out.status == "merged", out.reason
+
+
+# --- gate timing and reuse (owner 2026-11-16: "add all of them") -----------------------------
+def test_a_gate_passed_in_the_slice_stage_is_reused_at_merge_when_nothing_changed(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    _gate_plan(env, monkeypatch)
+    out = pipeline.run_task(_cfg(env, gates=[_gate("both", ["slice", "merge"])]), _task(env))
+    assert out.status == "merged", out.reason
+    calls = [
+        ln for ln in (env["log"] / "gates.log").read_text().splitlines() if ln.startswith("both ")
+    ]
+    assert len(calls) == 1  # main did not move: the merge reused the slice pass
+    run_log = (env["tmp"] / "state" / "runs" / TASK / "gates.log").read_text()
+    assert "== gate both reused: the same inputs passed in the slice stage" in run_log
+    assert re.search(r"== gate both exit 0 \(\d+\.\d+s\)", run_log)  # every run is timed
+    assert re.search(r"== merge lock waited \d+\.\d+s", run_log)
+
+
+def test_a_gate_runs_again_at_merge_when_main_moved(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    _gate_plan(env, monkeypatch)
+    _move_main_once(env, monkeypatch)  # another squad merges between the gate passes
+    out = pipeline.run_task(_cfg(env, gates=[_gate("both", ["slice", "merge"])]), _task(env))
+    assert out.status == "merged", out.reason
+    log = (env["log"] / "gates.log").read_text().splitlines()
+    calls = [ln for ln in log if ln.startswith("both ")]
+    assert len(calls) == 2  # slice pass reused once, then rebased on the new main: gated again
+
+
+def test_the_reuse_key_ignores_only_the_excluded_files(env: dict[str, Any]) -> None:
+    repo = env["repo"]
+    reuse = gates.GateReuse(exclude=("ledgers/changes.sql",))
+    before = reuse.key(repo, [PY, str(repo / "x")], {})
+    (repo / "ledgers" / "changes.sql").write_text("INSERT 1;\n")
+    _git(repo, "commit", "-qam", "ledger row")
+    assert reuse.key(repo, [PY, str(repo / "x")], {}) == before
+    (repo / "src" / "memini" / "core" / "__init__.py").write_text("X = 1\n")
+    _git(repo, "commit", "-qam", "code")
+    assert reuse.key(repo, [PY, str(repo / "x")], {}) != before
+    assert reuse.key(repo, [PY, str(repo / "x")], {"MEMINI_FLAG": "1"}) != reuse.key(
+        repo, [PY, str(repo / "x")], {}
+    )

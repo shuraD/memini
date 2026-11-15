@@ -9,13 +9,15 @@ runs: a gate names a ``.github/workflows/ci.yml`` step and runs that step's ``ru
 from __future__ import annotations
 
 import ast
+import hashlib
 import re
 import shutil
 import sys
 import tarfile
 import tempfile
+import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -282,6 +284,11 @@ def deny_hits(diff: str, patterns: Sequence[str]) -> list[str]:
     return hits
 
 
+def log_line(log: Path, label: str) -> None:
+    """Append one ``== label`` line to a gate log (timings the owner reads)."""
+    _log(log, label, "")
+
+
 def _log(log: Path, label: str, output: str) -> None:
     with log.open("a", encoding="utf-8") as fh:
         fh.write(f"== {label}\n{output}\n")
@@ -299,6 +306,28 @@ class GateRun:
     skip_markers: tuple[str, ...] = ()  # markers deselected in the sandbox (e.g. integration)
 
 
+@dataclass
+class GateReuse:
+    """Passes of one task run, reusable while every input stays the same (owner 2026-11-16).
+
+    The key is the content of every tracked file except ``exclude`` (the ledger rows the merge
+    adds; no reused gate reads them), the gate's command with the worktree path normalised, and
+    the profile env. Only a pass is ever reused; anything different runs again.
+    """
+
+    exclude: tuple[str, ...] = ()
+    passed: dict[str, str] = field(default_factory=dict)
+
+    def key(self, worktree: Path, argv: Sequence[str], env: Mapping[str, str]) -> str:
+        """Return the reuse key of one gate run in ``worktree`` (its HEAD commit)."""
+        listing = gitops.out(worktree, "ls-tree", "-r", "HEAD")
+        kept = [ln for ln in listing.splitlines() if ln.split("\t", 1)[-1] not in self.exclude]
+        h = hashlib.sha256("\n".join(kept).encode())
+        h.update("\0".join(a.replace(str(worktree), "<wt>") for a in argv).encode())
+        h.update(repr(sorted(env.items())).encode())
+        return h.hexdigest()
+
+
 def run_gates(
     cfg: Config,
     executor: Executor,
@@ -307,6 +336,7 @@ def run_gates(
     base: str,
     *,
     host: Executor | None = None,
+    reuse: GateReuse | None = None,
 ) -> list[Failure]:
     """Run the configured gates of ``stage``; return a :class:`Failure` per failed run.
 
@@ -329,9 +359,18 @@ def run_gates(
         for prof in profs if gate.profiles else [Profile("defaults", {})]:
             env = {**run.env, "MEMINI_AUDIT_BASE": base, **prof.env}
             runner = executor if gate.sandbox or host is None else host
-            res = runner.run(argv, cwd=worktree, env=env, timeout=cfg.gate_timeout_s)
             label = f"gate {gate.name}" + (f" [{prof.name}]" if gate.profiles else "")
-            _log(log, f"{label} exit {res.code}", res.output)
+            key = reuse.key(worktree, argv, prof.env) if reuse is not None else ""
+            if reuse is not None and key in reuse.passed:
+                _log(
+                    log,
+                    f"{label} reused: the same inputs passed in the {reuse.passed[key]} stage",
+                    "",
+                )
+                continue
+            started = time.monotonic()
+            res = runner.run(argv, cwd=worktree, env=env, timeout=cfg.gate_timeout_s)
+            _log(log, f"{label} exit {res.code} ({time.monotonic() - started:.1f}s)", res.output)
             if res.code != 0:
                 failures.append(
                     Failure(
@@ -342,6 +381,8 @@ def run_gates(
                 )
             elif gate.forbid_output and re.search(cfg.forbid_output, res.output):
                 failures.append(Failure(f"{label}: skipped or deselected tests are not allowed"))
+            elif reuse is not None:
+                reuse.passed[key] = stage
     return failures
 
 

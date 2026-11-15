@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -192,6 +193,8 @@ class _Run:
         self.calls = 0
         self.gate_script = gates.PYTEST_GATE
         self.gate_env: dict[str, str] = {}
+        # gate passes reused while their inputs stay the same (main unmoved: no second pass)
+        self.gate_reuse = gates.GateReuse(exclude=LEDGER_FILES)
 
     # -------------------------------------------------------------- top level
     def go(self) -> Outcome:
@@ -650,7 +653,9 @@ class _Run:
         self._fresh(self.gate_wt, snap)
         run = self._gate_run(self.gate_wt, snap, files)
         fails = gates.qa_test_failures(cfg, self.ex, run, files)
-        fails += gates.run_gates(cfg, self.ex, run, "slice", base, host=self.host)
+        fails += gates.run_gates(
+            cfg, self.ex, run, "slice", base, host=self.host, reuse=self.gate_reuse
+        )
         return fails + self._holdout(snap)
 
     def _audit(self, qa_sha: str, snap: str, files: list[str]) -> audit.Verdict:
@@ -672,7 +677,11 @@ class _Run:
     # -------------------------------------------------------------- merge
     def _merge(self, snap: str, qa_sha: str, files: list[str], sealed: dict[str, str]) -> Outcome:
         cfg = self.cfg
+        asked = time.monotonic()
         with state.locked(cfg.state_dir / "merge.lock"):
+            gates.log_line(
+                self.run_dir / "gates.log", f"merge lock waited {time.monotonic() - asked:.1f}s"
+            )
             for _ in range(cfg.merge_retries):
                 if gitops.rev(self.repo, self.branch) != snap:
                     raise _Stop(REJECTED, "the task branch moved after the audit")
@@ -687,7 +696,9 @@ class _Run:
                     raise _Stop(REJECTED, "squash commit: " + "; ".join(cheats))
                 run = self._gate_run(self.merge_wt, squash, files)
                 fails = gates.qa_test_failures(cfg, self.ex, run, files)
-                fails += gates.run_gates(cfg, self.ex, run, "merge", main_sha, host=self.host)
+                fails += gates.run_gates(
+                    cfg, self.ex, run, "merge", main_sha, host=self.host, reuse=self.gate_reuse
+                )
                 fails += self._holdout(squash)
                 if fails:
                     reason = "; ".join(f.summary() for f in fails)
