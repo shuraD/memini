@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import re
 import shutil
@@ -90,6 +91,11 @@ def _deps(entry: state.QueueEntry) -> tuple[str, ...]:
 
 
 def _cmd_run_queue(cfg: config.Config, args: argparse.Namespace) -> int:
+    if args.queue:
+        if args.queue not in cfg.code_queues:
+            print(f"unknown code queue {args.queue!r} (configured: {', '.join(cfg.code_queues)})")
+            return 2
+        cfg = dataclasses.replace(cfg, queue=cfg.code_queues[args.queue].queue)
     if args.all:
         return _run_all(cfg, args)
     if args.stage != config.CODE_STAGE:
@@ -145,6 +151,8 @@ def run_queue_parallel(
         by_id = {e.task_id: e for e in entries}
         _reap(st, running, failed)
         merged = {e.task_id for e in entries if _done(st, e.task_id)}
+        # a dependency may be merged from another work unit's queue (GS-22 needs LP-08)
+        merged |= {d for e in entries for d in _deps(e) if _done(st, d)}
         cands = [
             schedule.Candidate(e.task_id, _entry_paths(e), _deps(e))
             for e in entries
@@ -329,28 +337,33 @@ def _cmd_check_spec(cfg: config.Config, args: argparse.Namespace) -> int:
 _INBOX_HEAD = re.compile(r"^## (.+)$", re.MULTILINE)
 
 
+def _entry_label(st: state.State, tasks: dict[str, Any], e: state.QueueEntry) -> str:
+    rec = tasks.get(e.task_id)
+    missing = [d for d in _deps(e) if not _done(st, d)]
+    if _done(st, e.task_id):
+        return "done"
+    if rec and rec["status"] not in ("released",):
+        label = {"disputed": "disputed", "active": "active"}.get(rec["status"], "blocked")
+        return label + f" ({rec['status']}: {str(rec.get('reason', ''))[:120]})"
+    if missing:
+        return f"waiting on {', '.join(missing)}"
+    return "ready"
+
+
 def status_lines(cfg: config.Config) -> list[str]:
     """Return the plain-text digest of the queue, the task states and the inbox."""
     st = state.State(cfg)
     tasks = st.tasks()
     lines = []
-    entries = state.read_queue(cfg.queue) if cfg.queue.exists() else []
-    lines.append(f"queue: {cfg.queue} ({len(entries)} entries)")
-    for e in entries:
-        rec = tasks.get(e.task_id)
-        missing = [d for d in _deps(e) if not _done(st, d)]
-        if _done(st, e.task_id):
-            label = "done"
-        elif rec and rec["status"] not in ("released",):
-            label = {"disputed": "disputed", "active": "active"}.get(rec["status"], "blocked")
-            label += f" ({rec['status']}: {str(rec.get('reason', ''))[:120]})"
-        elif missing:
-            label = f"waiting on {', '.join(missing)}"
-        else:
-            label = "ready"
-        lines.append(f"  {e.task_id}: {label}")
-    others = sorted(set(tasks) - {e.task_id for e in entries})
-    for task_id in others:
+    queues = [("queue", cfg.queue), *((n, q.queue) for n, q in cfg.code_queues.items())]
+    seen: set[str] = set()
+    for name, path in queues:
+        entries = state.read_queue(path) if path.exists() else []
+        seen |= {e.task_id for e in entries}
+        label_name = "queue" if name == "queue" else f"code queue {name}"
+        lines.append(f"{label_name}: {path} ({len(entries)} entries)")
+        lines += [f"  {e.task_id}: {_entry_label(st, tasks, e)}" for e in entries]
+    for task_id in sorted(set(tasks) - seen):
         lines.append(f"  {task_id}: {tasks[task_id]['status']} (not in the queue)")
     lines += stages.status_lines(cfg)
     heads = _INBOX_HEAD.findall(cfg.inbox.read_text(encoding="utf-8")) if cfg.inbox.exists() else []
@@ -440,6 +453,7 @@ def parser() -> argparse.ArgumentParser:
     rq.add_argument("--worker")
     rq.add_argument("--stage", default=config.CODE_STAGE, help="the stage to run (default code)")
     rq.add_argument("--all", action="store_true", help="every stage and code, side by side")
+    rq.add_argument("--queue", help="a work unit's coding queue (code_queues; default: queue)")
     rq.add_argument(
         "--workers",
         type=int,

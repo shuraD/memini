@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.orchestrator import schedule, state
-from tools.orchestrator.config import CODE_STAGE, Config, StageSpec
+from tools.orchestrator.config import CODE_STAGE, Config, StageSpec, code_queue_for
 
 ACTIVE, DONE, RELEASED = "active", "done", "released"
 _FIELDS = 5  # id, module, depends_on, sources, task text (at least one word)
@@ -135,11 +135,17 @@ def upstream_active(cfg: Config) -> list[str]:
     return out
 
 
-def handoff(cfg: Config, stage_spec: StageSpec, line: str) -> None:
-    """Append ``line`` to the queue of the stage after ``stage_spec`` (once per task id)."""
-    target = cfg.queue if stage_spec.next == CODE_STAGE else stage(cfg, stage_spec.next).queue
+def handoff(cfg: Config, stage_spec: StageSpec, line: str, module: str = "") -> None:
+    """Append ``line`` to the queue of the stage after ``stage_spec`` (once per task id).
+
+    Into ``code``, the task goes to the coding queue of its work unit (``code_queues``).
+    """
+    if stage_spec.next == CODE_STAGE:
+        target = code_queue_for(cfg, module)
+    else:
+        target = stage(cfg, stage_spec.next).queue
     task_id = shlex.split(line)[0]
-    with state.locked(cfg.state_dir / "locks" / f"queue-{stage_spec.next}.lock"):
+    with state.locked(cfg.state_dir / "locks" / f"queue-{target.name}.lock"):
         target.parent.mkdir(parents=True, exist_ok=True)
         text = target.read_text(encoding="utf-8") if target.exists() else ""
         if any(shlex.split(ln)[:1] == [task_id] for ln in text.splitlines() if ln.strip()):

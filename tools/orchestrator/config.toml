@@ -160,7 +160,7 @@ merge_retries = 3
 # with the docker executor, where coder code cannot reach the host's state or git refs; the
 # local executor always runs one slice at a time. Each run is its own process with one-shot
 # agents, so the cost rate grows with this number.
-max_parallel = 4
+max_parallel = 8  # 2 squads x 4 (owner 2026-11-15: dev squads)
 engine_timeout_s = 1800
 gate_timeout_s = 1800
 max_budget_usd = "3"
@@ -317,3 +317,17 @@ name = "spec"
 queue = "../.memini-orchestrator/queue-spec.txt"
 next = "code"
 prompt = "spec"
+
+# --- dev squads: one coding queue per work unit, each run by its own dev session ------------
+# (owner 2026-11-15: "dev squads, we simply give the relevant working unit"):
+#   run-queue --queue <unit> --workers N
+# The spec stage hands a finished task to the queue whose modules contain its module; a task
+# that matches none goes to `queue`. Dependencies may lie in another unit's queue. All squads
+# share the max_parallel run slots of this machine.
+[code_queues.llm-providers]
+queue = "../.memini-orchestrator/queue.txt"
+modules = ["src/memini/infra/llm_providers/"]
+
+[code_queues.graph-schema]
+queue = "../.memini-orchestrator/queue-graph-schema.txt"
+modules = ["src/memini/core/schema.py", "src/memini/core/graph/", "src/memini/infra/graph/"]

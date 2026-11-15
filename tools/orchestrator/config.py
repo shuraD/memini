@@ -80,6 +80,15 @@ class StageSpec:
 
 
 @dataclass(frozen=True)
+class CodeQueue:
+    """A coding queue of one work unit: run by its own dev session (run-queue --queue <name>)."""
+
+    name: str
+    queue: Path
+    modules: tuple[str, ...]  # module paths whose tasks the stage chain hands to this queue
+
+
+@dataclass(frozen=True)
 class Config:
     """Every setting the orchestrator uses (see ``config.toml`` for their meaning)."""
 
@@ -147,6 +156,8 @@ class Config:
     spec_dir: Path = Path()
     # per gate name: a check run on QA's files before sealing, when that gate is configured
     qa_gate_checks: Mapping[str, tuple[str, ...]] = dataclasses.field(default_factory=dict)
+    # coding queues per work unit (owner 2026-11-15); a task whose module matches none goes to queue
+    code_queues: Mapping[str, CodeQueue] = dataclasses.field(default_factory=dict)
 
     @property
     def parallel(self) -> bool:
@@ -204,6 +215,33 @@ def _stages(repo: Path, raw: object, paths: Mapping[str, Path]) -> tuple[StageSp
             )
             raise ConfigError(msg)
     return tuple(out)
+
+
+def _code_queues(repo: Path, raw: object, paths: Mapping[str, Path]) -> dict[str, CodeQueue]:
+    """Return the per-unit coding queues; each lies outside the repository and every worktree."""
+    if not isinstance(raw, dict):
+        msg = "code_queues must be a table of {queue, modules}"
+        raise ConfigError(msg)
+    out = {}
+    for name, item in raw.items():
+        queue = _path(repo, str(item.get("queue", "")))
+        if not item.get("queue") or any(_inside(queue, r) for r in (repo, paths["worktrees_dir"])):
+            msg = f"code queue {name}: queue {queue} must be set and outside the repository"
+            raise ConfigError(msg)
+        modules = item.get("modules", [])
+        if not isinstance(modules, list) or not all(isinstance(m, str) and m for m in modules):
+            msg = f"code queue {name}: modules must be a list of module paths"
+            raise ConfigError(msg)
+        out[str(name)] = CodeQueue(str(name), queue, tuple(modules))
+    return out
+
+
+def code_queue_for(cfg: Config, module: str) -> Path:
+    """Return the coding queue for a task of ``module`` (``queue`` when no squad matches)."""
+    for cq in cfg.code_queues.values():
+        if any(module == m or module.startswith(m.rstrip("/") + "/") for m in cq.modules):
+            return cq.queue
+    return cfg.queue
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -411,6 +449,7 @@ def load_config(
         engines=engines,
         stages=stages,
         spec_dir=_path(repo, str(raw.get("spec_dir") or "../specs")),
+        code_queues=_code_queues(repo, raw.get("code_queues", {}), paths),
         qa_gate_checks={
             str(k): tuple(str(a) for a in v) for k, v in raw.get("qa_gate_checks", {}).items()
         },

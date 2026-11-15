@@ -317,7 +317,7 @@ class _Job:
                     item.title,
                 ]
             )
-        stages.handoff(cfg, self.stage, line)
+        stages.handoff(cfg, self.stage, line, item.module)
 
 
 def _cache(path: str, ignored_ok: tuple[str, ...]) -> bool:
