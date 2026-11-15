@@ -9,6 +9,7 @@ Rules:
 - The tests must fail now (the code does not exist yet) and pass once the specification is implemented correctly.
 - Test observable behaviour from the specification, not an implementation you imagine. Each test states its expectation with an assert.
 - Keep the tests deterministic: no network, no clock, no randomness without a fixed seed, no skips.
+- Never replace or reassign interpreter-wide state (os.environ, sys.modules, builtins, sys.stdout): pytest itself uses it. To prove code does not read the environment or a module, record the calls with monkeypatch only around the call under test.
 - To check that your tests fail now, run exactly (no cd, no pipes, no other command):
     uv run python -m tools.orchestrator sandbox-pytest <your test files>
   and keep them lint-clean (they are sealed after you; nobody can fix them later):
