@@ -22,7 +22,7 @@ import yaml
 
 from tools.orchestrator import gitops
 from tools.orchestrator.config import Config, Gate
-from tools.orchestrator.executor import Executor, run_on_host
+from tools.orchestrator.executor import Executor, Result, run_on_host
 
 HOLDOUT_FAILED = "hold-out failed"
 _BASH = shutil.which("bash") or "bash"
@@ -125,15 +125,22 @@ def flag_names(flags_file: Path, function: str) -> list[str]:
 
 
 def profiles(cfg: Config, worktree: Path) -> list[Profile]:
-    """Return the env profiles to run; a flags profile is dropped when there is no flag."""
-    flags = flag_names(worktree / cfg.flags_file, cfg.flags_function) if cfg.flags_file else []
+    """Return the env profiles to run.
+
+    A profile with ``all_flags`` needs the flags file: when it is missing the task fails
+    (raise), it is never silently dropped.
+    """
     out = []
     for spec in cfg.profiles:
         env = dict(spec.env)
         if spec.all_flags:
-            if not flags:
-                continue
-            env.update(dict.fromkeys(flags, cfg.flags_on_value))
+            flags_file = worktree / cfg.flags_file
+            if not cfg.flags_file or not flags_file.is_file():
+                msg = f"profile {spec.name} needs the flags file {cfg.flags_file or '(unset)'}"
+                raise GateConfigError(msg)
+            env.update(
+                dict.fromkeys(flag_names(flags_file, cfg.flags_function), cfg.flags_on_value)
+            )
         out.append(Profile(spec.name, env))
     return out or [Profile("defaults", {})]
 
@@ -178,16 +185,43 @@ def gate_argv(cfg: Config, gate: Gate, worktree: Path, base: str) -> list[str]:
     return out
 
 
-def _tail(text: str, limit: int) -> str:
-    text = text.strip()
-    return text if len(text) <= limit else "…" + text[-limit:]
+PYTEST_GATE = Path(__file__).resolve().parents[1] / "ci" / "pytest_gate.py"
+_FAILED_ID = re.compile(r"^✗ test step: (?:failed|error): (\S+)", re.MULTILINE)
+_MAX_IDS = 20
 
 
-def run_gates(cfg: Config, executor: Executor, worktree: Path, stage: str, base: str) -> list[str]:
-    """Run the configured gates of ``stage``; return a failure reason per failed run.
+@dataclass(frozen=True)
+class Failure:
+    """A failed gate run as the coder may see it: names and test ids, never raw output."""
 
-    Profile-aware gates run once per env profile. Every reason names the gate (and the
-    profile) and carries the tail of its output.
+    gate: str
+    tests: tuple[str, ...] = ()
+
+    def summary(self) -> str:
+        """Return the one-line reason for a retry prompt or an outcome."""
+        if not self.tests:
+            return self.gate
+        shown = ", ".join(self.tests[:_MAX_IDS])
+        more = f" and {len(self.tests) - _MAX_IDS} more" if len(self.tests) > _MAX_IDS else ""
+        return f"{self.gate}; failing tests: {shown}{more}"
+
+
+def failing_ids(output: str) -> tuple[str, ...]:
+    """Return the failing test ids that tools/ci/pytest_gate.py reported in ``output``."""
+    return tuple(dict.fromkeys(_FAILED_ID.findall(output)))
+
+
+def _log(log: Path, label: str, output: str) -> None:
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write(f"== {label}\n{output}\n")
+
+
+def run_gates(  # noqa: PLR0917 — one call site, every argument names the run
+    cfg: Config, executor: Executor, worktree: Path, stage: str, base: str, log: Path
+) -> list[Failure]:
+    """Run the configured gates of ``stage``; return a :class:`Failure` per failed run.
+
+    Profile-aware gates run once per env profile. The raw output goes only to ``log``.
     """
     failures = []
     profs = profiles(cfg, worktree)
@@ -197,41 +231,72 @@ def run_gates(cfg: Config, executor: Executor, worktree: Path, stage: str, base:
         try:
             argv = gate_argv(cfg, gate, worktree, base)
         except GateConfigError as exc:
-            failures.append(f"gate {gate.name}: {exc}")
+            _log(log, f"gate {gate.name}: configuration", str(exc))
+            failures.append(Failure(f"gate {gate.name} cannot run (configuration)"))
             continue
         for prof in profs if gate.profiles else [Profile("defaults", {})]:
             env = {"MEMINI_AUDIT_BASE": base, **prof.env}
             res = executor.run(argv, cwd=worktree, env=env, timeout=cfg.gate_timeout_s)
             label = f"gate {gate.name}" + (f" [{prof.name}]" if gate.profiles else "")
+            _log(log, f"{label} exit {res.code}", res.output)
             if res.code != 0:
-                failures.append(f"{label} failed: {_tail(res.output, cfg.failure_tail_chars)}")
+                failures.append(Failure(f"{label} failed", failing_ids(res.output)))
             elif gate.forbid_output and re.search(cfg.forbid_output, res.output):
-                failures.append(f"{label}: skipped or deselected tests are not allowed")
+                failures.append(Failure(f"{label}: skipped or deselected tests are not allowed"))
     return failures
+
+
+def pytest_gate_argv(python: str, cfg: Config, *targets: str) -> list[str]:
+    """Return the argv that runs ``targets`` through the orchestrator's own pytest gate.
+
+    Only its junit check counts (every collected test ran and passed, more than zero
+    collected): code that calls ``os._exit(0)`` cannot pass by exit code.
+    """
+    return [python, "-P", str(PYTEST_GATE), *cfg.pytest_args, *targets]
 
 
 def run_tests(
     cfg: Config, executor: Executor, worktree: Path, files: Sequence[str], prof: Profile
-) -> tuple[int, str]:
-    """Run pytest on ``files`` in ``worktree`` under ``prof``; return (exit code, output)."""
-    argv = [python_for(cfg, worktree), *cfg.test_args, *files]
-    res = executor.run(argv, cwd=worktree, env=dict(prof.env), timeout=cfg.gate_timeout_s)
-    return res.code, res.output
+) -> Result:
+    """Run the test ``files`` in ``worktree`` under ``prof`` through the pytest gate."""
+    argv = pytest_gate_argv(python_for(cfg, worktree), cfg, *files)
+    return executor.run(argv, cwd=worktree, env=dict(prof.env), timeout=cfg.gate_timeout_s)
+
+
+def defines_tests(worktree: Path, files: Sequence[str]) -> bool:
+    """Return True when the files define at least one test function (parsed, not imported)."""
+    for rel in files:
+        try:
+            tree = ast.parse((worktree / rel).read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        for node in tree.body:
+            bodies = (
+                node.body
+                if isinstance(node, ast.ClassDef) and node.name.startswith("Test")
+                else [node]
+            )
+            if any(
+                isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name.startswith("test")
+                for n in bodies
+            ):
+                return True
+    return False
 
 
 def qa_test_failures(
-    cfg: Config, executor: Executor, worktree: Path, files: Sequence[str]
-) -> list[str]:
-    """Return a reason per profile in which the sealed QA tests do not all pass."""
+    cfg: Config, executor: Executor, worktree: Path, files: Sequence[str], log: Path
+) -> list[Failure]:
+    """Return a :class:`Failure` per profile in which the sealed QA tests do not all pass."""
     out = []
     for prof in profiles(cfg, worktree):
-        code, output = run_tests(cfg, executor, worktree, files, prof)
-        if code != 0:
-            out.append(
-                f"QA acceptance tests failed [{prof.name}]: {_tail(output, cfg.failure_tail_chars)}"
-            )
-        elif re.search(cfg.forbid_output, output):
-            out.append(f"QA acceptance tests [{prof.name}]: skipped tests are not allowed")
+        res = run_tests(cfg, executor, worktree, files, prof)
+        label = f"QA acceptance tests [{prof.name}]"
+        _log(log, f"{label} exit {res.code}", res.output)
+        if res.code != 0:
+            out.append(Failure(f"{label} failed", failing_ids(res.output)))
+        elif re.search(cfg.forbid_output, res.output):
+            out.append(Failure(f"{label}: skipped tests are not allowed"))
     return out
 
 
@@ -249,9 +314,10 @@ def has_holdout(cfg: Config, task_id: str) -> bool:
 def holdout_passes(cfg: Config, repo: Path, commit: str, task_id: str, log: Path) -> bool:
     """Run the hold-out tests on the host against an export of ``commit``.
 
-    The output goes only to ``log`` (outside every worktree, for the owner); callers get a
-    bare pass/fail and report only :data:`HOLDOUT_FAILED`. The tests run once per env
-    profile (resolved from the exported commit) and must pass in every one.
+    They run through the pytest gate (junit, never the exit code alone), once per env
+    profile, with an allow-listed environment. The output goes only to ``log`` (outside
+    every worktree, for the owner); callers get a bare pass/fail and report only
+    :data:`HOLDOUT_FAILED`.
     """
     python = cfg.holdout_python or sys.executable
     tests = holdout_dir(cfg, task_id)
@@ -263,16 +329,16 @@ def holdout_passes(cfg: Config, repo: Path, commit: str, task_id: str, log: Path
         with tarfile.open(archive) as tar:
             tar.extractall(export, filter="data")
         ok = True
-        with log.open("a", encoding="utf-8") as fh:
-            for prof in profiles(cfg, export):
-                env = {
-                    "PYTHONPATH": f"{export / 'src'}:{export}",
-                    "PYTHONDONTWRITEBYTECODE": "1",
-                    **prof.env,
-                }
-                argv = [python, *cfg.test_args, "--rootdir", str(tests), str(tests)]
-                res = run_on_host(argv, cwd=export, env=env, timeout=cfg.gate_timeout_s)
-                fh.write(f"== {task_id} {commit[:10]} [{prof.name}] exit {res.code}\n")
-                fh.write(res.output + "\n")
-                ok = ok and res.code == 0 and not re.search(cfg.forbid_output, res.output)
+        for prof in profiles(cfg, export):
+            env = {
+                "PYTHONPATH": f"{export / 'src'}:{export}",
+                "PYTHONDONTWRITEBYTECODE": "1",
+                **prof.env,
+            }
+            argv = pytest_gate_argv(python, cfg, "--rootdir", str(tests), str(tests))
+            res = run_on_host(
+                argv, cwd=export, env_allow=cfg.env_allow, env=env, timeout=cfg.gate_timeout_s
+            )
+            _log(log, f"hold-out {task_id} {commit[:10]} [{prof.name}] exit {res.code}", res.output)
+            ok = ok and res.code == 0 and not re.search(cfg.forbid_output, res.output)
     return ok

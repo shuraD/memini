@@ -83,6 +83,13 @@ class State:
             recs: dict[str, dict[str, Any]] = self._read()["tasks"]
             return recs
 
+    def is_merged(self, task_id: str) -> bool:
+        """Return True when the task merged (a done queue entry counts)."""
+        with locked(self.lock):
+            data = self._read()
+        rec = data["tasks"].get(task_id)
+        return task_id in data["queue_done"] or bool(rec and rec["status"] in DONE_STATUSES)
+
     def task_ids(self) -> set[str]:
         """Return the ids of every task ever recorded."""
         return set(self.tasks())

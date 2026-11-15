@@ -37,6 +37,7 @@ def _engine(role: str) -> int:
     log.mkdir(parents=True, exist_ok=True)
     n = len(list(log.glob(f"{role}-*.txt"))) + 1
     (log / f"{role}-{n}.txt").write_text(sys.stdin.read(), encoding="utf-8")
+    (log / f"env-{role}-{n}.txt").write_text(" ".join(sorted(_secrets())), encoding="utf-8")
     steps = _plan("FAKE_PLAN").get(role, [])
     assert isinstance(steps, list)
     step = steps[min(n, len(steps)) - 1] if steps else {}
@@ -65,6 +66,13 @@ def _venv(target: str) -> int:
     return 0
 
 
+SECRETS = ("ANTHROPIC_API_KEY", "MEMINI_ORCH_SECRET", "GEMINI_API_KEY")
+
+
+def _secrets() -> list[str]:
+    return [k for k in SECRETS if k in os.environ]
+
+
 def _gate(name: str) -> int:
     log = Path(os.environ["FAKE_LOG"])
     log.mkdir(parents=True, exist_ok=True)
@@ -76,7 +84,12 @@ def _gate(name: str) -> int:
         found = importlib.util.find_spec(str(step["must_not_import"])) is not None
         probe = " import=" + ("PRESENT" if found else "absent")
     with (log / "gates.log").open("a", encoding="utf-8") as fh:
-        fh.write(f"{name} flag={flag} cwd={Path.cwd().name}{probe}\n")
+        fh.write(f"{name} flag={flag} cwd={Path.cwd().name}{probe} env={','.join(_secrets())}\n")
+    calls = (log / "gates.log").read_text(encoding="utf-8").count(f"{name} flag=")
+    if step.get("tamper") and calls == 1:
+        target = Path(str(step["tamper"]))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("tampered\n", encoding="utf-8")
     marker = log / f"moved-{name}"
     if step.get("move_main") and not marker.exists():
         marker.write_text("x", encoding="utf-8")
@@ -90,7 +103,7 @@ def _gate(name: str) -> int:
         )
     if "say" in step:
         print(step["say"])  # noqa: T201 — the fake gate reports on stdout
-    return 1 if step.get("fail") else 0
+    return 1 if step.get("fail") or step.get("fail_on_call") == calls else 0
 
 
 if __name__ == "__main__":

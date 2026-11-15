@@ -64,8 +64,7 @@ def _cmd_run(cfg: config.Config, args: argparse.Namespace) -> int:
 
 
 def _done(st: state.State, task_id: str) -> bool:
-    rec = st.task(task_id)
-    return task_id in st.queue_done() or bool(rec and rec["status"] == pipeline.MERGED)
+    return st.is_merged(task_id)
 
 
 def _deps(entry: state.QueueEntry) -> tuple[str, ...]:

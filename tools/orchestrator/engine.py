@@ -104,11 +104,19 @@ def settings(
     writable: Sequence[str],
     guard_config: Path,
     protected: Sequence[str] | None = None,
+    deny_read: Sequence[Path] = (),
+    bash_roots: Sequence[Path] = (),
 ) -> dict[str, Any]:
-    """Return the Claude settings for one step: deny rules plus the guard hook."""
+    """Return the Claude settings for one step: deny rules plus the guard hook.
+
+    ``deny_read`` adds private directories for this step (the QA agent's reference repos);
+    ``bash_roots`` are directories outside the worktree that Bash arguments may name (the
+    coder's reference repository, read with git only).
+    """
     protected = list(protected if protected is not None else (*cfg.protected, *cfg.guard_protected))
+    private = [*private_paths(cfg), *((p, True) for p in deny_read)]
     deny = []
-    for path, is_dir in private_paths(cfg):
+    for path, is_dir in private:
         deny += [_rule("Read", path, is_dir), _rule("Edit", path, is_dir)]
     for entry in protected:
         if entry.startswith("**/"):
@@ -119,7 +127,8 @@ def settings(
         "worktree": str(worktree),
         "writable": list(writable),
         "protected": protected,
-        "deny_read": [str(p) for p, _ in private_paths(cfg)],
+        "deny_read": [str(p) for p, _ in private],
+        "bash_roots": [str(p) for p in bash_roots],
     }
     guard_config.parent.mkdir(parents=True, exist_ok=True)
     guard_config.write_text(json.dumps(guard, indent=2), encoding="utf-8")

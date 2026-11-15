@@ -52,6 +52,7 @@ class EngineSpec:
     author: str
     stdin: bool
     roles: Mapping[str, tuple[str, ...]]
+    env: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,12 +94,12 @@ class Config:
     holdout_python: str
     python: str
     setup: tuple[tuple[str, ...], ...]
-    test_args: tuple[str, ...]
+    pytest_args: tuple[str, ...]
+    env_allow: tuple[str, ...]
     max_coder_attempts: int
     merge_retries: int
     engine_timeout_s: int
     gate_timeout_s: int
-    failure_tail_chars: int
     max_budget_usd: str
     forbid_output: str
     identity_name: str
@@ -169,7 +170,9 @@ def _engines(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, EngineSpec]:
         if set(roles) != {"qa", "coder", "audit"}:
             msg = f"engine {name}: needs qa, coder and audit commands"
             raise ConfigError(msg)
-        out[name] = EngineSpec(name, str(e.get("author", name)), bool(e.get("stdin")), roles)
+        out[name] = EngineSpec(
+            name, str(e.get("author", name)), bool(e.get("stdin")), roles, _strs(e, "env")
+        )
     return out
 
 
@@ -199,6 +202,10 @@ def load_config(
                 raise ConfigError(msg)
     if _inside(paths["worktrees_dir"], repo):
         msg = "worktrees_dir must be outside the repository"
+        raise ConfigError(msg)
+    env_allow = _strs(raw, "env_allow")
+    if any(name.startswith("MEMINI_ORCH_") for name in env_allow):
+        msg = "env_allow must not pass MEMINI_ORCH_* variables to an executor"
         raise ConfigError(msg)
     flags = raw.get("flags", {})
     identity = raw.get("identity", {})
@@ -244,12 +251,12 @@ def load_config(
         holdout_python=str(raw.get("holdout_python", "")),
         python=str(raw["python"]),
         setup=tuple(tuple(cmd) for cmd in raw.get("setup", [])),
-        test_args=_strs(raw, "test_args"),
+        pytest_args=_strs(raw, "pytest_args"),
+        env_allow=env_allow,
         max_coder_attempts=int(raw["max_coder_attempts"]),
         merge_retries=int(raw["merge_retries"]),
         engine_timeout_s=int(raw["engine_timeout_s"]),
         gate_timeout_s=int(raw["gate_timeout_s"]),
-        failure_tail_chars=int(raw["failure_tail_chars"]),
         max_budget_usd=str(raw["max_budget_usd"]),
         forbid_output=str(raw["forbid_output"]),
         identity_name=str(identity["name"]),

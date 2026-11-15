@@ -8,13 +8,15 @@ main_branch = "main"
 branch_prefix = "orch/"
 worker = "default"
 default_engine = "claude"
-# engine per role; empty = automatic: QA and audit use a different engine from the coder
-# when one in engine_preference is installed, else the coder's engine
-qa_engine = ""
+# engine per role; empty = automatic: a different engine from the coder's when one in
+# engine_preference is installed, else the coder's. QA and audit stay on Claude by default:
+# only Claude loads the guard hook (the hold-out and private dirs stay unread) and runs the
+# audit with no tools at all (--tools "").
+qa_engine = "claude"
 # Until the microVM executor exists, keep the coder on Claude (the default engine): Gemini
 # and OpenCode load no guard hook, so as coders they could read the hold-out directory.
 coder_engine = ""
-audit_engine = ""
+audit_engine = "claude"
 engine_preference = ["claude", "gemini", "opencode"]
 # where agent steps and gate commands run: "local" (a subprocess in the task worktree).
 # The hold-out gate never runs in the executor: it runs on the host, against the slice's
@@ -51,7 +53,16 @@ holdout_required = true
 
 python = ".venv/bin/python"                # relative paths resolve inside each worktree
 setup = [["uv", "sync", "--frozen"]]        # run in every new worktree
-test_args = ["-P", "-m", "pytest", "-q", "-o", "addopts=", "-p", "no:cacheprovider"]
+# pytest arguments for the QA and hold-out runs; they run through tools/ci/pytest_gate.py
+# (the orchestrator's own copy), so only a junit report showing every collected test passed
+# counts, never the exit code
+pytest_args = ["-o", "addopts=", "-p", "no:cacheprovider"]
+# the only variables any executor or host run sees (no API keys, no MEMINI_ORCH_*); an
+# engine adds its own list (engines.<name>.env) for its agent steps only
+env_allow = [
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR",
+  "TZ", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "XDG_CACHE_HOME",
+]
 
 # `reference: [<repo>@]<branch>` in a spec is read-only context for the coder only. <repo>
 # is a name from this table (or a path); the orchestrator never fetches, copies or merges it.
@@ -61,7 +72,6 @@ max_coder_attempts = 2
 merge_retries = 3
 engine_timeout_s = 1800
 gate_timeout_s = 1800
-failure_tail_chars = 3000
 max_budget_usd = "3"
 # a test gate whose output matches this fails: zero skips
 forbid_output = '\b\d+ (skipped|xfailed|xpassed|deselected)\b'
@@ -84,8 +94,12 @@ on_value = "1"
 env = {}
 
 [profiles.all-flags-on]
-all_flags = true
+all_flags = true          # the flags file must exist: a missing file fails the task
 
+# Not mirrored from ci.yml: "Select the pull request head" and "Audit range" (CI plumbing;
+# the orchestrator sets MEMINI_AUDIT_BASE itself), "Merge gate - review verdict" (the review
+# files are private, ADR-0002, and the one-shot diff audit takes that role here) and
+# "Merge gate - acceptance benchmark" (opt-in in CI too: needs local Neo4j and model calls).
 # Gates: a ci_step is the `run:` of the ci.yml step whose name starts with it (the same
 # commands CI runs); `run` is an argv. Placeholders: {base} {python} {workdir}.
 # Stages: "slice" (the coder's work, before the audit), "merge" (the squash commit).
@@ -157,27 +171,29 @@ stages = ["merge"]
 # the path gate covers every engine.
 [engines.claude]
 author = "Claude"
+env = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR"]
 stdin = true
 qa = [
-  "claude", "-p", "--settings", "{settings}", "--setting-sources", "project,local",
+  "claude", "-p", "--settings", "{settings}", "--setting-sources", "",
   "--strict-mcp-config", "--permission-mode", "dontAsk", "--permission-prompts", "none",
   "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run pytest *)",
   "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
 ]
 coder = [
-  "claude", "-p", "--settings", "{settings}", "--setting-sources", "project,local",
+  "claude", "-p", "--settings", "{settings}", "--setting-sources", "",
   "--strict-mcp-config", "--permission-mode", "dontAsk", "--permission-prompts", "none",
   "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run pytest *),Bash(uv run ruff *),Bash(uv run mypy *){reference_tools}",
   "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
 ]
 audit = [
-  "claude", "-p", "--setting-sources", "project,local", "--strict-mcp-config",
+  "claude", "-p", "--setting-sources", "", "--strict-mcp-config",
   "--permission-mode", "dontAsk", "--permission-prompts", "none", "--tools", "",
   "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
 ]
 
 [engines.gemini]
 author = "Gemini"
+env = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT", "GOOGLE_GENAI_USE_VERTEXAI"]
 stdin = false
 qa = ["gemini", "--approval-mode", "auto_edit", "-p", "{prompt}"]
 coder = ["gemini", "--approval-mode", "auto_edit", "-p", "{prompt}"]
@@ -185,6 +201,7 @@ audit = ["gemini", "--approval-mode", "plan", "-p", "{prompt}"]
 
 [engines.opencode]
 author = "OpenCode"
+env = ["OPENCODE_CONFIG"]
 stdin = false
 qa = ["opencode", "run", "--dir", "{workdir}", "{prompt}"]
 coder = ["opencode", "run", "--dir", "{workdir}", "{prompt}"]

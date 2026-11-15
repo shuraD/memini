@@ -7,9 +7,12 @@ Usage (from the generated settings file)::
 The config names the worktree, the writable path prefixes, the protected entries (they win
 over the writable ones) and the private paths no step may read. A write outside the
 worktree, to a protected path or outside the writable prefixes is blocked, and so is any
-read of a private path: exit code 2 with the reason on stderr, which Claude shows the agent.
-Malformed input is blocked too (fail closed). Bash is checked only for a private path in
-the command text; that is a hint, not security: the orchestrator's path gate decides.
+read of a private path, or of a directory that contains one (Grep/Glob ``path: ../..``,
+Glob patterns resolved against their path): exit code 2 with the reason on stderr, which
+Claude shows the agent. A Bash argument that resolves outside the worktree (or the
+configured read roots, e.g. a reference repository) is refused, and so is shell expansion.
+Malformed input is blocked too (fail closed). This is an early warning, not the sandbox:
+the orchestrator's path gate and fingerprint checks decide.
 
 Standard library only, so it runs with ``python -P`` from any interpreter.
 """
@@ -17,6 +20,7 @@ Standard library only, so it runs with ``python -P`` from any interpreter.
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -43,7 +47,25 @@ def _resolve(raw: str, cwd: str) -> Path:
 
 
 def _private(path: Path, cfg: dict[str, Any]) -> bool:
-    return any(_within(path, Path(p).resolve()) for p in cfg["deny_read"])
+    """Return True when ``path`` is inside a private path or contains one (``../..``)."""
+    for raw in cfg["deny_read"]:
+        private = Path(raw).resolve()
+        if _within(path, private) or _within(private, path):
+            return True
+    return False
+
+
+_GLOB_CHARS = frozenset("*?[{")
+
+
+def _static_prefix(pattern: str) -> str:
+    """Return the leading path components of a glob pattern that hold no wildcard."""
+    parts = []
+    for part in Path(pattern).parts:
+        if _GLOB_CHARS & set(part):
+            break
+        parts.append(part)
+    return str(Path(*parts)) if parts else "."
 
 
 def _write_problem(tool: str, raw: object, cwd: str, cfg: dict[str, Any]) -> str | None:
@@ -62,11 +84,38 @@ def _write_problem(tool: str, raw: object, cwd: str, cfg: dict[str, Any]) -> str
 
 
 def _read_problem(tool: str, args: dict[str, Any], cwd: str, cfg: dict[str, Any]) -> str | None:
-    for key in ("file_path", "path", "notebook_path", "pattern"):
-        raw = args.get(key)
-        absolute = bool(raw) and (key != "pattern" or Path(str(raw)).is_absolute())
-        if absolute and _private(_resolve(str(raw), cwd), cfg):
-            return f"{tool}: that path is private to the orchestrator"
+    base = str(args.get("path") or args.get("file_path") or args.get("notebook_path") or cwd)
+    targets = [_resolve(base, cwd)]
+    # a Glob pattern (or a Grep glob filter) is resolved against its path, up to its first
+    # wildcard: "../../holdout/**" with path "." reaches the hold-out too
+    keys = {"Glob": ("pattern",), "Grep": ("glob",)}.get(tool, ())
+    targets += [
+        _resolve(_static_prefix(str(Path(base) / str(args[k]))), cwd) for k in keys if args.get(k)
+    ]
+    if any(_private(t, cfg) for t in targets):
+        return f"{tool}: that path is private to the orchestrator"
+    return None
+
+
+def _bash_problem(command: str, cwd: str, cfg: dict[str, Any]) -> str | None:
+    """Refuse a command whose arguments reach outside the worktree (and its read roots)."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return "Bash: the command cannot be parsed"
+    roots = [
+        Path(cfg["worktree"]).resolve(),
+        *(Path(r).resolve() for r in cfg.get("bash_roots", [])),
+    ]
+    for token in tokens:
+        if "$" in token or "`" in token:
+            return "Bash: shell expansion is not allowed in orchestrator steps"
+        for candidate in {token, token.split("=", 1)[-1]}:
+            if not candidate:
+                continue
+            path = _resolve(candidate, cwd)
+            if _private(path, cfg) or not any(_within(path, r) for r in roots):
+                return f"Bash: argument {candidate!r} is outside the task worktree"
     return None
 
 
@@ -79,9 +128,8 @@ def decide(event: dict[str, Any], cfg: dict[str, Any]) -> str | None:
         return _write_problem(tool, args.get("file_path") or args.get("notebook_path"), cwd, cfg)
     if tool in READ_TOOLS:
         return _read_problem(tool, args, cwd, cfg)
-    text = str(args.get("command", "")) if tool == "Bash" else ""
-    if text and any(str(Path(p).resolve()) in text or p in text for p in cfg["deny_read"]):
-        return "Bash: the command names a path private to the orchestrator"
+    if tool == "Bash":
+        return _bash_problem(str(args.get("command", "")), cwd, cfg)
     return None
 
 

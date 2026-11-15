@@ -18,14 +18,23 @@ class GitError(RuntimeError):
 
 
 def git(
-    repo: Path, *args: str, env: Mapping[str, str] | None = None, check: bool = True
+    repo: Path,
+    *args: str,
+    env: Mapping[str, str] | None = None,
+    check: bool = True,
+    base_env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run ``git -C repo args`` without inherited GIT_* variables; raise on failure if ``check``."""
+    """Run ``git -C repo args``; raise on failure if ``check``.
+
+    The environment is the orchestrator's own without GIT_* variables, or ``base_env``
+    (an allow-listed one, for a commit whose hooks run repository code), plus ``env``.
+    """
+    full = clean_env(env) if base_env is None else {**base_env, **(env or {})}
     res = subprocess.run(  # noqa: S603 — fixed git binary, our own args, no shell
         [_GIT, "-C", str(repo), *args],
         capture_output=True,
         text=True,
-        env=clean_env(env),
+        env=full,
         check=False,
     )
     if check and res.returncode != 0:

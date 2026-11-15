@@ -177,6 +177,11 @@ def check(
             + f": {', '.join(paths)}"
         )
     problems += [
+        f"declared path {p} is outside the configured allow list"
+        for p in paths
+        if not any(gates.matches(a, p) or a == p for a in cfg.allow)
+    ]
+    problems += [
         f"declared path {p} is protected"
         for p in paths
         if any(gates.matches(x, p) for x in cfg.protected)
