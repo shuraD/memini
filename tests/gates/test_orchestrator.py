@@ -130,6 +130,7 @@ def _cfg(env: dict[str, Any], **extra: Any) -> config.Config:
         "env_allow": ENV_ALLOW,
         "profiles": {"defaults": {"env": {}}},
         "local_coder_engines": ["fake"],
+        "executor": "local",
     }
     over.update(extra)
     return config.load_config(env["repo"], overrides=over, env={})
@@ -451,6 +452,7 @@ def _overrides(env: dict[str, Any], **extra: Any) -> dict[str, Any]:
         "env_allow": ENV_ALLOW,
         "profiles": {"defaults": {"env": {}}},
         "local_coder_engines": ["fake"],
+        "executor": "local",
         "engines": {
             "fake": {
                 "author": "Claude",
@@ -1197,7 +1199,7 @@ def test_holdout_and_state_never_enter_the_executor(
     for call in calls:
         assert holdout not in call
         assert "SECRET-HOLDOUT-TEXT" not in call
-    with pytest.raises(ValueError, match="not available"):
+    with pytest.raises(ValueError, match="serves only 'local'"):
         executor.executor_for("microvm")
 
 
@@ -1787,3 +1789,48 @@ def test_r3_4_release_takes_the_run_lock(
         assert cli.main(args) == 1
     assert "another orchestrator run is active" in capsys.readouterr().out
     assert state.State(cfg).task("T-other-001")["status"] == "active"
+
+
+def test_docker_executor_is_default_when_available(env: dict[str, Any]) -> None:
+    """Executor auto-detects docker; local stays available and is what the fixtures pin."""
+    docker = config.load_config(
+        env["repo"], overrides={"state_dir": str(env["tmp"] / "s"), "docker_cli": "docker"}, env={}
+    )
+    assert docker.executor in ("docker", "local")  # whichever `docker info` says here
+    forced = config.load_config(
+        env["repo"],
+        overrides={"state_dir": str(env["tmp"] / "s"), "docker_cli": "no-such-docker-cli"},
+        env={},
+    )
+    assert forced.executor == "local"  # no docker CLI -> local
+
+
+def test_commit_identity_defaults_to_the_repo_git_user(env: dict[str, Any]) -> None:
+    cfg = config.load_config(env["repo"], overrides={"state_dir": str(env["tmp"] / "s")}, env={})
+    assert cfg.identity_name == "memini-author"  # the fixture's git user, not a hardcoded value
+    assert cfg.identity_email == "memini-author@example.invalid"
+    _git(env["repo"], "config", "user.name", "Owner")
+    _git(env["repo"], "config", "user.email", "t@example.invalid")
+    cfg2 = config.load_config(env["repo"], overrides={"state_dir": str(env["tmp"] / "s2")}, env={})
+    assert cfg2.identity_name == "Owner"
+    assert cfg2.identity_email == "t@example.invalid"
+    pinned = config.load_config(
+        env["repo"],
+        overrides={
+            "state_dir": str(env["tmp"] / "s3"),
+            "identity": {"name": "A", "email": "a@b.c"},
+        },
+        env={},
+    )
+    assert (pinned.identity_name, pinned.identity_email) == ("A", "a@b.c")
+
+
+def test_the_squash_commit_has_no_co_authored_by_line(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    out = pipeline.run_task(_cfg(env), _task(env))
+    assert out.status == "merged", out.reason
+    message = _git(env["repo"], "log", "-1", "--format=%B", "main")
+    assert "Co-Authored-By" not in message
+    assert "Co-authored-by" not in message

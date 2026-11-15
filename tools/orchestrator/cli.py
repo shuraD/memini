@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from tools.orchestrator import config, pipeline, spec, state
+from tools.orchestrator import config, dockerexec, pipeline, spec, state
 from tools.orchestrator.executor import clean_env
 
 EPILOG = f"""\
@@ -165,6 +165,22 @@ def _cmd_status(cfg: config.Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sandbox_pytest(cfg: config.Config, args: argparse.Namespace) -> int:
+    """Run pytest on the current directory inside a sandbox container (never on the host).
+
+    This is what the coder's ``Bash(... sandbox-pytest ...)`` rule allows, so the agent CLI
+    never runs coder-written code on the host. With executor = local it is refused.
+    """
+    if cfg.executor != "docker":
+        print("sandbox-pytest needs executor = docker (coder code must not run on the host)")
+        return 2
+    sandbox = dockerexec.build_executor(cfg, cfg.env_allow)
+    argv = ["uv", "run", "python", "-P", "-m", "pytest", "-q", "-o", "addopts=", *args.pytest_args]
+    res = sandbox.run(argv, cwd=Path.cwd(), timeout=cfg.docker_run_timeout_s)
+    print(res.output, end="")
+    return res.code
+
+
 def _cmd_release(cfg: config.Config, args: argparse.Namespace) -> int:
     st = state.State(cfg)
     try:
@@ -212,6 +228,8 @@ def parser() -> argparse.ArgumentParser:
     rq.add_argument("--worker")
     cs = add("check-spec", "the $0 pre-dispatch check of spec files")
     cs.add_argument("specs", nargs="+")
+    sp = add("sandbox-pytest", "run pytest in a sandbox container (the coder's test wrapper)")
+    sp.add_argument("pytest_args", nargs="*")
     add("status", "digest of the queue, task states and inbox")
     rel = add("release", "mark a task released (frees its paths and worker)")
     rel.add_argument("task_id")
@@ -223,6 +241,7 @@ _COMMANDS = {
     "run": _cmd_run,
     "run-queue": _cmd_run_queue,
     "check-spec": _cmd_check_spec,
+    "sandbox-pytest": _cmd_sandbox_pytest,
     "status": _cmd_status,
     "release": _cmd_release,
 }

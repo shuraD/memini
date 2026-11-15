@@ -125,9 +125,9 @@ class LocalExecutor:
 
 
 def executor_for(name: str, env_allow: Sequence[str] = ()) -> Executor:
-    """Return the executor called ``name`` (only ``local`` exists)."""
+    """Return the local executor (the docker one is built by :func:`build_executor`)."""
     if name != "local":
-        msg = f"executor {name!r} is not available"
+        msg = f"executor {name!r} needs build_executor(cfg); executor_for serves only 'local'"
         raise ValueError(msg)
     return LocalExecutor(env_allow)
 

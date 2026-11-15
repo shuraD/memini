@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -77,6 +79,12 @@ class Config:
     role_engines: Mapping[str, str]
     engine_preference: tuple[str, ...]
     executor: str
+    docker_cli: str
+    docker_image: str
+    dockerfile: str
+    docker_memory: str
+    docker_pids: int
+    docker_run_timeout_s: int
     allow: tuple[str, ...]
     deny_patterns: tuple[str, ...]
     ast_forbidden_calls: tuple[str, ...]
@@ -111,6 +119,7 @@ class Config:
     gate_timeout_s: int
     max_budget_usd: str
     forbid_output: str
+    sandbox_skip_markers: tuple[str, ...]
     identity_name: str
     identity_email: str
     flags_file: str
@@ -185,6 +194,34 @@ def _engines(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, EngineSpec]:
     return out
 
 
+def _git_user(repo: Path, field: str) -> str:
+    """Return the repository's configured git ``user.<field>`` (name or email), or ""."""
+    res = subprocess.run(  # noqa: S603 — fixed git args, no shell
+        ["git", "-C", str(repo), "config", "--get", f"user.{field}"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def _default_executor(raw: Mapping[str, Any]) -> str:
+    """Return "docker" when the configured docker CLI answers ``docker info``, else "local"."""
+    cli = str(raw.get("docker_cli", "docker"))
+    if shutil.which(cli) is None:
+        return "local"
+    try:
+        ok = (
+            subprocess.run(  # noqa: S603 — fixed CLI from config, no shell
+                [cli, "info"], capture_output=True, timeout=20, check=False
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "local"
+    return "docker" if ok else "local"
+
+
 def load_config(
     repo: Path,
     *,
@@ -225,6 +262,11 @@ def load_config(
         raise ConfigError(msg)
     flags = raw.get("flags", {})
     identity = raw.get("identity", {})
+    ident_name = str(identity.get("name") or "") or _git_user(repo, "name")
+    ident_email = str(identity.get("email") or "") or _git_user(repo, "email")
+    if not ident_name or not ident_email:
+        msg = "no commit identity: set [identity] name/email or the repo's git user.name/user.email"
+        raise ConfigError(msg)
     profiles = tuple(
         ProfileSpec(name, dict(p.get("env", {})), bool(p.get("all_flags", False)))
         for name, p in raw.get("profiles", {}).items()
@@ -235,8 +277,9 @@ def load_config(
         if name not in engines:
             msg = f"unknown engine {name!r} (configured: {sorted(engines)})"
             raise ConfigError(msg)
-    if raw.get("executor", "local") != "local":
-        msg = f"executor {raw.get('executor')!r} is not available (only 'local')"
+    executor = str(raw.get("executor", "") or _default_executor(raw))
+    if executor not in ("local", "docker"):
+        msg = f"executor {executor!r} is not available (use 'local' or 'docker')"
         raise ConfigError(msg)
     return Config(
         repo=repo,
@@ -246,7 +289,13 @@ def load_config(
         default_engine=str(raw["default_engine"]),
         role_engines=role_engines,
         engine_preference=_strs(raw, "engine_preference"),
-        executor="local",
+        executor=executor,
+        docker_cli=str(raw.get("docker_cli", "docker")),
+        docker_image=str(raw.get("docker_image", "memini-orchestrator-sandbox")),
+        dockerfile=str(raw.get("dockerfile", "tools/orchestrator/Dockerfile")),
+        docker_memory=str(raw.get("docker_memory", "2g")),
+        docker_pids=int(raw.get("docker_pids", 512)),
+        docker_run_timeout_s=int(raw.get("docker_run_timeout_s", 1800)),
         allow=_strs(raw, "allow"),
         deny_patterns=deny,
         ast_forbidden_calls=_strs(raw, "ast_forbidden_calls"),
@@ -283,8 +332,9 @@ def load_config(
         gate_timeout_s=int(raw["gate_timeout_s"]),
         max_budget_usd=str(raw["max_budget_usd"]),
         forbid_output=str(raw["forbid_output"]),
-        identity_name=str(identity["name"]),
-        identity_email=str(identity["email"]),
+        sandbox_skip_markers=_strs(raw, "sandbox_skip_markers"),
+        identity_name=ident_name,
+        identity_email=ident_email,
         flags_file=str(flags.get("file", "")),
         flags_function=str(flags.get("function", "_env_bool")),
         flags_on_value=str(flags.get("on_value", "1")),

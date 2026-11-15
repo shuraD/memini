@@ -22,10 +22,21 @@ coder_engine = ""
 local_coder_engines = ["claude"]
 audit_engine = "claude"
 engine_preference = ["claude", "gemini", "opencode"]
-# where agent steps and gate commands run: "local" (a subprocess in the task worktree).
-# The hold-out gate never runs in the executor: it runs on the host, against the slice's
-# commit, so a future sandboxed executor never sees the hold-out, state, inbox or keys.
-executor = "local"
+# Where coder-written code runs. "docker" (the default when docker is available) runs every
+# such command in a fresh --network none container with an allow-listed environment and no
+# host mount; "local" (a subprocess in the worktree) stays for the orchestrator's own tests
+# and fixtures. Empty = "docker" if `docker info` succeeds, else "local".
+executor = ""
+# docker sandbox
+docker_cli = "docker"
+docker_image = "memini-orchestrator-sandbox"   # tagged by the uv.lock hash
+dockerfile = "tools/orchestrator/Dockerfile"
+docker_memory = "2g"
+docker_pids = 512
+docker_run_timeout_s = 1800
+# pytest markers skipped in the sandbox and reported, never hidden: integration tests need a
+# per-slice Neo4j, which is a later step. The orchestrator deselects them with -m and says so.
+sandbox_skip_markers = ["integration"]
 # interpreter for the host-side hold-out run; empty = the orchestrator's own interpreter
 holdout_python = ""
 
@@ -123,7 +134,7 @@ engine_timeout_s = 1800
 gate_timeout_s = 1800
 max_budget_usd = "3"
 # a test gate whose output matches this fails: zero skips
-forbid_output = '\b\d+ (skipped|xfailed|xpassed|deselected)\b'
+forbid_output = '\b\d+ (skipped|xfailed|xpassed)\b'  # deselection is ours (sandbox markers)
 
 # import name of a declared dependency when it differs from the distribution name
 [dependency_modules]
@@ -132,9 +143,13 @@ pyyaml = "yaml"
 [reference_repos]
 # private = "../memini"
 
+# Author and committer of the one squash commit. Empty = the repository's own git
+# user.name / user.email (owner 2026-11-15: every commit is authored by the owner with their
+# GitHub noreply address; the exact value is set here when the owner provides it). No
+# Co-Authored-By line is ever added.
 [identity]
-name = "memini-author"
-email = "memini-author@example.invalid"
+name = ""
+email = ""
 
 # env profiles: each profile-aware gate (QA tests, hold-out, gates with profiles = true)
 # runs once per profile. all_flags = true sets every flag the flags file reads to on_value.
@@ -229,13 +244,13 @@ stdin = true
 qa = [
   "claude", "-p", "--settings", "{settings}", "--setting-sources", "",
   "--strict-mcp-config", "--permission-mode", "dontAsk", "--permission-prompts", "none",
-  "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run pytest *)",
+  "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run python -m tools.orchestrator sandbox-pytest *)",
   "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
 ]
 coder = [
   "claude", "-p", "--settings", "{settings}", "--setting-sources", "",
   "--strict-mcp-config", "--permission-mode", "dontAsk", "--permission-prompts", "none",
-  "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run pytest *),Bash(uv run ruff *),Bash(uv run mypy *){reference_tools}",
+  "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run python -m tools.orchestrator sandbox-pytest *),Bash(uv run ruff *),Bash(uv run mypy *){reference_tools}",
   "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
 ]
 audit = [

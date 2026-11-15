@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools import ledger
-from tools.orchestrator import astcheck, audit, engine, gates, gitops, spec, state
+from tools.orchestrator import astcheck, audit, dockerexec, engine, gates, gitops, spec, state
 from tools.orchestrator.config import Config
 from tools.orchestrator.executor import Executor, Result, allowed_env, executor_for
 
@@ -168,7 +168,11 @@ class _Run:
         engines: dict[str, str],
     ) -> None:
         self.cfg, self.task_id, self.sp, self.paths, self.engines = cfg, task_id, sp, paths, engines
-        self.ex = _Watched(executor_for(cfg.executor, cfg.env_allow), self)
+        self.sandbox = (
+            dockerexec.build_executor(cfg, cfg.env_allow) if cfg.executor == "docker" else None
+        )
+        inner = self.sandbox or executor_for(cfg.executor, cfg.env_allow)
+        self.ex = _Watched(inner, self)
         self.repo = cfg.repo
         self.branch = cfg.branch_prefix + task_id
         self.wt = cfg.worktrees_dir / task_id
@@ -198,6 +202,16 @@ class _Run:
                 or str(home / ".local" / "share" / "uv" / "python"),
             }
             return self._go_guarded()
+
+    def _skip_markers(self) -> tuple[str, ...]:
+        """Return the pytest markers deselected in the sandbox (none for the local executor)."""
+        return self.cfg.sandbox_skip_markers if self.sandbox is not None else ()
+
+    def _sandbox_note(self) -> str:
+        markers = self._skip_markers()
+        if not markers:
+            return ""
+        return f" [sandbox: {', '.join(markers)} tests not run (per-slice Neo4j is a later step)]"
 
     def _base_env(self) -> dict[str, str]:
         """Return the env for git commands that may run hooks (allow-listed, private HOME)."""
@@ -407,6 +421,8 @@ class _Run:
             self.run_dir / "holdout.log",
             gate_script=self.gate_script,
             env=self.gate_env,
+            sandbox=self.sandbox,
+            markers=self._skip_markers(),
         )
         self.watch("the hold-out run", before)
         return [] if ok else [gates.Failure(gates.HOLDOUT_FAILED)]
@@ -569,6 +585,7 @@ class _Run:
             test_ids=frozenset(gates.test_node_ids(worktree, sorted({*files, *tracked_tests}))),
             env=self.gate_env,
             gate_script=self.gate_script,
+            skip_markers=self._skip_markers(),
         )
 
     def _gate_slice(self, snap: str, base: str, files: list[str]) -> list[gates.Failure]:
@@ -620,8 +637,9 @@ class _Run:
                     raise _Stop(FAILED, "merge gates failed: " + reason[:1500])
                 if self._advance(squash, main_sha):
                     kept = self._cleanup(squash)
+                    note = self._sandbox_note()
                     return Outcome(
-                        self.task_id, MERGED, f"merged as {squash[:10]}{kept}", None, squash
+                        self.task_id, MERGED, f"merged as {squash[:10]}{kept}{note}", None, squash
                     )
             raise _Stop(FAILED, f"main moved {cfg.merge_retries} times during the merge")
 

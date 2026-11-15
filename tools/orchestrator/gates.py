@@ -258,6 +258,7 @@ class GateRun:
     test_ids: frozenset[str]  # node ids of the sealed QA tests and the tracked tests
     env: Mapping[str, str]  # e.g. a private HOME
     gate_script: Path  # the run's private copy of tools/ci/pytest_gate.py
+    skip_markers: tuple[str, ...] = ()  # markers deselected in the sandbox (e.g. integration)
 
 
 def run_gates(
@@ -291,20 +292,29 @@ def run_gates(
     return failures
 
 
-def pytest_gate_argv(python: str, cfg: Config, script: Path, *targets: str) -> list[str]:
+def _marker_args(markers: Sequence[str]) -> list[str]:
+    """Return ``-m "not (a or b)"`` to deselect the sandbox-skipped markers, or nothing."""
+    return ["-m", "not (" + " or ".join(markers) + ")"] if markers else []
+
+
+def pytest_gate_argv(
+    python: str, cfg: Config, script: Path, *targets: str, markers: Sequence[str] = ()
+) -> list[str]:
     """Return the argv that runs ``targets`` through the orchestrator's own pytest gate.
 
     Only its junit check counts (every collected test ran and passed, more than zero
     collected): code that calls ``os._exit(0)`` cannot pass by exit code.
     """
-    return [python, "-P", str(script), *cfg.pytest_args, *targets]
+    return [python, "-P", str(script), *cfg.pytest_args, *_marker_args(markers), *targets]
 
 
 def run_tests(
     cfg: Config, executor: Executor, run: GateRun, files: Sequence[str], prof: Profile
 ) -> Result:
     """Run the test ``files`` in the gate checkout under ``prof`` through the pytest gate."""
-    argv = pytest_gate_argv(python_for(cfg, run.worktree), cfg, run.gate_script, *files)
+    argv = pytest_gate_argv(
+        python_for(cfg, run.worktree), cfg, run.gate_script, *files, markers=run.skip_markers
+    )
     env = {**run.env, **prof.env}
     return executor.run(argv, cwd=run.worktree, env=env, timeout=cfg.gate_timeout_s)
 
@@ -373,13 +383,17 @@ def holdout_passes(
     *,
     gate_script: Path = PYTEST_GATE,
     env: Mapping[str, str] | None = None,
+    sandbox: Executor | None = None,
+    markers: Sequence[str] = (),
 ) -> bool:
     """Run the hold-out tests on the host against an export of ``commit``.
 
     They run through the pytest gate (junit, never the exit code alone), once per env
-    profile, with an allow-listed environment. The output goes only to ``log`` (outside
-    every worktree, for the owner); callers get a bare pass/fail and report only
-    :data:`HOLDOUT_FAILED`.
+    profile, with an allow-listed environment. With ``sandbox`` (the docker executor) the
+    slice export and the hold-out tests are copied into a fresh container for this run only;
+    without it they run on the host (the ``local`` executor's accepted model). The output
+    goes only to ``log`` (outside every worktree, for the owner); callers get a bare
+    pass/fail and report only :data:`HOLDOUT_FAILED`.
     """
     python = cfg.holdout_python or sys.executable
     tests = holdout_dir(cfg, task_id)
@@ -398,10 +412,40 @@ def holdout_passes(
                 "PYTHONDONTWRITEBYTECODE": "1",
                 **prof.env,
             }
-            argv = pytest_gate_argv(python, cfg, gate_script, "--rootdir", str(tests), str(tests))
-            res = run_on_host(
-                argv, cwd=export, env_allow=cfg.env_allow, env=run_env, timeout=cfg.gate_timeout_s
-            )
+            if sandbox is None:
+                argv = pytest_gate_argv(
+                    python,
+                    cfg,
+                    gate_script,
+                    "--rootdir",
+                    str(tests),
+                    str(tests),
+                    markers=markers,
+                )
+                res = run_on_host(
+                    argv,
+                    cwd=export,
+                    env_allow=cfg.env_allow,
+                    env=run_env,
+                    timeout=cfg.gate_timeout_s,
+                )
+            else:  # the hold-out tests and the slice export share one throwaway container
+                shutil.copytree(tests, export / "holdout")
+                argv = pytest_gate_argv(
+                    python,
+                    cfg,
+                    Path("tools/ci/pytest_gate.py"),
+                    "--rootdir",
+                    "holdout",
+                    "holdout",
+                    markers=markers,
+                )
+                res = sandbox.run(
+                    argv,
+                    cwd=export,
+                    env={**run_env, "PYTHONPATH": "src:."},
+                    timeout=cfg.gate_timeout_s,
+                )
             _log(log, f"hold-out {task_id} {commit[:10]} [{prof.name}] exit {res.code}", res.output)
             ok = ok and res.code == 0 and not re.search(cfg.forbid_output, res.output)
     return ok

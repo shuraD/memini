@@ -287,3 +287,12 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r3_2_a_replace_ref_created_during_a_gate_is_rejected');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r3_2_every_git_env_disables_replace_objects');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-006', 'tests/gates/test_orchestrator.py::test_r3_4_release_takes_the_run_lock');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-012', 'Docker sandbox executor: coder-written code runs only in a fresh, network-less, host-isolated container; the agent CLI uses a sandbox-pytest wrapper so it never runs coder code on the host', 'infra', 'owner decision 2026-11-15 (microVM MVP); third orchestrator review', 'active', 'orchestrator', 'C-20261115-0106');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-012', 'tests/gates/test_orchestrator_docker.py::test_docker_run_argv_has_the_sandbox_flags');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-012', 'tests/gates/test_orchestrator_docker.py::test_lock_tag_changes_with_the_lock');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-012', 'tests/gates/test_orchestrator_docker.py::test_fake_run_builds_once_and_passes_only_allow_listed_env');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-012', 'tests/gates/test_orchestrator_docker.py::test_fake_run_never_sends_the_git_dir_into_the_container');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-012', 'tests/gates/test_orchestrator_docker.py::test_build_failure_is_reported_not_raised');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-001', 'tests/gates/test_orchestrator.py::test_commit_identity_defaults_to_the_repo_git_user');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-001', 'tests/gates/test_orchestrator.py::test_the_squash_commit_has_no_co_authored_by_line');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-012', 'tests/gates/test_orchestrator.py::test_docker_executor_is_default_when_available');
