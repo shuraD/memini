@@ -56,6 +56,11 @@ No code is copied from earlier projects. Earlier work is at most a *reference* f
    ```
    The hook rejects a message without all three lines and the trailer.
 6. Each module is built in its own worktree: `git worktree add ../memini-<module> -b <module>`. It merges to `main` only with a green pipeline (`act`), including the acceptance benchmark.
+7. **New dependencies (owner rule, 2026-11-15).** Prefer a maintained library over writing infrastructure. A new third-party package is accepted **without the owner** when all three checks pass, and each check's evidence goes in the commit message under `Why:`:
+   - **Established:** its first release on PyPI is at least 2 years old.
+   - **No known vulnerability:** `pip-audit` finds none in the chosen version or in any package it pulls in.
+   - **Licence:** an OSI-approved licence compatible with AGPL-3.0-or-later (the licence gate).
+   If any check fails, or the result is unclear, the dependency is a Tier 2 owner question. A coding agent in an orchestrated slice never edits `pyproject.toml` or `uv.lock` itself: it prints `FOLLOW-UP: dependency <name>: <reason>`, and the planner checks the package and puts it in the slice spec.
 
 ## Infra and CI bugs found while working (owner 2026-11-12)
 If you find a bug in the infra, CI or gates while working on your module, **do not fix it in your branch**. Record it as an open bug row with its evidence, report it, and continue your task. Infra bugs are fixed by another agent on its own branch; otherwise no task ever finishes.
