@@ -874,3 +874,17 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-002', 'tests/unit/test_schema_constraints.py::test_setup_equals_constraints_then_unbacked_indexes');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-002', 'tests/unit/test_schema_constraints.py::test_no_enterprise_only_syntax_in_any_statement');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-002', 'tests/unit/test_schema_constraints.py::test_committed_schema_setup_statements_are_idempotent_creates');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/infra/llm_providers/-018', 'Wrap an LLM so deterministic generations are cached in the shared store ', 'infra', 'slice spec LP-14; acceptance tests sealed at 8f7ab1f1ea', 'active', 'src/memini/infra/llm_providers/', 'C-20261115-0159');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_generation_key_is_sha256_hex_and_stable');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_generation_key_changes_with_each_field');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_cached_llm_implements_llm');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_seeded_call_repeated_is_a_hit');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_temperature_zero_call_repeated_is_a_hit');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_nonzero_temperature_without_seed_is_not_cached');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_changed_field_is_a_miss');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_eight_threads_missing_same_key_make_one_inner_call');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_two_store_handles_writing_same_key_keep_one_valid_row');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_cache_file_is_owner_only');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_failing_inner_call_stores_nothing_and_later_call_retries');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_hit_is_fast_without_transport_or_inner_call');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-018', 'tests/unit/test_llm_providers_cache.py::test_generate_many_calls_inner_only_for_new_prompts');
