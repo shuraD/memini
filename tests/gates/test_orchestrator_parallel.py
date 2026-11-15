@@ -24,7 +24,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _cfg(tmp_path: Path, **over: Any) -> config.Config:
-    base: dict[str, Any] = {"state_dir": str(tmp_path / "state"), "executor": "docker"}
+    base: dict[str, Any] = {
+        "state_dir": str(tmp_path / "state"),
+        "executor": "docker",
+        "holdout_dir": str(tmp_path / "holdout"),
+        "holdout_required": False,  # hold-out readiness has its own test below
+    }
     return config.load_config(ROOT, overrides={**base, **over}, env={})
 
 
@@ -181,3 +186,24 @@ def test_an_earlier_failure_does_not_stop_independent_slices(tmp_path: Path) -> 
 
     assert cli.run_queue_parallel(cfg, workers=2, launch=launch, pause=0.0) == 1
     assert started == ["C"]
+
+
+def test_slices_without_hidden_tests_wait_instead_of_failing(tmp_path: Path) -> None:
+    """A slice whose hold-out is not written yet is not started (no rejection to release);
+    the next run-queue picks it up once its hidden tests exist."""
+    queue = _queue(tmp_path, {"A": ("src/a/", []), "B": ("src/b/", [])})
+    cfg = _cfg(tmp_path, max_parallel=2, queue=str(queue), holdout_required=True)
+    (tmp_path / "holdout" / "A").mkdir(parents=True)
+    (tmp_path / "holdout" / "A" / "test_a.py").write_text("def test_a():\n    pass\n")
+    st = state.State(cfg)
+    started: list[str] = []
+
+    def launch(entry: state.QueueEntry) -> _Proc:
+        started.append(entry.task_id)
+        st.claim(entry.task_id, entry.task_id, ())
+        st.update(entry.task_id, "merged", commit="x")
+        return _Proc(0, polls=1)
+
+    assert cli.run_queue_parallel(cfg, workers=2, launch=launch, pause=0.0) == cli._EXIT_WAITING
+    assert started == ["A"]
+    assert st.task("B") is None  # never recorded as rejected

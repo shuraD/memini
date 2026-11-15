@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from tools.orchestrator import config, dockerexec, pipeline, schedule, spec, state
+from tools.orchestrator import config, dockerexec, gates, pipeline, schedule, spec, state
 from tools.orchestrator.executor import clean_env
 
 EPILOG = f"""\
@@ -120,7 +120,10 @@ def run_queue_parallel(
         cands = [
             schedule.Candidate(e.task_id, _entry_paths(e), _deps(e))
             for e in entries
-            if e.task_id not in merged and e.task_id not in running and e.task_id not in failed
+            if e.task_id not in merged
+            and e.task_id not in running
+            and e.task_id not in failed
+            and _holdout_ready(cfg, e.task_id)
         ]
         busy = {t: _entry_paths(by_id[t]) for t in running}
         for task_id in schedule.pick(
@@ -132,6 +135,11 @@ def run_queue_parallel(
             break
         time.sleep(pause)
     return _queue_exit(st, entries, failed)
+
+
+def _holdout_ready(cfg: config.Config, task_id: str) -> bool:
+    """Return False while a required hold-out is not written yet: the slice waits, unrecorded."""
+    return not cfg.holdout_required or gates.has_holdout(cfg, task_id)
 
 
 def _blocked(st: state.State, entries: Sequence[state.QueueEntry]) -> set[str]:
