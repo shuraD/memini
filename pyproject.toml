@@ -67,6 +67,7 @@ addopts = "-q"
 # the gates run pytest with python -P (B-foundation-016), which drops the working directory
 # from sys.path; the repo root is put back explicitly, after pytest itself is imported
 pythonpath = ["."]
+markers = ["docker: needs a running Docker daemon (opt in with MEMINI_DOCKER_SMOKE=1)"]
 
 [tool.coverage.run]
 source = ["src", "tools"]

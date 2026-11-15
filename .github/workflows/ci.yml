@@ -5,9 +5,11 @@ on: [push, pull_request, workflow_dispatch]
 
 jobs:
   gate:
-    runs-on: ubuntu-latest
+    # a fixed runner image: ubuntu-latest moves to Ubuntu 26 from 2026-10-19 (runner-images#14748)
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      # every action is pinned to a full commit SHA (repository setting; tests/gates/test_actions_pinned.py)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           fetch-depth: 0
       # pull requests: audit the PR head itself, not GitHub's synthetic merge commit. This is a
@@ -18,7 +20,7 @@ jobs:
         env:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: git checkout --detach "$PR_HEAD_SHA"
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
       - name: Install
         run: uv sync --frozen
       - name: "Audit range (which commits the ledger and commit-message audits check)"
