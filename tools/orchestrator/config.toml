@@ -54,6 +54,7 @@ deny_patterns = [
   'inspect\.(stack|currentframe|getframeinfo|getouterframes)', '\bsignal\.', '\bmultiprocessing\b', '\bpty\.|import pty', '\bmarshal\b',
   '\bpickle\b', '\bsocket\b', 'sitecustomize|usercustomize|site-packages', '\.pth\b', 'PYTEST_', 'COV_CORE',
   '\bglobals\s*\(', '\bsetattr\s*\(\s*(sys|os|builtins)\b', '\bcode\.(interact|InteractiveConsole)',
+  '\b(enable_)?load_extension\b',
 ]
 
 # AST check of every Python file the coder changed (the main layer; deny_patterns is the
@@ -66,7 +67,9 @@ ast_dunder_allow = [
   "__name__", "__class__", "__init__", "__post_init__", "__repr__", "__str__", "__eq__", "__hash__",
 ]
 # dunder NAMES a module may read or define (not attributes): module metadata and paths
-ast_dunder_names = ["__name__", "__file__", "__all__", "__version__", "__doc__"]
+ast_dunder_names = ["__name__", "__file__", "__all__", "__version__", "__doc__", "__slots__"]
+# owner 2026-11-15 ("agree for AST list"): infra slices need SQLite, threads, HTTP and
+# Retry-After dates (LP-02, LP-08); their dangerous corners are in forbidden_names below
 import_allow = [
   "__future__", "abc", "array", "base64", "bisect", "collections", "contextlib", "copy", "csv",
   "dataclasses", "datetime", "decimal", "difflib", "enum", "fractions", "functools", "graphlib",
@@ -74,6 +77,8 @@ import_allow = [
   "operator", "os", "pathlib", "pprint", "random", "re", "secrets", "statistics", "string",
   "struct", "sys", "textwrap", "time", "tomllib", "typing", "unicodedata", "urllib.parse",
   "uuid", "warnings", "zlib", "memini",
+  "sqlite3", "threading", "contextvars", "queue", "types", "concurrent.futures",
+  "urllib.request", "urllib.error", "http.client", "email.utils",
 ]
 # dotted names (fnmatch) that stay forbidden inside allowed modules
 forbidden_names = [
@@ -83,6 +88,11 @@ forbidden_names = [
   "sys.setprofile", "sys.meta_path", "sys.path_hooks", "sys.path_importer_cache",
   "sys.addaudithook", "sys.breakpointhook", "sys.excepthook", "sys.displayhook",
   "sys.stdin", "sys.stdout", "sys.stderr", "sys.__*", "logging.config*",
+  # no new processes, no hand-built code or frames, no hooks into other threads
+  "concurrent.futures.process*", "concurrent.futures.ProcessPoolExecutor",
+  "types.CodeType", "types.FunctionType", "types.LambdaType", "types.FrameType",
+  "types.ModuleType", "threading.settrace*", "threading.setprofile*", "threading.excepthook",
+  "threading._*",
 ]
 
 # the coder may change only these paths (a trailing "/" is a directory) ...
