@@ -9,7 +9,11 @@ Rules:
 - The acceptance tests are sealed and must not change: $test_files
   Any change outside the allowed paths rejects the whole task.
 - Write the minimal, typed (mypy --strict), documented, generic code. No business names, no hardcoded vocabularies, no prompts in code. Follow AGENTS.md.
-- You may run the tests, e.g.: uv run pytest -q $test_files
+- You may run exactly these commands, written as shown (no cd, no pipes, no other command):
+    uv run python -m tools.orchestrator sandbox-pytest $test_files
+    uv run ruff check $allowed_args
+    uv run mypy $allowed_args
+  The tests run in a sandbox container; any other command is refused.
 - If you are convinced a sealed test is wrong, do not work around it: print one line
   TEST-DISPUTE: <the reason, with evidence from the specification>
   and stop.

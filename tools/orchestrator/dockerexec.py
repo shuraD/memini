@@ -40,9 +40,9 @@ _EXTRAS = ".sandbox"  # host files a command names (outside the slice), shipped 
 _HOST_ONLY_ENV = ("XDG_CACHE_HOME", "UV_PYTHON_INSTALL_DIR")
 # the container's own writable places (/tmp is its tmpfs); uv uses the image venv as it is
 _CONTAINER_ENV = {
-    "HOME": "/tmp",  # noqa: S108 — the container's tmpfs, not a host directory
-    "TMPDIR": "/tmp",  # noqa: S108
-    "UV_CACHE_DIR": "/tmp/uv-cache",  # noqa: S108
+    "HOME": "/tmp",  # noqa: S108  # nosec B108 — the container's tmpfs, not a host directory
+    "TMPDIR": "/tmp",  # noqa: S108  # nosec B108
+    "UV_CACHE_DIR": "/tmp/uv-cache",  # noqa: S108  # nosec B108
     "UV_NO_SYNC": "1",
     "UV_OFFLINE": "1",
 }

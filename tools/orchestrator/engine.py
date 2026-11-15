@@ -156,6 +156,22 @@ def render(cfg: Config, name: str, **values: str) -> str:
     return Template(text).safe_substitute(values)
 
 
+def agent_output(stdout: str) -> tuple[str, float | None]:
+    """Return an agent's answer text and its cost in USD, if its CLI reported one.
+
+    A JSON answer (``claude -p --output-format json``) yields its ``result`` text and
+    ``total_cost_usd``; any other output is returned unchanged, with no cost.
+    """
+    try:
+        data = json.loads(stdout)
+    except ValueError:
+        return stdout, None
+    if not isinstance(data, dict) or not isinstance(data.get("result"), str):
+        return stdout, None
+    cost = data.get("total_cost_usd")
+    return data["result"], float(cost) if isinstance(cost, int | float) else None
+
+
 def dispute(output: str) -> str | None:
     """Return the reason of the first ``TEST-DISPUTE:`` line, if any."""
     m = DISPUTE.search(output)

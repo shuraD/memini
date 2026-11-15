@@ -439,7 +439,8 @@ def holdout_passes(
                     timeout=cfg.gate_timeout_s,
                 )
             else:  # the hold-out tests and the slice export share one throwaway container
-                shutil.copytree(tests, export / "holdout")
+                # once per profile: the copy from the previous profile is replaced, not added to
+                shutil.copytree(tests, export / "holdout", dirs_exist_ok=True)
                 argv = pytest_gate_argv(
                     python,
                     cfg,

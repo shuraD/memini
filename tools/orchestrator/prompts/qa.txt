@@ -9,6 +9,9 @@ Rules:
 - The tests must fail now (the code does not exist yet) and pass once the specification is implemented correctly.
 - Test observable behaviour from the specification, not an implementation you imagine. Each test states its expectation with an assert.
 - Keep the tests deterministic: no network, no clock, no randomness without a fixed seed, no skips.
+- To check that your tests fail now, run exactly (no cd, no pipes, no other command):
+    uv run python -m tools.orchestrator sandbox-pytest <your test files>
+  The tests run in a sandbox container; any other command is refused.
 - Follow AGENTS.md in the repository.
 
 Specification:

@@ -15,6 +15,7 @@ under test with its own environment, built by ``setup`` from the lock file.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import shutil
@@ -335,8 +336,13 @@ class _Run:
             timeout=cfg.engine_timeout_s,
             pass_env=cfg.engines[name].env,
         )
+        # the CLI answers in JSON: later steps read only the answer text; the cost is recorded
+        text, cost = engine.agent_output(res.stdout)
+        res = dataclasses.replace(res, stdout=text)
         log = self.run_dir / f"{self.calls:02d}-{role}.log"
-        log.write_text(f"exit {res.code}\n{res.output}", encoding="utf-8")
+        log.write_text(f"exit {res.code}\ncost_usd {cost}\n{res.output}", encoding="utf-8")
+        with (self.run_dir / "costs.tsv").open("a", encoding="utf-8") as fh:
+            fh.write(f"{self.calls:02d}\t{role}\t{name}\t{'' if cost is None else cost}\n")
         return res
 
     def _leftovers(self, writable: Sequence[str], protected: Sequence[str]) -> list[str]:
@@ -491,6 +497,7 @@ class _Run:
                 task_id=self.task_id,
                 spec=self.sp.text(with_reference=True),
                 allowed_paths=", ".join(self.paths),
+                allowed_args=" ".join(self.paths),
                 protected_paths=", ".join(cfg.protected),
                 test_files=" ".join(files),
                 reference=reference,

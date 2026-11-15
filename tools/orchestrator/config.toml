@@ -249,18 +249,18 @@ qa = [
   "claude", "-p", "--settings", "{settings}", "--setting-sources", "",
   "--strict-mcp-config", "--permission-mode", "dontAsk", "--permission-prompts", "none",
   "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run python -m tools.orchestrator sandbox-pytest *)",
-  "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
+  "--no-session-persistence", "--output-format", "json", "--max-budget-usd", "{max_budget_usd}",
 ]
 coder = [
   "claude", "-p", "--settings", "{settings}", "--setting-sources", "",
   "--strict-mcp-config", "--permission-mode", "dontAsk", "--permission-prompts", "none",
   "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run python -m tools.orchestrator sandbox-pytest *),Bash(uv run ruff *),Bash(uv run mypy *){reference_tools}",
-  "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
+  "--no-session-persistence", "--output-format", "json", "--max-budget-usd", "{max_budget_usd}",
 ]
 audit = [
   "claude", "-p", "--setting-sources", "", "--strict-mcp-config",
   "--permission-mode", "dontAsk", "--permission-prompts", "none", "--tools", "",
-  "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
+  "--no-session-persistence", "--output-format", "json", "--max-budget-usd", "{max_budget_usd}",
 ]
 
 [engines.gemini]
