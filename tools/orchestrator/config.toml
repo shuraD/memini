@@ -11,7 +11,9 @@ default_engine = "claude"
 # engine per role; empty = automatic: QA and audit use a different engine from the coder
 # when one in engine_preference is installed, else the coder's engine
 qa_engine = ""
-coder_engine = ""
+# Until the microVM executor exists, only Claude codes: Gemini and OpenCode load no guard
+# hook, so they could read the hold-out directory (owner procedure §8).
+coder_engine = "claude"
 audit_engine = ""
 engine_preference = ["claude", "gemini", "opencode"]
 # where agent steps and gate commands run: "local" (a subprocess in the task worktree).
@@ -112,6 +114,16 @@ forbid_output = true
 [[gates]]
 name = "architecture"
 ci_step = "Architecture contracts"
+stages = ["slice", "merge"]
+
+[[gates]]
+name = "security"
+ci_step = "Security"
+stages = ["slice", "merge"]
+
+[[gates]]
+name = "dependencies"
+ci_step = "Dependencies"
 stages = ["slice", "merge"]
 
 [[gates]]
