@@ -79,7 +79,7 @@ def _deps(entry: state.QueueEntry) -> tuple[str, ...]:
 def _cmd_run_queue(cfg: config.Config, args: argparse.Namespace) -> int:
     workers = min(args.workers, cfg.max_parallel)
     if workers > 1 and cfg.parallel:
-        return run_queue_parallel(cfg, workers=workers, launch=_launcher(args))
+        return run_queue_parallel(cfg, workers=workers, launch=_launcher(args, cfg))
     if args.workers > 1:
         print(
             "run-queue: parallel runs need the docker executor and max_parallel > 1; one at a time"
@@ -182,8 +182,12 @@ def _queue_exit(st: state.State, entries: Sequence[state.QueueEntry], failed: se
     return 0
 
 
-def _launcher(args: argparse.Namespace) -> Callable[[state.QueueEntry], Any]:
-    """Return a function that starts one ``run`` of an entry as its own process."""
+def _launcher(args: argparse.Namespace, cfg: config.Config) -> Callable[[state.QueueEntry], Any]:
+    """Return a function that starts one ``run`` of an entry as its own process.
+
+    Each run is its own worker (``<worker>-<task id>``): the one-task-per-worker rule then
+    holds per run, and parallel runs do not refuse each other.
+    """
     base = [sys.executable, "-m", "tools.orchestrator"]
     if args.config:
         base += ["--config", str(args.config)]
@@ -196,8 +200,7 @@ def _launcher(args: argparse.Namespace) -> Callable[[state.QueueEntry], Any]:
             argv += ["--engine", entry.engine]
         if entry.paths:
             argv += ["--paths", *entry.paths]
-        if args.worker:
-            argv += ["--worker", args.worker]
+        argv += ["--worker", f"{args.worker or cfg.worker}-{entry.task_id}"]
         return subprocess.Popen(argv, cwd=_repo())  # noqa: S603 — our own CLI, no shell
 
     return launch

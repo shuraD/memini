@@ -207,3 +207,24 @@ def test_slices_without_hidden_tests_wait_instead_of_failing(tmp_path: Path) -> 
     assert cli.run_queue_parallel(cfg, workers=2, launch=launch, pause=0.0) == cli._EXIT_WAITING
     assert started == ["A"]
     assert st.task("B") is None  # never recorded as rejected
+
+
+def test_each_parallel_run_gets_its_own_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run 2026-11-15: every launched run used the worker "default", so the one-task-per-worker
+    rule refused all but the first. Each parallel run is its own worker."""
+    queue = _queue(tmp_path, {"A": ("src/a/", []), "B": ("src/b/", [])})
+    cfg = _cfg(tmp_path, max_parallel=2, queue=str(queue))
+    seen: list[list[str]] = []
+    monkeypatch.setattr(cli, "_repo", lambda: tmp_path)
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda argv, **_: seen.append(argv) or _Proc(1, 1))
+    args = cli.parser().parse_args(["run-queue", "--workers", "2"])
+    launch = cli._launcher(args, cfg)
+    for entry in state.read_queue(queue):
+        launch(entry)
+    workers = [argv[argv.index("--worker") + 1] for argv in seen]
+    assert len(set(workers)) == 2, workers
+    st = state.State(cfg)
+    st.claim("A", workers[0], ("src/a/",))
+    st.claim("B", workers[1], ("src/b/",))  # no WIP conflict: different workers
