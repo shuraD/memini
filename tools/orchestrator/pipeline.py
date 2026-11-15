@@ -73,6 +73,10 @@ def precheck(
     if not _TASK_ID.fullmatch(task_id):
         return [f"task id {task_id!r} must match {_TASK_ID.pattern}"]
     problems = spec.check(cfg, sp, task_id, known, tuple(narrowed))
+    if not cfg.identity_name or not cfg.identity_email:
+        problems.append(
+            "no commit identity: set [identity] name/email or the repo's git user.name/user.email"
+        )
     if cfg.holdout_required and not gates.has_holdout(cfg, task_id):
         problems.append(f"no hold-out tests for {task_id} in the configured hold-out dir")
     st = state.State(cfg)

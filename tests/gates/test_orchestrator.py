@@ -1834,3 +1834,37 @@ def test_the_squash_commit_has_no_co_authored_by_line(
     message = _git(env["repo"], "log", "-1", "--format=%B", "main")
     assert "Co-Authored-By" not in message
     assert "Co-authored-by" not in message
+
+
+# --------------------------------------------------------------------------------------------
+# GitHub CI 2026-11-15: a fresh runner has no git identity. Loading the config (reading the CI
+# steps, the AST rules) must work without one; only running a task needs it, and the task is
+# refused before dispatch (no engine runs).
+# Tests-Author: Claude/vp-rnd (new tests for its own change).
+# --------------------------------------------------------------------------------------------
+
+
+def _no_git_identity(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    _git(env["repo"], "config", "--unset", "user.name")
+    _git(env["repo"], "config", "--unset", "user.email")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(env["tmp"] / "no-global-gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
+def test_config_loads_without_a_commit_identity(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_git_identity(env, monkeypatch)
+    cfg = config.load_config(env["repo"], overrides={"state_dir": str(env["tmp"] / "s")}, env={})
+    assert (cfg.identity_name, cfg.identity_email) == ("", "")
+
+
+def test_a_task_without_a_commit_identity_is_refused_before_dispatch(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_git_identity(env, monkeypatch)
+    out = pipeline.run_task(_cfg(env), _task(env))
+    assert out.status == "rejected", out.reason
+    assert "no commit identity" in out.reason
+    log = env["log"]
+    assert not log.exists() or not log.read_text().strip(), "an engine ran"

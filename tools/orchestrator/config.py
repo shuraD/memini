@@ -263,10 +263,9 @@ def load_config(
     flags = raw.get("flags", {})
     identity = raw.get("identity", {})
     ident_name = str(identity.get("name") or "") or _git_user(repo, "name")
+    # may stay empty: reading the config (CI steps, AST rules) needs no identity; a task run
+    # does, and pipeline.precheck refuses it before dispatch (a fresh CI runner has none)
     ident_email = str(identity.get("email") or "") or _git_user(repo, "email")
-    if not ident_name or not ident_email:
-        msg = "no commit identity: set [identity] name/email or the repo's git user.name/user.email"
-        raise ConfigError(msg)
     profiles = tuple(
         ProfileSpec(name, dict(p.get("env", {})), bool(p.get("all_flags", False)))
         for name, p in raw.get("profiles", {}).items()
