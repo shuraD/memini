@@ -93,6 +93,9 @@ layers = ["memini.extensions", "memini.core", "memini.infra"]
 
 [tool.deptry]
 known_first_party = ["memini"]
+# neo4j is declared before its first import (the graph-schema driver, first used by GS-22);
+# remove this ignore when GS-22 merges (owner 2026-11-15)
+per_rule_ignores = { DEP002 = ["neo4j"] }
 
 [tool.uv]
 # uv refuses to run below the version patched for every uv advisory to date
