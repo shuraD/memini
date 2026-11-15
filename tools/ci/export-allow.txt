@@ -23,5 +23,7 @@ published@example.org
 
 # the neutral commit identity of the public repository (tools/ci/commit-identities.txt)
 memini-author@example.invalid
+# the owner's GitHub noreply commit address, public on every commit (tools/ci/commit-identities.txt)
+32953601+shuraD@users.noreply.github.com
 # tests/gates/test_commit_identity.py stand-in for a personal address
 a.real.person@example.com

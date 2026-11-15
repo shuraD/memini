@@ -1,4 +1,7 @@
 # Commit identities allowed in the public repository (author and committer email).
-# Personal identities never belong here: tools/ci/commit_identity.py refuses every other email.
+# Personal email addresses never belong here (a GitHub noreply address is not one):
+# tools/ci/commit_identity.py refuses every other email.
 # Add the agents' GitHub App noreply addresses here when the GitHub flow is handed over.
 memini-author@example.invalid
+# the owner's GitHub noreply address: every new commit is the owner's (owner, 2026-11-15)
+32953601+shuraD@users.noreply.github.com

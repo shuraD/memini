@@ -1,3 +1,5 @@
 # Commit author and committer NAMES allowed in the public repository.
-# Personal names never belong here; add the agents' GitHub App bot names at the handover.
+# Real personal names never belong here (a public GitHub login is fine); add the agents' GitHub App bot names at the handover.
 memini-author
+# the owner's GitHub login (owner, 2026-11-15)
+shuraD
