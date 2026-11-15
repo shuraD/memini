@@ -78,6 +78,7 @@ If you find a bug in the infra, CI or gates while working on your module, **do n
 - lint (`ruff check`)
 - types (`mypy --strict`)
 - **tests by tier (gate, owner 2026-11-12):** while you work, **every commit runs `tests/sanity` only** (one pass + one fail case per rule and per module, < 3 s). **Before merge to `main`** CI runs the full suite: `tests/sanity`, `tests/unit` (product code), `tests/gates` (the gate attack suites) with ≥ 90% coverage, and `tests/acceptance`. Every new module adds its pass/fail pair to `tests/sanity`.
+- **no full runs while fixing (owner 2026-11-15):** after each change or fix, run only `tests/sanity` plus the test files that cover what you changed — never the whole suite locally, not even "to be safe". The full suite runs once, at the end, when everything is merged (CI). Report a local result as "green on the Mac (subset)", never as "CI green".
 - architecture contracts (`lint-imports`)
 - ledger guards (`tools/ci/check_ledgers.py`):
   - every active feature has an existing test;
