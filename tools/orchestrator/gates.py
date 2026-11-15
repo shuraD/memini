@@ -373,6 +373,28 @@ def qa_test_failures(
 
 
 # ------------------------------------------------------------------ hold-out (host only)
+def qa_lint_argvs(cfg: Config, python: str, files: Sequence[str]) -> list[list[str]]:
+    """Return the commands that check QA's files before sealing.
+
+    ``qa_lint`` always; a ``qa_gate_checks`` entry only when a gate of that name is configured.
+    ``{files}`` becomes every file, ``{file}`` one command per file, ``{python}`` the python.
+    """
+    gate_names = {g.name for g in cfg.gates}
+    cmds = [*cfg.qa_lint, *(c for n, c in cfg.qa_gate_checks.items() if n in gate_names)]
+    out: list[list[str]] = []
+    for cmd in cmds:
+        per_file = [[f] for f in files] if "{file}" in cmd else [list(files)]
+        for group in per_file:
+            argv: list[str] = []
+            for arg in cmd:
+                if arg in ("{files}", "{file}"):
+                    argv += group
+                else:
+                    argv.append(arg.replace("{python}", python))
+            out.append(argv)
+    return out
+
+
 def holdout_dir(cfg: Config, task_id: str) -> Path:
     """Return the hold-out directory of a task."""
     return cfg.holdout_dir / task_id

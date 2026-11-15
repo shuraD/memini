@@ -7,6 +7,7 @@ repository or the worktree directory (agents work there; they must never reach t
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import shutil
@@ -144,6 +145,8 @@ class Config:
     # the stage chain (owner 2026-11-15): stages before "code", and where the spec stage writes
     stages: tuple[StageSpec, ...] = ()
     spec_dir: Path = Path()
+    # per gate name: a check run on QA's files before sealing, when that gate is configured
+    qa_gate_checks: Mapping[str, tuple[str, ...]] = dataclasses.field(default_factory=dict)
 
     @property
     def parallel(self) -> bool:
@@ -408,4 +411,7 @@ def load_config(
         engines=engines,
         stages=stages,
         spec_dir=_path(repo, str(raw.get("spec_dir") or "../specs")),
+        qa_gate_checks={
+            str(k): tuple(str(a) for a in v) for k, v in raw.get("qa_gate_checks", {}).items()
+        },
     )

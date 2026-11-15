@@ -139,6 +139,10 @@ qa_lint = [
   ["{python}", "-m", "ruff", "check", "{files}"],
   ["{python}", "-m", "ruff", "format", "--check", "{files}"],
 ]
+# a merge gate that can fail on QA's sealed files must check them before sealing, or the slice
+# can never merge (LP-05: gitleaks found QA's fake key only at merge). Run once per file
+# ({file}), only when the gate of that name is configured.
+qa_gate_checks = { gitleaks = ["gitleaks", "dir", "--no-banner", "--no-color", "--redact", "-v", "{file}"] }
 # the only variables any executor or host run sees (no API keys, no MEMINI_ORCH_*); an
 # engine adds its own list (engines.<name>.env) for its agent steps only
 env_allow = [

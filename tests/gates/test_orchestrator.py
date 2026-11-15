@@ -1959,3 +1959,47 @@ def test_qa_tests_that_stay_unlinted_reject_the_slice_before_the_coder(
     assert out.status == "rejected", out.reason
     assert "lint" in out.reason
     assert _prompts(env, "coder") == []  # no coder ever started
+
+
+# --- pre-seal gate checks (LP-05 2026-11-15: gitleaks found QA's fake key only at merge) -----
+SECRET_QA = QA_TEST + "\n\nKEY = 'FAKE-SECRET-MARKER'\n"
+# a stand-in for gitleaks: fails silently on the marker (a silent failure must still count)
+SCAN = [PY, "-c", "import sys; sys.exit('FAKE-SECRET-MARKER' in open(sys.argv[1]).read())"]
+
+
+def test_qa_files_pass_every_merge_gate_check_before_they_are_sealed(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(
+        env,
+        monkeypatch,
+        qa=[
+            {"write": {"tests/unit/test_calc.py": SECRET_QA}},
+            {"write": {"tests/unit/test_calc.py": QA_TEST}},
+        ],
+        coder=[{"write": {IMPL: GOOD}}],
+    )
+    _gate_plan(env, monkeypatch)
+    _holdout(env, TASK)
+    cfg = _cfg(env, gates=[_gate("leaks", ["merge"])], qa_gate_checks={"leaks": [*SCAN, "{file}"]})
+    out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "merged", out.reason
+    prompts = _prompts(env, "qa")
+    assert len(prompts) == 2
+    assert "exit 1" in prompts[1]  # the retry names the failed check
+
+
+def test_a_gate_check_runs_only_when_its_gate_is_configured(env: dict[str, Any]) -> None:
+    checks = {"leaks": [*SCAN, "{file}"]}
+    files = ["tests/unit/a.py", "tests/unit/b.py"]
+    without = gates.qa_lint_argvs(_cfg(env, qa_gate_checks=checks, qa_lint=[]), PY, files)
+    assert without == []
+    cfg = _cfg(env, gates=[_gate("leaks", ["merge"])], qa_gate_checks=checks, qa_lint=[])
+    assert gates.qa_lint_argvs(cfg, PY, files) == [[*SCAN, f] for f in files]  # one per file
+
+
+def test_the_shipped_config_scans_qa_files_with_the_gitleaks_gate_before_sealing() -> None:
+    cfg = config.load_config(ROOT, overrides={"state_dir": "/nonexistent-state"}, env={})
+    assert "gitleaks" in {g.name for g in cfg.gates}
+    assert cfg.qa_gate_checks["gitleaks"][:2] == ("gitleaks", "dir")
+    assert cfg.qa_gate_checks["gitleaks"][-1] == "{file}"

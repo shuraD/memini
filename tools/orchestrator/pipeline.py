@@ -513,15 +513,12 @@ class _Run:
         """Return the lint output of QA's files, or "" when they are clean (runs on the host)."""
         python = gates.python_for(self.cfg, self.wt)
         out = []
-        for cmd in self.cfg.qa_lint:
-            argv: list[str] = []
-            for arg in cmd:
-                argv += list(files) if arg == "{files}" else [arg.replace("{python}", python)]
+        for argv in gates.qa_lint_argvs(self.cfg, python, files):
             res = self.host.run(
                 argv, cwd=self.wt, env=self.gate_env, timeout=self.cfg.gate_timeout_s
             )
-            if res.code != 0:
-                out.append(res.output.strip())
+            if res.code != 0:  # a silent failure is still a failure
+                out.append(res.output.strip() or f"{' '.join(argv)}: exit {res.code}")
         return "\n".join(out)[-1500:]
 
     # -------------------------------------------------------------- coder

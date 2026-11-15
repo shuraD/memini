@@ -52,6 +52,8 @@ size: <estimated lines and hours>
      sys.stdout): pytest itself uses it. To prove code does not read something, record the
      calls with monkeypatch only around the call under test.
    - Do not change any existing file. Do not write any implementation code.
+   - Never write a value that looks like a real secret (API key, token, password), even in a
+     test: use an obvious fake such as "test-key". A secret scan rejects anything else.
 
 To check your tests fail now, run exactly (no cd, no pipes, no other command):
     uv run python -m tools.orchestrator sandbox-pytest <your test files>

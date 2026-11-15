@@ -378,3 +378,22 @@ def test_handoff_adds_a_task_once(env: dict[str, Any]) -> None:
     stages.handoff(cfg, cfg.stages[0], "A /x/A.md")
     stages.handoff(cfg, cfg.stages[0], "B /x/B.md")
     assert cfg.queue.read_text() == "A /x/A.md\nB /x/B.md\n"
+
+
+def test_the_spec_stage_scans_its_hidden_tests_with_the_merge_gate_checks(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scan = [PY, "-c", "import sys; sys.exit('FAKE-SECRET-MARKER' in open(sys.argv[1]).read())"]
+    gate = {"name": "leaks", "run": ["true"], "stages": ["merge"]}
+    cfg = _cfg(env, gates=[gate], qa_gate_checks={"leaks": [*scan, "{file}"]})
+    _enqueue(cfg, _line(env))
+    secret = FAILING + "\n\nKEY = 'FAKE-SECRET-MARKER'\n"
+    _plan(
+        env,
+        monkeypatch,
+        {"SPEC.md": _spec_md(), "tests/unit/test_calc_hidden.py": secret},
+        {"tests/unit/test_calc_hidden.py": FAILING},
+    )
+    assert specstage.run(cfg, cfg.stages[0], ID) == 0
+    assert "exit 1" in (env["tmp"] / "log" / "qa-2.txt").read_text()
+    assert (cfg.holdout_dir / ID / "test_calc_hidden.py").read_text() == FAILING
