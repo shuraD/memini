@@ -63,11 +63,20 @@ class Relationship:
 
 
 @dataclass(frozen=True)
+class Common:
+    """Properties declared once, applied to every label (``nodes``) or type (``relationships``)."""
+
+    nodes: dict[str, Property] = field(default_factory=dict)
+    relationships: dict[str, Property] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Schema:
     """The whole schema."""
 
     nodes: dict[str, Node] = field(default_factory=dict)
     relationships: dict[str, Relationship] = field(default_factory=dict)
+    common: Common = field(default_factory=Common)
 
 
 @dataclass(frozen=True)
@@ -87,6 +96,11 @@ def _tuple(value: Any) -> tuple[str, ...]:
 
 
 def _properties(spec: dict[str, Any]) -> dict[str, Property]:
+    return _property_specs(spec.get("properties"))
+
+
+def _property_specs(specs: dict[str, Any] | None) -> dict[str, Property]:
+    """Build properties from a ``{name: {layer, writer, readers, rule, ...}}`` mapping."""
     return {
         name: Property(
             layer=str(p.get("layer", "")),
@@ -97,7 +111,7 @@ def _properties(spec: dict[str, Any]) -> dict[str, Property]:
             same_fact_as=p.get("same_fact_as"),
             migrating_to=p.get("migrating_to"),
         )
-        for name, p in (spec.get("properties") or {}).items()
+        for name, p in (specs or {}).items()
     }
 
 
@@ -125,7 +139,22 @@ def from_dict(raw: dict[str, Any]) -> Schema:
         )
         for name, spec in (raw.get("relationships") or {}).items()
     }
-    return Schema(nodes=nodes, relationships=relationships)
+    common_raw = raw.get("common") or {}
+    common = Common(
+        nodes=_property_specs(common_raw.get("nodes")),
+        relationships=_property_specs(common_raw.get("relationships")),
+    )
+    return Schema(nodes=nodes, relationships=relationships, common=common)
+
+
+def node_properties(schema: Schema, label: str) -> dict[str, Property]:
+    """Return the common node properties merged with ``label``'s own (KeyError if unknown)."""
+    return {**schema.common.nodes, **schema.nodes[label].properties}
+
+
+def rel_properties(schema: Schema, rel: str) -> dict[str, Property]:
+    """Return the common relationship properties merged with ``rel``'s own (KeyError if unknown)."""
+    return {**schema.common.relationships, **schema.relationships[rel].properties}
 
 
 def load(path: Path | None = None) -> Schema:
@@ -178,26 +207,38 @@ def _property_problems(owner: str, properties: dict[str, Property]) -> list[str]
     return problems
 
 
-def _node_problems(label: str, node: Node) -> list[str]:
+def _redeclared_problems(
+    owner: str, own: dict[str, Property], common: dict[str, Property]
+) -> list[str]:
+    return [
+        f"{owner}.{name}: declared in common (declare it once)" for name in own if name in common
+    ]
+
+
+def _node_problems(label: str, node: Node, common: dict[str, Property]) -> list[str]:
     problems: list[str] = []
     if not node.rule.strip():
         problems.append(f"{label}: no rule")
     problems += _property_problems(label, node.properties)
+    problems += _redeclared_problems(label, node.properties, common)
+    declared = {**common, **node.properties}
     for ix in node.indexes:
         problems += [
             f"{label}: index {ix} names undeclared property {col!r}"
             for col in ix
-            if col not in node.properties
+            if col not in declared
         ]
     problems += [
         f"{label}: vector index names undeclared property {col!r}"
         for col in node.vector_indexes
-        if col not in node.properties
+        if col not in declared
     ]
     return problems
 
 
-def _relationship_problems(name: str, rel: Relationship, nodes: dict[str, Node]) -> list[str]:
+def _relationship_problems(
+    name: str, rel: Relationship, nodes: dict[str, Node], common: dict[str, Property]
+) -> list[str]:
     problems = _proof_problems(
         name,
         layer=rel.layer,
@@ -208,6 +249,7 @@ def _relationship_problems(name: str, rel: Relationship, nodes: dict[str, Node])
         rule=rel.rule,
     )
     problems += _property_problems(name, rel.properties)
+    problems += _redeclared_problems(name, rel.properties, common)
     problems += [
         f"{name}: endpoint {end!r} is not a declared node"
         for end in (*rel.sources, *rel.targets)
@@ -222,24 +264,27 @@ def validate(schema: Schema) -> list[str]:
     Rules: every property and relationship has a layer, a writer and a reader (or an
     ``ingest_only`` reason) and a rule; a ``same_fact_as`` entry is accepted only as a
     declared migration (``migrating_to``); indexes name declared properties; relationship
-    endpoints are declared nodes.
+    endpoints are declared nodes. Fields of the ``common`` section carry the same proof,
+    are declared there only (a label or type may not declare them again), and count as
+    declared for every label's indexes.
     """
-    problems: list[str] = []
+    problems = _property_problems("common.nodes", schema.common.nodes)
+    problems += _property_problems("common.relationships", schema.common.relationships)
     for label, node in schema.nodes.items():
-        problems += _node_problems(label, node)
+        problems += _node_problems(label, node, schema.common.nodes)
     for name, rel in schema.relationships.items():
-        problems += _relationship_problems(name, rel, schema.nodes)
+        problems += _relationship_problems(name, rel, schema.nodes, schema.common.relationships)
     return problems
 
 
 def names(schema: Schema) -> Names:
-    """Return the typed names derived from the schema."""
+    """Return the typed names derived from the schema (common fields included)."""
     return Names(
         labels={label: label for label in schema.nodes},
         rels={name: name for name in schema.relationships},
-        props={label: {p: p for p in node.properties} for label, node in schema.nodes.items()},
+        props={label: {p: p for p in node_properties(schema, label)} for label in schema.nodes},
         rel_props={
-            name: {p: p for p in rel.properties} for name, rel in schema.relationships.items()
+            name: {p: p for p in rel_properties(schema, name)} for name in schema.relationships
         },
     )
 
