@@ -164,3 +164,7 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-019', 'test
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-019', 'tests/gates/test_gate_attacks_round2.py::test_r8_other_characters_round_trip_exactly');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-019', 'tests/gates/test_gate_attacks_round2.py::test_r8_crlf_ledger_file_loads');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-019', 'tests/gates/test_gate_attacks_round2.py::test_r8_add_change_with_line_breaks_keeps_the_ledger_loadable');
+INSERT INTO feature (id, description, layer, proof, status, added_in) VALUES ('F-foundation-023', 'Module feature flags in memini.infra.flags: one flag per unshipped engine module (document-authority, kg-extraction, archrag-index, archrag-retrieval), read from MEMINI_ENABLE_<MODULE> at call time, OFF by default, standard library only; only the owner adds or flips a flag', 'infra', 'owner decision 2026-11-14 (module env flags replace OpenFeature; private ADR-0004)', 'active', 'C-20261115-0101');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-023', 'tests/unit/test_flags.py::test_the_flag_is_read_at_call_time_not_at_import');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-023', 'tests/unit/test_flags.py::test_each_flag_variable_is_a_literal_env_bool_call');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-023', 'tests/unit/test_flags.py::test_the_flags_module_imports_only_the_standard_library');
