@@ -418,3 +418,17 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_p
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-006', 'tests/unit/test_llm_providers_store.py::test_ensure_schema_second_call_with_same_name_does_nothing');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-006', 'tests/unit/test_llm_providers_store.py::test_ensure_schema_is_remembered_across_reopen');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-006', 'tests/unit/test_llm_providers_store.py::test_ensure_schema_new_name_runs_its_ddl');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/infra/llm_providers/-007', 'Record that a provider is exhausted or resting until a time, in the shar', 'infra', 'slice spec LP-09; acceptance tests sealed at eef29af7e5', 'active', 'src/memini/infra/llm_providers/', 'C-20261115-0127');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_unmarked_provider_is_available_without_reason');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_resting_until_100_is_unavailable_at_99_and_available_at_100');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_resting_mark_only_affects_its_provider');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_exhausted_mark_seen_by_second_health_on_same_store_at_any_time');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_mark_by_one_store_handle_is_seen_by_another_on_same_file');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_mark_by_second_handle_is_seen_by_first');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_exhausted_after_resting_wins');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_resting_after_exhausted_does_not_lift_exhausted');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_shorter_resting_mark_never_shortens_longer_one');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_shorter_resting_from_another_handle_never_shortens');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_longer_resting_mark_extends_rest');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_unavailable_reason_returns_recorded_text');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-007', 'tests/unit/test_llm_providers_health.py::test_exhausted_mark_of_earlier_run_does_not_apply_to_another_run');
