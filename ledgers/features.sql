@@ -924,3 +924,13 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/-007', 'tests/unit/test_graph_principals.py::test_load_access_calls_runner_once_with_exact_query');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/-007', 'tests/unit/test_graph_principals.py::test_load_access_value_not_in_cypher');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/-007', 'tests/unit/test_graph_principals.py::test_load_access_empty_arguments_raise_value_error');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/core/schema.py-003', 'Let duplicate_queries take an optional scope so that every duplicate-det', 'core', 'slice spec GS-03; acceptance tests sealed at 6de65bd806', 'active', 'src/memini/core/schema.py', 'C-20261115-0162');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-003', 'tests/unit/test_schema_duplicate_scope.py::test_relationship_pair_scoped_query_keeps_everything_and_adds_the_scope_filter');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-003', 'tests/unit/test_schema_duplicate_scope.py::test_property_pair_scoped_query_names_both_properties_and_not_the_value');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-003', 'tests/unit/test_schema_duplicate_scope.py::test_explicit_none_scope_equals_todays_queries');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-003', 'tests/unit/test_schema_duplicate_scope.py::test_unscoped_queries_keep_todays_exact_text');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-003', 'tests/unit/test_schema_duplicate_scope.py::test_hostile_scope_values_never_reach_the_query_text');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-003', 'tests/unit/test_schema_duplicate_scope.py::test_several_pairs_keep_count_and_order_and_all_are_scoped');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-003', 'tests/unit/test_schema_duplicate_scope.py::test_no_same_fact_pair_gives_no_scoped_query');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-003', 'tests/unit/test_schema_duplicate_scope.py::test_every_scoped_query_still_names_a_label_in_each_match');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-003', 'tests/unit/test_schema_duplicate_scope.py::test_bl11_triple_storage_migration_is_guarded_per_scope');

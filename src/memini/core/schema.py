@@ -362,21 +362,27 @@ def setup_statements(schema: Schema, *, vector_dimensions: int | None = None) ->
     return list(dict.fromkeys(constraints + indexes))
 
 
-def duplicate_queries(schema: Schema) -> list[str]:
-    """Return one count query per ``same_fact_as`` pair; each must return 0 on a clean graph."""
+def duplicate_queries(schema: Schema, scope: str | None = None) -> list[str]:
+    """Return one count query per ``same_fact_as`` pair; each must return 0 on a clean graph.
+
+    With ``scope`` given, every query also requires ``n.scope = $scope``; the caller binds the
+    value as the Cypher parameter ``scope``, so the value itself never enters the query text.
+    """
+    scope_filter = "n.scope = $scope AND " if scope is not None else ""
     out: list[str] = []
     for label, node in schema.nodes.items():
         for prop, p in node.properties.items():
             if p.same_fact_as and p.same_fact_as in schema.relationships:
                 out.append(
-                    f"MATCH (n:{label}) WHERE n.{prop} IS NOT NULL "
+                    f"MATCH (n:{label}) WHERE {scope_filter}n.{prop} IS NOT NULL "
                     f"AND EXISTS {{ (n)-[:{p.same_fact_as}]-() }} "
                     f"RETURN count(n) AS duplicates"
                 )
             elif p.same_fact_as:
                 other_label, other_prop = p.same_fact_as.split(".", 1)
                 out.append(
-                    f"MATCH (n:{label}) WHERE n.{prop} IS NOT NULL AND n.{other_prop} IS NOT NULL "
+                    f"MATCH (n:{label}) WHERE {scope_filter}n.{prop} IS NOT NULL "
+                    f"AND n.{other_prop} IS NOT NULL "
                     f"RETURN count(n) AS duplicates /* also stored as {other_label}.{other_prop} */"
                 )
     return out
