@@ -87,3 +87,8 @@ layers = ["memini.extensions", "memini.core", "memini.infra"]
 
 [tool.deptry]
 known_first_party = ["memini"]
+
+[tool.uv]
+# uv refuses to run below the version patched for every uv advisory to date
+# (GHSA-hq85-5cpj-mr62, High, fixed in 0.13.4): on the Mac, in CI and in the sandbox image
+required-version = ">=0.13.4"

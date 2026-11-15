@@ -10,5 +10,6 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 common="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
 exec act -W .github/workflows/ci.yml \
+  -P ubuntu-24.04=catthehacker/ubuntu:act-24.04 \
   -P ubuntu-latest=catthehacker/ubuntu:act-latest --rm \
   --container-options "-v ${common}:${common}:ro" "$@"

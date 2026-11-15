@@ -2,7 +2,9 @@
 # Built from the repo's locked environment; retagged by the lock's hash when uv.lock changes
 # (see tools/orchestrator/dockerexec.py). The slice's files are COPYed in per run, never
 # mounted, and the container runs with --network none and an allow-listed environment.
-FROM ghcr.io/astral-sh/uv:0.9.9-python3.12-bookworm-slim
+# uv 0.13.6: patched for every uv advisory to date (0.9.9 had three); uv ships no bookworm image
+# for it, so the base is Debian 13 (trixie), the current stable
+FROM ghcr.io/astral-sh/uv:0.13.6-python3.12-trixie-slim
 
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=0 \
