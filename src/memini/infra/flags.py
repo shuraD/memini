@@ -31,7 +31,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 def document_authority() -> bool:
     """Return whether module 4, document-authority (lineage, concept ownership), is on."""
-    return _env_bool("MEMINI_ENABLE_DOC_AUTH")
+    return _env_bool("MEMINI_ENABLE_DOCUMENT_AUTHORITY")
 
 
 def kg_extraction() -> bool:

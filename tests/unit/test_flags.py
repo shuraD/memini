@@ -12,7 +12,7 @@ import pytest
 from memini.infra import flags
 
 FLAG_FUNCTIONS = {
-    "document_authority": "MEMINI_ENABLE_DOC_AUTH",
+    "document_authority": "MEMINI_ENABLE_DOCUMENT_AUTHORITY",
     "kg_extraction": "MEMINI_ENABLE_KG_EXTRACTION",
     "archrag_index": "MEMINI_ENABLE_ARCHRAG_INDEX",
     "archrag_retrieval": "MEMINI_ENABLE_ARCHRAG_RETRIEVAL",
@@ -23,6 +23,22 @@ FLAG_FUNCTIONS = {
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in FLAG_FUNCTIONS.values():
         monkeypatch.delenv(name, raising=False)
+
+
+def test_all_flags_are_off_by_default() -> None:
+    assert {name: getattr(flags, name)() for name in FLAG_FUNCTIONS} == dict.fromkeys(
+        FLAG_FUNCTIONS, False
+    )
+
+
+def test_every_public_function_is_a_listed_flag() -> None:
+    """A new flag must be added here too, so it can't skip the env-var and default checks."""
+    public = {
+        name
+        for name, obj in inspect.getmembers(flags, inspect.isfunction)
+        if not name.startswith("_") and obj.__module__ == flags.__name__
+    }
+    assert public == set(FLAG_FUNCTIONS)
 
 
 @pytest.mark.parametrize("function", sorted(FLAG_FUNCTIONS))

@@ -168,3 +168,5 @@ INSERT INTO feature (id, description, layer, proof, status, added_in) VALUES ('F
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-023', 'tests/unit/test_flags.py::test_the_flag_is_read_at_call_time_not_at_import');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-023', 'tests/unit/test_flags.py::test_each_flag_variable_is_a_literal_env_bool_call');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-023', 'tests/unit/test_flags.py::test_the_flags_module_imports_only_the_standard_library');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-023', 'tests/unit/test_flags.py::test_all_flags_are_off_by_default');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-foundation-023', 'tests/unit/test_flags.py::test_every_public_function_is_a_listed_flag');

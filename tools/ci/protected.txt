@@ -23,3 +23,5 @@ tox.ini
 tools/__init__.py
 # "**/" protects that file name in every directory
 **/conftest.py
+# module feature flags: only the owner adds or flips a flag (ADR-0004)
+src/memini/infra/flags.py
