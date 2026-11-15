@@ -802,3 +802,18 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-001', 'tests/unit/test_schema_common.py::test_vector_index_on_undeclared_field_is_still_a_problem');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-001', 'tests/unit/test_schema_common.py::test_common_field_not_visible_to_other_section');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/schema.py-001', 'tests/unit/test_schema_common.py::test_committed_schema_without_common_stays_valid');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/infra/llm_providers/-017', 'Add generate_many: run many prompts for one role in parallel within max_', 'infra', 'slice spec LP-13; acceptance tests sealed at 9baff902be', 'active', 'src/memini/infra/llm_providers/', 'C-20261115-0155');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_run_many_keeps_input_order');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_run_many_keeps_order_when_later_items_finish_first');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_run_many_empty_returns_empty_without_calls');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_run_many_llm_error_becomes_the_item_value');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_run_many_budget_exceeded_becomes_the_item_value');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_run_many_non_llm_error_propagates');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_run_many_runs_items_in_parallel_within_max_workers');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_generate_many_returns_results_in_input_order');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_generate_many_passes_the_same_kwargs_to_each_prompt');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_generate_many_respects_max_concurrent_of_the_only_provider');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_generate_many_failing_prompt_is_llm_error_others_are_generations');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_generate_many_empty_returns_empty_with_no_calls');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_generate_many_budget_error_is_per_item_and_later_items_still_try');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-017', 'tests/unit/test_llm_providers_batch.py::test_generate_many_non_llm_error_propagates');

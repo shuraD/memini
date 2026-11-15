@@ -14,21 +14,25 @@ per-provider concurrency slot bounds simultaneous sends.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
+from memini.infra.llm_providers.batch import run_many
 from memini.infra.llm_providers.budgets import Budgets
 from memini.infra.llm_providers.config import LLMConfig
 from memini.infra.llm_providers.health import ProviderHealth
-from memini.infra.llm_providers.limiter import ConcurrencyLimits
+from memini.infra.llm_providers.limiter import MAX_CONCURRENT_KEY, ConcurrencyLimits
 from memini.infra.llm_providers.outcome import Action, Outcome
 from memini.infra.llm_providers.provider_call import ProviderFailure, call_provider
 from memini.infra.llm_providers.store import Store
 from memini.infra.llm_providers.transport import Transport
 from memini.infra.llm_providers.types import Attempt, Generation, LLMError, Reason
 
-__all__ = ["ProviderChain"]
+__all__ = ["DEFAULT_BATCH_WORKERS", "ProviderChain"]
+
+DEFAULT_BATCH_WORKERS: int = 8
+"""Pool size of :meth:`ProviderChain.generate_many` when a provider has no concurrency cap."""
 
 
 def _health_reason(recorded: str) -> Reason:
@@ -136,3 +140,52 @@ class ProviderChain:
             self._budgets.record(self._role, *spent)
             return generation
         raise LLMError(tuple(attempts), self._role)
+
+    def _batch_workers(self, count: int) -> int:
+        """Return how many prompts of a batch of ``count`` may run at once.
+
+        When every provider of the role declares ``max_concurrent``, their sum bounds
+        the pool (no more requests can be in flight anyway); otherwise the pool is
+        :data:`DEFAULT_BATCH_WORKERS`. The per-provider slots still bound each send.
+        """
+        total = 0
+        for name in self._config.provider_order(self._role):
+            limit = self._config.limit(name, self._role, MAX_CONCURRENT_KEY)
+            if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+                total = DEFAULT_BATCH_WORKERS
+                break
+            total += limit
+        return max(1, min(count, total or DEFAULT_BATCH_WORKERS))
+
+    def generate_many(
+        self,
+        prompts: Sequence[str],
+        *,
+        system: str | None = None,
+        json_mode: bool | dict[str, Any] = False,
+        temperature: float = 0.0,
+        seed: int | None = None,
+        stage: str | None = None,
+    ) -> list[Generation | LLMError]:
+        """Generate for every prompt in parallel with the same options, in input order.
+
+        Each prompt is one :meth:`generate` call (its own budget check and fallback);
+        a prompt that ends in :class:`LLMError` (or :class:`BudgetExceeded`) gets that
+        error in its slot while the others proceed.
+
+        Raises:
+            Exception: any error other than :class:`LLMError` propagates.
+
+        """
+
+        def one(prompt: str) -> Generation:
+            return self.generate(
+                prompt,
+                system=system,
+                json_mode=json_mode,
+                temperature=temperature,
+                seed=seed,
+                stage=stage,
+            )
+
+        return run_many(one, prompts, max_workers=self._batch_workers(len(prompts)))
