@@ -550,3 +550,18 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/-001', 'tests/unit/test_graph_guard.py::test_guard_from_env_blank_prod_host_accepts_local');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/-001', 'tests/unit/test_graph_guard.py::test_local_hosts_constant');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/-001', 'tests/unit/test_graph_guard.py::test_source_has_no_ipv4_literal_except_loopback');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/infra/llm_providers/-011', 'Send an HttpRequest over stdlib urllib and return the status, headers an', 'infra', 'slice spec LP-06; acceptance tests sealed at ee1544e9fa', 'active', 'src/memini/infra/llm_providers/', 'C-20261115-0142');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_200_returns_status_and_body');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_response_is_frozen_dataclass');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_http_response_fields');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_429_returns_status_and_header_without_raising');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_error_statuses_never_raise');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_headers_are_str_mapping');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_slow_server_raises_transport_timeout');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_closed_port_raises_transport_error');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_server_sees_user_agent_method_and_body');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_get_request_sends_user_agent');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_one_send_makes_one_request_no_retry');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_transport_protocol_has_send');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_import_opens_no_connection');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_no_module_level_mutable_state');
