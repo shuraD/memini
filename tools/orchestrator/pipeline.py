@@ -544,6 +544,7 @@ class _Run:
                 test_files=" ".join(files),
                 reference=reference,
                 failures="\n".join(f"- {f}" for f in failures) or "none (first attempt)",
+                deny_patterns="  ".join(cfg.deny_patterns),
             )
             res = self._agent("coder", prompt, self.wt, self.paths, protected)  # watched
             for item in engine.follow_ups(res.stdout):

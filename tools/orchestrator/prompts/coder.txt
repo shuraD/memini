@@ -14,6 +14,12 @@ Rules:
     uv run ruff check $allowed_args
     uv run mypy $allowed_args
   The tests run in a sandbox container; any other command is refused.
+- Gates you cannot run yourself also check your code (know them before you write):
+  - the deny scan refuses any match of these regexes in your changes, comments and docstrings
+    included: $deny_patterns
+  - the security gate is bandit: a finding you made safe (e.g. a URL scheme checked before
+    urlopen) is marked on the line bandit reports with "# nosec <id>" plus the reason; ruff's
+    "# noqa" does not silence bandit.
 - If you are convinced a sealed test is wrong, do not work around it: print one line
   TEST-DISPUTE: <the reason, with evidence from the specification>
   and stop.

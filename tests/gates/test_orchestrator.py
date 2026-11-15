@@ -2021,3 +2021,16 @@ def test_the_retry_names_the_rule_and_line_of_a_failed_security_gate(
     retry = _prompts(env, "coder")[1]
     assert f"B310 {IMPL}:2" in retry
     assert "SECRET-MESSAGE-TEXT" not in retry
+
+
+def test_the_coder_knows_the_deny_scan_and_bandits_nosec_before_its_first_attempt(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Owner 2026-11-15 (LP-06): two attempts burned on rules the coder could not know."""
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}), audit=[{"stdout": AUDIT_PASS}])
+    _holdout(env, TASK)
+    cfg = _cfg(env, deny_patterns=[r"\bsocket\b"])
+    pipeline.run_task(cfg, _task(env))
+    first = _prompts(env, "coder")[0]
+    assert r"\bsocket\b" in first
+    assert "# nosec <id>" in first
