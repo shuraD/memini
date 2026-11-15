@@ -2003,3 +2003,21 @@ def test_the_shipped_config_scans_qa_files_with_the_gitleaks_gate_before_sealing
     assert "gitleaks" in {g.name for g in cfg.gates}
     assert cfg.qa_gate_checks["gitleaks"][:2] == ("gitleaks", "dir")
     assert cfg.qa_gate_checks["gitleaks"][-1] == "{file}"
+
+
+def test_the_retry_names_the_rule_and_line_of_a_failed_security_gate(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Owner 2026-11-15 (LP-06): rule and location reach the coder; the message never does."""
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    say = (
+        ">> Issue: [B310:blacklist] Audit url open SECRET-MESSAGE-TEXT\n"
+        "   Severity: Medium   Confidence: High\n"
+        f"   Location: {IMPL}:2:5\n"
+    )
+    _gate_plan(env, monkeypatch, security={"fail": True, "say": say})
+    cfg = _cfg(env, gates=[_gate("security", ["slice"])])
+    pipeline.run_task(cfg, _task(env))
+    retry = _prompts(env, "coder")[1]
+    assert f"B310 {IMPL}:2" in retry
+    assert "SECRET-MESSAGE-TEXT" not in retry

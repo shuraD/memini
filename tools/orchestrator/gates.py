@@ -198,14 +198,52 @@ class Failure:
 
     gate: str
     tests: tuple[str, ...] = ()
+    findings: tuple[str, ...] = ()  # "<rule> <path>:<line>" in the coder's paths, no message
 
     def summary(self) -> str:
         """Return the one-line reason for a retry prompt or an outcome."""
-        if not self.tests:
-            return self.gate
-        shown = ", ".join(self.tests[:_MAX_IDS])
-        more = f" and {len(self.tests) - _MAX_IDS} more" if len(self.tests) > _MAX_IDS else ""
-        return f"{self.gate}; failing tests: {shown}{more}"
+        out = self.gate
+        for label, ids in (("failing tests", self.tests), ("findings", self.findings)):
+            if ids:
+                shown = ", ".join(ids[:_MAX_IDS])
+                more = f" and {len(ids) - _MAX_IDS} more" if len(ids) > _MAX_IDS else ""
+                out += f"; {label}: {shown}{more}"
+        return out
+
+
+_PATH = r"(?P<path>[\w./-]{1,200}\.py)"
+# rule id + location of a lint, type or security finding; the message text is never kept
+_FINDINGS = (
+    # ruff (full): "E501 Line too long ...\n  --> src/x.py:3:1"
+    re.compile(rf"^(?P<rule>[A-Z]{{1,4}}\d{{2,4}})\b[^\n]*\n\s*-->\s*{_PATH}:(?P<line>\d+)", re.M),
+    # ruff (concise): "src/x.py:3:1: E501 Line too long"
+    re.compile(rf"^{_PATH}:(?P<line>\d+):\d+: (?P<rule>[A-Z]{{1,4}}\d{{2,4}})\b", re.M),
+    # ruff format --check: "unformatted: File would be reformatted\n  --> src/x.py:3:1"
+    re.compile(rf"^(?P<rule>unformatted):[^\n]*\n\s*-->\s*{_PATH}:(?P<line>\d+)", re.M),
+    # bandit: ">> Issue: [B310:blacklist] ...\n ... Location: src/x.py:86:21"
+    re.compile(
+        rf"\[(?P<rule>B\d{{3}}):\w+\][^\n]*\n(?:[^\n]*\n){{0,3}}?\s*Location:\s*\.?/?{_PATH}"
+        r":(?P<line>\d+)"
+    ),
+    # mypy: "src/x.py:12: error: Incompatible types  [assignment]"
+    re.compile(rf"^{_PATH}:(?P<line>\d+): error: [^\n]*\[(?P<rule>[\w-]{{1,40}})\]\s*$", re.M),
+)
+
+
+def gate_findings(output: str, allowed: Sequence[str]) -> tuple[str, ...]:
+    """Return ``<rule> <path>:<line>`` for each finding in a file the coder may change.
+
+    Only the rule id and the location reach the coder (owner 2026-11-15, LP-06: "gate security
+    failed" alone could not be acted on); the message text and any other line of the output
+    stay in the gate log, and findings in other files (sealed tests, tools) are not shown.
+    """
+    out: list[str] = []
+    for pattern in _FINDINGS:
+        for m in pattern.finditer(output):
+            path = m["path"].removeprefix("./")
+            if any(matches(a, path) for a in allowed):
+                out.append(f"{m['rule']} {path}:{m['line']}")
+    return tuple(dict.fromkeys(out))[:_MAX_IDS]
 
 
 def failing_ids(output: str, node_ids: Collection[str]) -> tuple[str, ...]:
@@ -295,7 +333,13 @@ def run_gates(
             label = f"gate {gate.name}" + (f" [{prof.name}]" if gate.profiles else "")
             _log(log, f"{label} exit {res.code}", res.output)
             if res.code != 0:
-                failures.append(Failure(f"{label} failed", failing_ids(res.output, run.test_ids)))
+                failures.append(
+                    Failure(
+                        f"{label} failed",
+                        failing_ids(res.output, run.test_ids),
+                        gate_findings(res.output, cfg.allow),
+                    )
+                )
             elif gate.forbid_output and re.search(cfg.forbid_output, res.output):
                 failures.append(Failure(f"{label}: skipped or deselected tests are not allowed"))
     return failures
