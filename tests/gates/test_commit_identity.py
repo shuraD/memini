@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 ALLOW = ROOT / "tools" / "ci" / "commit-identities.txt"
 GIT = shutil.which("git") or "git"
 NEUTRAL = "memini-author@example.invalid"
+GITHUB_NOREPLY = re.compile(r"\d+\+[A-Za-z0-9-]+@users\.noreply\.github\.com")
 PERSONAL = "a.real.person@example.com"  # stands in for a personal address in these tests
 _CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
@@ -136,13 +138,17 @@ def test_missing_allow_list_fails_loudly(tmp_path: Path) -> None:
     assert code == 2, out.getvalue()
 
 
-def test_the_public_allow_list_holds_only_the_neutral_identity() -> None:
+def test_the_public_allow_list_holds_only_the_neutral_identity_and_github_noreply() -> None:
+    # owner 2026-11-15: every new commit is the owner's, under a GitHub noreply address;
+    # a personal email address still never belongs on the list.
     entries = [
         line.strip()
         for line in ALLOW.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
     ]
-    assert entries == [NEUTRAL], entries
+    assert NEUTRAL in entries, entries
+    others = [e for e in entries if e != NEUTRAL]
+    assert all(GITHUB_NOREPLY.fullmatch(e) for e in others), others
 
 
 def test_hook_and_ci_run_the_identity_gate() -> None:
