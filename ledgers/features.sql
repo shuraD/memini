@@ -565,3 +565,12 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_p
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_transport_protocol_has_send');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_import_opens_no_connection');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-011', 'tests/unit/test_llm_providers_transport.py::test_no_module_level_mutable_state');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/infra/llm_providers/-012', 'Write the call log to a JSON Lines file, one object per row.', 'infra', 'slice spec LP-20; acceptance tests sealed at 52b4a1a7f9', 'active', 'src/memini/infra/llm_providers/', 'C-20261115-0143');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-012', 'tests/unit/test_llm_providers_perf_export.py::test_three_rows_give_three_json_lines_with_every_field');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-012', 'tests/unit/test_llm_providers_perf_export.py::test_accepts_str_path');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-012', 'tests/unit/test_llm_providers_perf_export.py::test_empty_log_gives_empty_file_and_zero');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-012', 'tests/unit/test_llm_providers_perf_export.py::test_round_trip_rebuilds_each_record');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-012', 'tests/unit/test_llm_providers_perf_export.py::test_lines_follow_ts_order');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-012', 'tests/unit/test_llm_providers_perf_export.py::test_existing_file_is_replaced_not_appended');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-012', 'tests/unit/test_llm_providers_perf_export.py::test_second_export_replaces_first');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-012', 'tests/unit/test_llm_providers_perf_export.py::test_export_has_no_prompt_or_reply_keys');
