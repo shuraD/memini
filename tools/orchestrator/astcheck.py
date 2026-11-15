@@ -82,6 +82,7 @@ class _Checker:
         self.path, self.rules = path, rule_set
         self.aliases: dict[str, str] = {}  # local name -> dotted module or object
         self.problems: list[str] = []
+        self.frozen_setters: set[int] = set()  # ids of allowed ``object.__setattr__`` nodes
 
     def bad(self, node: ast.AST, what: str) -> None:
         self.problems.append(f"{self.path}:{getattr(node, 'lineno', 0)}: {what}")
@@ -130,6 +131,8 @@ class _Checker:
             if _dunder(node.id) and node.id not in self.rules.dunder_names:
                 self.bad(node, f"name {node.id} is not allowed")
         elif isinstance(node, ast.Attribute):
+            if id(node) in self.frozen_setters:
+                return
             if _dunder(node.attr) and node.attr not in self.rules.dunder_allow:
                 self.bad(node, f"attribute {node.attr} is not allowed")
             dotted = self.dotted(node)
@@ -158,6 +161,75 @@ class _Checker:
             self.bad(node, f"{base}.{attr} is forbidden")
 
 
+def _binds(tree: ast.AST, name: str) -> bool:
+    """Return True when ``name`` is assigned, imported, defined or a parameter in ``tree``."""
+    for node in ast.walk(tree):
+        if (
+            (isinstance(node, ast.Name) and node.id == name and not isinstance(node.ctx, ast.Load))
+            or (isinstance(node, ast.alias) and (node.asname or node.name) == name)
+            or (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and node.name == name
+            )
+            or (isinstance(node, ast.arg) and node.arg == name)
+        ):
+            return True
+    return False
+
+
+def _frozen_setter(call: ast.Call) -> bool:
+    """Return True for exactly ``object.__setattr__(self, "<plain name>", value)``."""
+    func, args = call.func, call.args
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "__setattr__"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "object"
+        and not call.keywords
+        and len(args) == 3  # noqa: PLR2004 — (self, name, value)
+        and isinstance(args[0], ast.Name)
+        and args[0].id == "self"
+        and isinstance(args[1], ast.Constant)
+        and isinstance(args[1].value, str)
+        and args[1].value.isidentifier()
+        and not _dunder(args[1].value)
+    )
+
+
+def frozen_setters(tree: ast.AST) -> set[int]:
+    """Return the ids of the ``object.__setattr__`` attributes of allowed frozen-class writes.
+
+    The frozen-dataclass idiom ``object.__setattr__(self, "name", value)`` (owner 2026-11-15,
+    LP-17) passes only inside a method defined in a class body whose first parameter is
+    ``self`` (without a default), when ``self`` is
+    never rebound in it (nested functions included) and ``object`` is never rebound in the
+    file: ``object.__setattr__`` writes on any object, modules included.
+    """
+    if _binds(tree, "object"):
+        return set()
+    out: set[int] = set()
+    methods = [
+        fn
+        for cls in ast.walk(tree)
+        if isinstance(cls, ast.ClassDef)
+        for fn in cls.body
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for fn in methods:  # only a method defined in a class body, whose self has no default
+        params = [*fn.args.posonlyargs, *fn.args.args]
+        if not params or params[0].arg != "self" or len(fn.args.defaults) >= len(params):
+            continue
+        body = ast.Module(body=fn.body, type_ignores=[])
+        if _binds(body, "self"):
+            continue
+        out |= {
+            id(node.func)
+            for node in ast.walk(body)
+            if isinstance(node, ast.Call) and _frozen_setter(node)
+        }
+    return out
+
+
 def problems(path: str, source: str, rule_set: Rules) -> list[str]:
     """Return every reason the Python ``source`` of ``path`` is refused (empty = accepted)."""
     try:
@@ -165,6 +237,7 @@ def problems(path: str, source: str, rule_set: Rules) -> list[str]:
     except SyntaxError as exc:
         return [f"{path}:{exc.lineno or 0}: not valid Python"]
     checker = _Checker(path, rule_set)
+    checker.frozen_setters = frozen_setters(tree)
     nodes = list(ast.walk(tree))
     for node in nodes:
         if isinstance(node, ast.Import):
