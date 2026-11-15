@@ -24,13 +24,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools import ledger
-from tools.orchestrator import audit, engine, gates, gitops, spec, state
+from tools.orchestrator import astcheck, audit, engine, gates, gitops, spec, state
 from tools.orchestrator.config import Config
 from tools.orchestrator.executor import Executor, Result, allowed_env, executor_for
 
 MERGED, REJECTED, DISPUTED, FAILED = "merged", "rejected", "disputed", "failed"
 LEDGER_FILES = ("ledgers/changes.sql", "ledgers/features.sql")
 _DIFF_LIMIT = 200_000
+_REFS = Path("<all refs>")  # a pseudo entry in the watched files: the for-each-ref listing
 
 
 @dataclass(frozen=True)
@@ -343,32 +344,26 @@ class _Run:
         """Return (files restored after tampering, files only reported).
 
         Restored: files only this run writes while it holds the global run lock (the
-        orchestrator state, git config, hooks and info, the task branch ref, the hold-out
-        tests, the private pytest gate). Only reported, never byte-restored: the queue, the
-        inbox, main's ref and packed-refs, which a person may legitimately write meanwhile.
+        orchestrator state, git config, hooks and info, the hold-out tests, the private
+        pytest gate). Only reported, never byte-restored: the queue, the inbox, every ref
+        (``for-each-ref``, refs/replace included) and packed-refs.
         """
         cfg = self.cfg
         common = gitops.common_dir(self.repo)
         roots = [common / "hooks", common / "info", gates.holdout_dir(cfg, self.task_id)]
-        own = [
-            cfg.state_dir / "state.json",
-            common / "config",
-            common / "refs" / "heads" / self.branch,
-            self.gate_script,
-        ]
+        own = [cfg.state_dir / "state.json", common / "config", self.gate_script]
         own += [f for r in roots if r.is_dir() for f in sorted(r.rglob("*")) if f.is_file()]
-        shared = [
-            cfg.queue,
-            cfg.inbox,
-            common / "refs" / "heads" / cfg.main_branch,
-            common / "packed-refs",
-        ]
+        shared = [cfg.queue, cfg.inbox, common / "packed-refs", _REFS]
         return own, shared
 
     def _watched_files(self) -> dict[Path, bytes | None]:
         """Return the bytes of the files no step may change (see :meth:`_watch_sets`)."""
         own, shared = self._watch_sets()
-        return {f: (f.read_bytes() if f.is_file() else None) for f in (*own, *shared)}
+        files = {
+            f: (f.read_bytes() if f.is_file() else None) for f in (*own, *shared) if f != _REFS
+        }
+        files[_REFS] = gitops.all_refs(self.repo)  # every ref, refs/replace included
+        return files
 
     def watch(self, what: str, before: dict[Path, bytes | None]) -> None:
         """Compare with ``before``; on any change restore our own files, alert and reject."""
@@ -387,7 +382,12 @@ class _Run:
             else:
                 path.write_bytes(old)
             restored.append(path)
-        names = ", ".join(str(p) for p in changed)
+        names = ", ".join(str(p) for p in changed if p != _REFS)
+        if _REFS in changed:  # name the refs that appeared, moved or vanished
+            old_refs = set((before.get(_REFS) or b"").decode().splitlines())
+            new_refs = set((after.get(_REFS) or b"").decode().splitlines())
+            moved = sorted({line.split(" ", 1)[0] for line in old_refs ^ new_refs})
+            names = ", ".join(filter(None, [names, "refs: " + ", ".join(moved)]))
         state.inbox_append(
             self.cfg,
             self.task_id,
@@ -460,6 +460,7 @@ class _Run:
             ref_repo, branch = spec.resolve_reference(cfg, self.sp.reference)
             reference = engine.render(cfg, "coder_reference", repo=str(ref_repo), branch=branch)
         failures: list[str] = []
+        snap = qa_sha
         for attempt in range(1, cfg.max_coder_attempts + 1):
             prompt = engine.render(
                 cfg,
@@ -491,9 +492,10 @@ class _Run:
                 failures = ["no change was made"]
                 continue
             diff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap)
-            hits = gates.deny_hits(diff, cfg.deny_patterns)
+            hits = [f"deny scan: {h}" for h in gates.deny_hits(diff, cfg.deny_patterns)]
+            hits += self._ast_problems(qa_sha, snap)
             if hits:
-                failures = [f"deny scan: {h}" for h in hits[:20]]
+                failures = hits[:20]
                 continue
             failures = [f.summary() for f in self._gate_slice(snap, base, files)]
             if not failures:
@@ -501,10 +503,36 @@ class _Run:
                 if verdict.passed:
                     return snap
                 failures = [f"audit: {f[:300]}" for f in verdict.findings[:10]]
+        if any(f.startswith("AST check:") for f in failures):
+            state.inbox_append(
+                cfg,
+                self.task_id,
+                "AST check rejected the slice (owner may override)",
+                2,
+                "; ".join(f for f in failures if f.startswith("AST check:"))[:1500]
+                + f" | to accept exactly this code, add the line: OVERRIDE-AST {self.task_id} "
+                f"{snap}",
+            )
         raise _Stop(
             REJECTED,
             f"not green after {cfg.max_coder_attempts} attempts: " + "; ".join(failures)[:1500],
         )
+
+    def _ast_problems(self, qa_sha: str, snap: str) -> list[str]:
+        """Return the AST check's problems for the Python files the coder changed.
+
+        Only the owner can let a refused commit through, with an inbox line naming it.
+        """
+        inbox = self.cfg.inbox.read_text(encoding="utf-8") if self.cfg.inbox.exists() else ""
+        if astcheck.override_granted(inbox, self.task_id, snap):
+            return []
+        rule_set = astcheck.rules(self.cfg, self.wt)
+        sources = [
+            (path, gitops.out(self.repo, "show", f"{snap}:{path}"))
+            for status, path in gitops.name_status(self.repo, qa_sha, snap)
+            if status != "D" and path.endswith(".py")
+        ]
+        return [f"AST check: {p}" for p in astcheck.check_files(sources, rule_set)]
 
     def _cheats(
         self, base: str, head: str, sealed: dict[str, str], extra: Sequence[str]
@@ -530,11 +558,15 @@ class _Run:
 
     def _gate_run(self, worktree: Path, commit: str, files: list[str]) -> gates.GateRun:
         tracked = gitops.out(self.repo, "ls-tree", "-r", "--name-only", commit)
-        tests = {p for p in tracked.splitlines() if p.rsplit("/", 1)[-1].startswith("test_")}
+        tracked_tests = {
+            p
+            for p in tracked.splitlines()
+            if p.endswith(".py") and p.rsplit("/", 1)[-1].startswith("test_")
+        }
         return gates.GateRun(
             worktree=worktree,
             log=self.run_dir / "gates.log",
-            test_files=frozenset({*files, *tests}),
+            test_ids=frozenset(gates.test_node_ids(worktree, sorted({*files, *tracked_tests}))),
             env=self.gate_env,
             gate_script=self.gate_script,
         )

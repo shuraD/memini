@@ -16,7 +16,18 @@ from typing import Any
 
 import pytest
 import yaml
-from tools.orchestrator import audit, cli, config, engine, executor, gates, pipeline, spec, state
+from tools.orchestrator import (
+    astcheck,
+    audit,
+    cli,
+    config,
+    engine,
+    executor,
+    gates,
+    pipeline,
+    spec,
+    state,
+)
 from tools.orchestrator.hooks import guard_worktree
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1210,7 +1221,7 @@ def test_b1_code_that_calls_os_exit_0_cannot_pass_by_exit_code(
     The deny scan is switched off here to show the pytest gate catches it on its own.
     """
     _plan(env, monkeypatch, coder=_coder({IMPL: EXIT0}))
-    cfg = _cfg(env, deny_patterns=[])
+    cfg = _cfg(env, deny_patterns=[], forbidden_names=[])  # both static layers off
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "rejected"
     assert "QA acceptance tests [defaults] failed" in out.reason
@@ -1555,7 +1566,12 @@ def test_r2_2_a_gate_that_moves_a_ref_is_rejected(
 
 
 def test_r2_3_only_safe_known_test_ids_reach_the_retry_prompt() -> None:
-    files = {"tests/unit/test_calc.py"}
+    """Round 3: an id is kept only when it is exactly a known node id (AST of the tests)."""
+    files = {
+        "tests/unit/test_calc.py::test_add",
+        "tests/unit/test_calc.py::TestK::test_z",
+        "tests/unit/test_calc.py::test_x",
+    }
     output = "\n".join(
         [
             "✗ test step: failed: tests.unit.test_calc::test_add",
@@ -1566,8 +1582,8 @@ def test_r2_3_only_safe_known_test_ids_reach_the_retry_prompt() -> None:
         ]
     )
     assert gates.failing_ids(output, files) == (
-        "tests.unit.test_calc::test_add",
-        "tests.unit.test_calc.TestK::test_z",
+        "tests/unit/test_calc.py::test_add",
+        "tests/unit/test_calc.py::TestK::test_z",
     )
 
 
@@ -1668,3 +1684,106 @@ def test_r2_10_agents_md_names_no_licence_gate() -> None:
     text = (ROOT / "AGENTS.md").read_text()
     assert "the licence gate" not in text
     assert "no automated gate for them yet (planned: F-foundation-030)" in text
+
+
+# --- round 3 (MERGE: no): AST check, git replace, exact ids, release lock -------------------
+
+# minimal shapes of the reviewer's bypasses: enough for the check, not working forgers
+COMPUTED_GETATTR = 'import sys\n\n_M = getattr(sys, "mod" + "ules")\n\n\n' + GOOD
+DUNDER_FUNC = "def _f():\n    pass\n\n\n_G = _f.__globals__\n\n\n" + GOOD
+
+
+@pytest.mark.parametrize(
+    ("source", "problem"),
+    [
+        (COMPUTED_GETATTR, "getattr() needs a string-literal attribute name"),
+        (DUNDER_FUNC, "attribute __globals__ is not allowed"),
+        ("import _pytest\n", "import of _pytest is not allowed"),
+        ("import subprocess\n", "import of subprocess is not allowed"),
+        ("from os import _exit\n", "os._exit is forbidden"),
+        ("import os\nos._exit(0)\n", "os._exit is forbidden"),
+        ('import os\ngetattr(os, "_exit")(0)\n', "os._exit is forbidden"),
+        ("import sys as s\nx = s.modules\n", "sys.modules is forbidden"),
+        ("x = vars()\n", "call to vars() is not allowed"),
+        ("x = globals()\n", "call to globals() is not allowed"),
+        ("x = __builtins__\n", "name __builtins__ is not allowed"),
+        ("from os import *\n", "star import from os is not allowed"),
+        ("setattr(object(), name, 1)\n", "setattr() needs a string-literal attribute name"),
+    ],
+)
+def test_r3_1_ast_check_refuses_reaching_into_the_interpreter(source: str, problem: str) -> None:
+    cfg = config.load_config(ROOT, overrides={"state_dir": "/nonexistent-state"}, env={})
+    found = astcheck.problems("src/memini/x.py", source, astcheck.rules(cfg, ROOT))
+    assert any(problem in p for p in found), found
+
+
+def test_r3_1_ast_check_accepts_ordinary_code_and_declared_dependencies() -> None:
+    cfg = config.load_config(ROOT, overrides={"state_dir": "/nonexistent-state"}, env={})
+    source = (
+        "from __future__ import annotations\n\nimport os\nimport yaml\n"
+        "from dataclasses import dataclass\nfrom memini.core import schema\n"
+        "from . import sibling\n\n\n"
+        "@dataclass\nclass A:\n    x: int\n\n    def __post_init__(self) -> None:\n"
+        '        self.y = getattr(self, "x", 0)\n        self.e = os.environ.get("E", "")\n'
+        "        super().__init__()\n\n\n__all__ = ['A']\nNAME = __name__\n"
+    )
+    assert astcheck.problems("src/memini/x.py", source, astcheck.rules(cfg, ROOT)) == []
+    for p in sorted((ROOT / "src" / "memini").rglob("*.py")):  # the current code passes too
+        assert astcheck.problems(str(p), p.read_text(), astcheck.rules(cfg, ROOT)) == [], p
+
+
+def test_r3_1_a_computed_getattr_rejects_the_slice_with_an_owner_override_line(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(env, monkeypatch, coder=_coder({IMPL: COMPUTED_GETATTR}))
+    cfg = _cfg(env, deny_patterns=[])  # the AST layer alone
+    out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "rejected"
+    assert "AST check: src/memini/core/calc/__init__.py:3: getattr()" in out.reason
+    inbox = cfg.inbox.read_text()
+    assert "AST check rejected the slice (owner may override) (tier 2)" in inbox
+    assert f"OVERRIDE-AST {TASK} " in inbox
+    assert _prompts(env, "audit") == []
+
+
+def test_r3_1_only_an_exact_owner_override_line_counts() -> None:
+    sha = "a" * 40
+    assert astcheck.override_granted(f"x\nOVERRIDE-AST T-1 {sha}\n", "T-1", sha)
+    assert astcheck.override_granted(f"OVERRIDE-AST T-1 {sha[:10]}\n", "T-1", sha)
+    assert not astcheck.override_granted(f"OVERRIDE-AST T-2 {sha}\n", "T-1", sha)
+    assert not astcheck.override_granted(f"- OVERRIDE-AST T-1 {sha}\n", "T-1", sha)
+    assert not astcheck.override_granted(f"OVERRIDE-AST T-1 {'b' * 40}\n", "T-1", sha)
+
+
+def test_r3_2_a_replace_ref_created_during_a_gate_is_rejected(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    common = Path(_git(env["repo"], "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    head = _git(env["repo"], "rev-parse", "main")
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    replace_ref = str(common / "refs" / "replace" / head)
+    _gate_plan(env, monkeypatch, g={"tamper": replace_ref, "content": head})
+    cfg = _cfg(env, gates=[_gate("g", ["slice"])])
+    out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "rejected"
+    assert f"refs/replace/{head}" in cfg.inbox.read_text()
+
+
+def test_r3_2_every_git_env_disables_replace_objects(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GIT_NO_REPLACE_OBJECTS", "0")
+    assert executor.clean_env()["GIT_NO_REPLACE_OBJECTS"] == "1"
+    assert executor.allowed_env(["PATH"])["GIT_NO_REPLACE_OBJECTS"] == "1"
+    assert executor.allowed_env(["PATH"], {"HOME": "/h"})["GIT_NO_REPLACE_OBJECTS"] == "1"
+
+
+def test_r3_4_release_takes_the_run_lock(
+    env: dict[str, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _cfg(env)
+    state.State(cfg).claim("T-other-001", "w1", ("src/memini/core/x/",))
+    with (cfg.state_dir / "run.lock").open("a+") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        args = ["release", "T-other-001", "--config-json", json.dumps(_overrides(env))]
+        assert cli.main(args) == 1
+    assert "another orchestrator run is active" in capsys.readouterr().out
+    assert state.State(cfg).task("T-other-001")["status"] == "active"

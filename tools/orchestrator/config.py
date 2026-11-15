@@ -79,6 +79,12 @@ class Config:
     executor: str
     allow: tuple[str, ...]
     deny_patterns: tuple[str, ...]
+    ast_forbidden_calls: tuple[str, ...]
+    ast_dunder_allow: tuple[str, ...]
+    ast_dunder_names: tuple[str, ...]
+    import_allow: tuple[str, ...]
+    forbidden_names: tuple[str, ...]
+    dependency_modules: Mapping[str, str]
     local_coder_engines: tuple[str, ...]
     module_roots: Mapping[str, str]
     ignored_ok: tuple[str, ...]
@@ -243,6 +249,12 @@ def load_config(
         executor="local",
         allow=_strs(raw, "allow"),
         deny_patterns=deny,
+        ast_forbidden_calls=_strs(raw, "ast_forbidden_calls"),
+        ast_dunder_allow=_strs(raw, "ast_dunder_allow"),
+        ast_dunder_names=_strs(raw, "ast_dunder_names"),
+        import_allow=_strs(raw, "import_allow"),
+        forbidden_names=_strs(raw, "forbidden_names"),
+        dependency_modules={str(k): str(v) for k, v in raw.get("dependency_modules", {}).items()},
         local_coder_engines=_strs(raw, "local_coder_engines"),
         module_roots={str(k): str(v) for k, v in raw.get("module_roots", {}).items()},
         ignored_ok=_strs(raw, "ignored_ok"),

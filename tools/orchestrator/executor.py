@@ -32,6 +32,11 @@ class Result:
         return self.stdout + self.stderr
 
 
+# git must read the real objects: a refs/replace/* entry can make any commit look like
+# another one (the audited tree swapped under the gates)
+NO_REPLACE = {"GIT_NO_REPLACE_OBJECTS": "1"}
+
+
 def clean_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
     """Return the orchestrator's own environment without git's per-repository variables.
 
@@ -39,6 +44,7 @@ def clean_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
     :func:`allowed_env` instead.
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(NO_REPLACE)
     env.update(extra or {})
     return env
 
@@ -50,6 +56,7 @@ def allowed_env(allow: Sequence[str], extra: Mapping[str, str] | None = None) ->
     unless it is listed; an engine adds the few its own CLI needs for its agent step only.
     """
     env = {k: os.environ[k] for k in allow if k in os.environ}
+    env.update(NO_REPLACE)
     env.update(extra or {})
     return env
 

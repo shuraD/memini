@@ -280,3 +280,10 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-006', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-008', 'tests/gates/test_orchestrator.py::test_r2_1_the_audit_prompt_names_result_forging');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-008', 'tests/gates/test_orchestrator.py::test_r2_4_a_diff_too_large_for_one_audit_is_rejected');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-011', 'tests/gates/test_orchestrator.py::test_r2_5_non_claude_coders_are_refused_while_the_executor_is_local');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r3_1_ast_check_refuses_reaching_into_the_interpreter');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r3_1_ast_check_accepts_ordinary_code_and_declared_dependencies');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r3_1_a_computed_getattr_rejects_the_slice_with_an_owner_override_line');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r3_1_only_an_exact_owner_override_line_counts');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r3_2_a_replace_ref_created_during_a_gate_is_rejected');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r3_2_every_git_env_disables_replace_objects');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-006', 'tests/gates/test_orchestrator.py::test_r3_4_release_takes_the_run_lock');

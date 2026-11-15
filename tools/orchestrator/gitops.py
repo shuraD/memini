@@ -8,7 +8,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
-from tools.orchestrator.executor import clean_env
+from tools.orchestrator.executor import NO_REPLACE, clean_env
 
 _GIT = shutil.which("git") or "git"
 
@@ -29,7 +29,7 @@ def git(
     The environment is the orchestrator's own without GIT_* variables, or ``base_env``
     (an allow-listed one, for a commit whose hooks run repository code), plus ``env``.
     """
-    full = clean_env(env) if base_env is None else {**base_env, **(env or {})}
+    full = clean_env(env) if base_env is None else {**base_env, **(env or {}), **NO_REPLACE}
     res = subprocess.run(  # noqa: S603 — fixed git binary, our own args, no shell
         [_GIT, "-C", str(repo), *args],
         capture_output=True,
@@ -135,6 +135,11 @@ def worktree_of(repo: Path, branch: str) -> Path | None:
         elif line == f"branch refs/heads/{branch}":
             return current
     return None
+
+
+def all_refs(repo: Path) -> bytes:
+    """Return every ref with its object (``for-each-ref``, refs/replace included)."""
+    return out(repo, "for-each-ref", "--format=%(refname) %(objectname)").encode()
 
 
 def common_dir(repo: Path) -> Path:

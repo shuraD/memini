@@ -167,10 +167,15 @@ def _cmd_status(cfg: config.Config, args: argparse.Namespace) -> int:
 
 def _cmd_release(cfg: config.Config, args: argparse.Namespace) -> int:
     st = state.State(cfg)
-    if st.task(args.task_id) is None:
-        print(f"{args.task_id}: unknown task")
+    try:
+        with state.run_lock(cfg):  # never release a task under a running orchestrator
+            if st.task(args.task_id) is None:
+                print(f"{args.task_id}: unknown task")
+                return 1
+            st.update(args.task_id, "released", reason=args.reason)
+    except state.BusyError as exc:
+        print(f"{args.task_id}: not released: {exc}")
         return 1
-    st.update(args.task_id, "released", reason=args.reason)
     print(f"{args.task_id}: released")
     return 0
 

@@ -45,6 +45,35 @@ deny_patterns = [
   '\bglobals\s*\(', '\bsetattr\s*\(\s*(sys|os|builtins)\b', '\bcode\.(interact|InteractiveConsole)',
 ]
 
+# AST check of every Python file the coder changed (the main layer; deny_patterns is the
+# extra one). It rejects getattr/setattr/delattr/hasattr with a non-literal name, the calls
+# below, dunder attributes outside ast_dunder_allow, dunder names outside ast_dunder_names,
+# imports outside import_allow (+ memini + the declared dependencies), and forbidden names.
+# Only an owner inbox line "OVERRIDE-AST <task id> <commit sha>" lets a rejected commit pass.
+ast_forbidden_calls = ["exec", "eval", "compile", "__import__", "vars", "globals", "locals", "breakpoint"]
+ast_dunder_allow = [
+  "__name__", "__class__", "__init__", "__post_init__", "__repr__", "__str__", "__eq__", "__hash__",
+]
+# dunder NAMES a module may read or define (not attributes): module metadata and paths
+ast_dunder_names = ["__name__", "__file__", "__all__", "__version__", "__doc__"]
+import_allow = [
+  "__future__", "abc", "array", "base64", "bisect", "collections", "contextlib", "copy", "csv",
+  "dataclasses", "datetime", "decimal", "difflib", "enum", "fractions", "functools", "graphlib",
+  "hashlib", "heapq", "html", "io", "itertools", "json", "logging", "math", "numbers",
+  "operator", "os", "pathlib", "pprint", "random", "re", "secrets", "statistics", "string",
+  "struct", "sys", "textwrap", "time", "tomllib", "typing", "unicodedata", "urllib.parse",
+  "uuid", "warnings", "zlib", "memini",
+]
+# dotted names (fnmatch) that stay forbidden inside allowed modules
+forbidden_names = [
+  "os._exit", "os.abort", "os.kill*", "os.system", "os.popen", "os.fork*", "os.exec*",
+  "os.spawn*", "os.posix_spawn*", "os.startfile", "os.putenv", "os.register_at_fork",
+  "sys.modules", "sys.argv", "sys.orig_argv", "sys.exit", "sys._getframe", "sys.settrace",
+  "sys.setprofile", "sys.meta_path", "sys.path_hooks", "sys.path_importer_cache",
+  "sys.addaudithook", "sys.breakpointhook", "sys.excepthook", "sys.displayhook",
+  "sys.stdin", "sys.stdout", "sys.stderr", "sys.__*", "logging.config*",
+]
+
 # the coder may change only these paths (a trailing "/" is a directory) ...
 allow = ["src/memini/"]
 # ... except these, which win over the allow list (and are blocked by the guard hook)
@@ -95,6 +124,10 @@ gate_timeout_s = 1800
 max_budget_usd = "3"
 # a test gate whose output matches this fails: zero skips
 forbid_output = '\b\d+ (skipped|xfailed|xpassed|deselected)\b'
+
+# import name of a declared dependency when it differs from the distribution name
+[dependency_modules]
+pyyaml = "yaml"
 
 [reference_repos]
 # private = "../memini"

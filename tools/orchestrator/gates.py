@@ -20,6 +20,7 @@ from pathlib import Path
 
 import yaml
 
+from tools.ci.pytest_gate import junit_key
 from tools.orchestrator import gitops
 from tools.orchestrator.config import Config, Gate
 from tools.orchestrator.executor import Executor, Result, run_on_host
@@ -207,21 +208,17 @@ class Failure:
         return f"{self.gate}; failing tests: {shown}{more}"
 
 
-def _id_file(label: str, test_files: Collection[str]) -> bool:
-    """Return True when the junit label ``a.b.test_x[.Class]::name`` names a known test file."""
-    dotted = label.split("::", 1)[0].split(".")
-    return any("/".join(dotted[:n]) + ".py" in test_files for n in range(1, len(dotted) + 1))
+def failing_ids(output: str, node_ids: Collection[str]) -> tuple[str, ...]:
+    r"""Return the failing tests pytest_gate reported, as node ids, keeping only known ones.
 
-
-def failing_ids(output: str, test_files: Collection[str]) -> tuple[str, ...]:
-    r"""Return the failing test ids pytest_gate reported, keeping only safe, known ones.
-
-    An id is kept only when it names a sealed QA file or a tracked test file and matches
-    ``[\w.[]/:-]{1,200}``; anything else in the output (crafted names, paths, messages) is
-    dropped, so the coder's retry prompt never carries text the code under test chose.
+    A reported junit label is kept only when it is exactly the label of one of
+    ``node_ids`` (the sealed QA tests and the tracked tests, from their AST) and matches
+    ``[\\w.[]/:-]{1,200}``; anything else in the output is dropped, so the coder's retry
+    prompt never carries text the code under test chose.
     """
+    by_label = {"::".join(p for p in junit_key(n) if p): n for n in node_ids}
     found = (i for i in _FAILED_ID.findall(output) if _SAFE_ID.fullmatch(i))
-    return tuple(dict.fromkeys(i for i in found if _id_file(i, test_files)))
+    return tuple(dict.fromkeys(by_label[i] for i in found if i in by_label))
 
 
 # ------------------------------------------------------------------ deny scan
@@ -258,7 +255,7 @@ class GateRun:
 
     worktree: Path
     log: Path
-    test_files: frozenset[str]  # sealed QA files + tracked test files: the ids we may name
+    test_ids: frozenset[str]  # node ids of the sealed QA tests and the tracked tests
     env: Mapping[str, str]  # e.g. a private HOME
     gate_script: Path  # the run's private copy of tools/ci/pytest_gate.py
 
@@ -288,7 +285,7 @@ def run_gates(
             label = f"gate {gate.name}" + (f" [{prof.name}]" if gate.profiles else "")
             _log(log, f"{label} exit {res.code}", res.output)
             if res.code != 0:
-                failures.append(Failure(f"{label} failed", failing_ids(res.output, run.test_files)))
+                failures.append(Failure(f"{label} failed", failing_ids(res.output, run.test_ids)))
             elif gate.forbid_output and re.search(cfg.forbid_output, res.output):
                 failures.append(Failure(f"{label}: skipped or deselected tests are not allowed"))
     return failures
@@ -350,7 +347,7 @@ def qa_test_failures(
         label = f"QA acceptance tests [{prof.name}]"
         _log(run.log, f"{label} exit {res.code}", res.output)
         if res.code != 0:
-            out.append(Failure(f"{label} failed", failing_ids(res.output, run.test_files)))
+            out.append(Failure(f"{label} failed", failing_ids(res.output, run.test_ids)))
         elif re.search(cfg.forbid_output, res.output):
             out.append(Failure(f"{label}: skipped tests are not allowed"))
     return out

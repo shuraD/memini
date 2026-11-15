@@ -89,7 +89,7 @@ def _gate(name: str) -> int:
     if step.get("tamper") and calls == 1:
         target = Path(str(step["tamper"]))
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("tampered\n", encoding="utf-8")
+        target.write_text(str(step.get("content", "tampered")) + "\n", encoding="utf-8")
     marker = log / f"moved-{name}"
     if step.get("move_main") and not marker.exists():
         marker.write_text("x", encoding="utf-8")
