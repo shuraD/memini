@@ -355,7 +355,9 @@ def status_lines(cfg: config.Config) -> list[str]:
     st = state.State(cfg)
     tasks = st.tasks()
     lines = []
-    queues = [("queue", cfg.queue), *((n, q.queue) for n, q in cfg.code_queues.items())]
+    squads = [(n, q.queue) for n, q in cfg.code_queues.items()]
+    # the default queue is listed once: under its squad name when a squad reads it
+    queues = squads if any(q == cfg.queue for _, q in squads) else [("queue", cfg.queue), *squads]
     seen: set[str] = set()
     for name, path in queues:
         entries = state.read_queue(path) if path.exists() else []

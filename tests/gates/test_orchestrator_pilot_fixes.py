@@ -42,7 +42,7 @@ class _Recorder:
         timeout: int = 1800,
         pass_env: Sequence[str] = (),
     ) -> Result:
-        assert (cwd / "holdout" / "test_h.py").is_file()
+        assert (cwd / "tests" / "holdout" / "test_h.py").is_file()
         self.calls.append((list(argv), dict(env or {})))
         return Result(0, "1 passed", "")
 

@@ -2034,3 +2034,17 @@ def test_the_coder_knows_the_deny_scan_and_bandits_nosec_before_its_first_attemp
     first = _prompts(env, "coder")[0]
     assert r"\bsocket\b" in first
     assert "# nosec <id>" in first
+
+
+def test_a_holdout_finds_the_repository_like_the_unit_test_it_was_written_as(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GS-01 2026-11-15: QA writes hidden tests under tests/unit/ and finds the repository with
+    Path(__file__).parents[2]; the hold-out must run at that depth, not one level shallower."""
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    (env["tmp"] / "holdout" / TASK / "test_root.py").write_text(
+        "from pathlib import Path\n\n\ndef test_root():\n"
+        "    assert (Path(__file__).resolve().parents[2] / 'pyproject.toml').is_file()\n"
+    )
+    out = pipeline.run_task(_cfg(env), _task(env))
+    assert out.status == "merged", out.reason

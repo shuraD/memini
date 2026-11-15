@@ -87,6 +87,7 @@ def _cfg(env: dict[str, Any], **extra: Any) -> config.Config:
         ],
         "python": PY,
         "setup": [],
+        "gates": [],  # no real gate tools in these tests (CI has no gitleaks)
         "default_engine": "fake",
         "qa_engine": "fake",
         "audit_engine": "fake",

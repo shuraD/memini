@@ -479,6 +479,9 @@ def holdout_passes(
         gitops.git(repo, "archive", "--format=tar", f"--output={archive}", commit)
         with tarfile.open(archive) as tar:
             tar.extractall(export, filter="data")
+        # the hold-out runs at the depth QA wrote it (tests/unit/ -> tests/holdout/): a test that
+        # finds the repository by Path(__file__).parents[2] must see the export (GS-01)
+        placed = export / "tests" / "holdout"
         ok = True
         for prof in profiles(cfg, export):
             run_env = {
@@ -487,14 +490,16 @@ def holdout_passes(
                 "PYTHONDONTWRITEBYTECODE": "1",
                 **prof.env,
             }
+            # once per profile: the copy from the previous profile is replaced, not added to
+            shutil.copytree(tests, placed, dirs_exist_ok=True)
             if sandbox is None:
                 argv = pytest_gate_argv(
                     python,
                     cfg,
                     gate_script,
                     "--rootdir",
-                    str(tests),
-                    str(tests),
+                    str(placed),
+                    str(placed),
                     markers=markers,
                 )
                 res = run_on_host(
@@ -505,15 +510,13 @@ def holdout_passes(
                     timeout=cfg.gate_timeout_s,
                 )
             else:  # the hold-out tests and the slice export share one throwaway container
-                # once per profile: the copy from the previous profile is replaced, not added to
-                shutil.copytree(tests, export / "holdout", dirs_exist_ok=True)
                 argv = pytest_gate_argv(
                     python,
                     cfg,
                     Path("tools/ci/pytest_gate.py"),
                     "--rootdir",
-                    "holdout",
-                    "holdout",
+                    "tests/holdout",
+                    "tests/holdout",
                     markers=markers,
                 )
                 res = sandbox.run(
