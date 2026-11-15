@@ -60,6 +60,7 @@ class Relationship:
     rule: str
     properties: dict[str, Property] = field(default_factory=dict)
     same_fact_as: str | None = None
+    migrating_to: str | None = None  # a declared, temporary duplicate guarded by the detector
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,7 @@ def from_dict(raw: dict[str, Any]) -> Schema:
             rule=str(spec.get("rule", "")),
             properties=_properties(spec),
             same_fact_as=spec.get("same_fact_as"),
+            migrating_to=spec.get("migrating_to"),
         )
         for name, spec in (raw.get("relationships") or {}).items()
     }
@@ -236,9 +238,23 @@ def _node_problems(label: str, node: Node, common: dict[str, Property]) -> list[
     return problems
 
 
-def _relationship_problems(
-    name: str, rel: Relationship, nodes: dict[str, Node], common: dict[str, Property]
-) -> list[str]:
+def _is_declared_twin(schema: Schema, target: str) -> bool:
+    """Return True if ``target`` is a declared relationship type or a declared ``Label.prop``."""
+    if target in schema.relationships:
+        return True
+    label, dot, prop = target.partition(".")
+    return bool(dot) and label in schema.nodes and prop in node_properties(schema, label)
+
+
+def _twin_problems(schema: Schema, owner: str, same_fact_as: str | None) -> list[str]:
+    """Return the problem of a relationship-side ``same_fact_as`` naming no declared twin."""
+    if same_fact_as and not _is_declared_twin(schema, same_fact_as):
+        return [f"{owner}: same_fact_as names undeclared {same_fact_as}"]
+    return []
+
+
+def _relationship_problems(schema: Schema, name: str, rel: Relationship) -> list[str]:
+    common = schema.common.relationships
     problems = _proof_problems(
         name,
         layer=rel.layer,
@@ -247,13 +263,17 @@ def _relationship_problems(
         ingest_only=None,
         same_fact_as=rel.same_fact_as,
         rule=rel.rule,
+        migrating_to=rel.migrating_to,
     )
+    problems += _twin_problems(schema, name, rel.same_fact_as)
     problems += _property_problems(name, rel.properties)
+    for prop, p in rel.properties.items():
+        problems += _twin_problems(schema, f"{name}.{prop}", p.same_fact_as)
     problems += _redeclared_problems(name, rel.properties, common)
     problems += [
         f"{name}: endpoint {end!r} is not a declared node"
         for end in (*rel.sources, *rel.targets)
-        if end not in nodes
+        if end not in schema.nodes
     ]
     return problems
 
@@ -263,17 +283,18 @@ def validate(schema: Schema) -> list[str]:
 
     Rules: every property and relationship has a layer, a writer and a reader (or an
     ``ingest_only`` reason) and a rule; a ``same_fact_as`` entry is accepted only as a
-    declared migration (``migrating_to``); indexes name declared properties; relationship
-    endpoints are declared nodes. Fields of the ``common`` section carry the same proof,
-    are declared there only (a label or type may not declare them again), and count as
-    declared for every label's indexes.
+    declared migration (``migrating_to``), and on a relationship or relationship property it
+    must name a declared relationship type or ``Label.prop``; indexes name declared
+    properties; relationship endpoints are declared nodes. Fields of the ``common`` section
+    carry the same proof, are declared there only (a label or type may not declare them
+    again), and count as declared for every label's indexes.
     """
     problems = _property_problems("common.nodes", schema.common.nodes)
     problems += _property_problems("common.relationships", schema.common.relationships)
     for label, node in schema.nodes.items():
         problems += _node_problems(label, node, schema.common.nodes)
     for name, rel in schema.relationships.items():
-        problems += _relationship_problems(name, rel, schema.nodes, schema.common.relationships)
+        problems += _relationship_problems(schema, name, rel)
     return problems
 
 
@@ -367,6 +388,8 @@ def duplicate_queries(schema: Schema, scope: str | None = None) -> list[str]:
 
     With ``scope`` given, every query also requires ``n.scope = $scope``; the caller binds the
     value as the Cypher parameter ``scope``, so the value itself never enters the query text.
+    Node-property queries come first; then each relationship's ``same_fact_as`` yields one
+    query per (source, target) label pair (both ends filtered by ``$scope`` when given).
     """
     scope_filter = "n.scope = $scope AND " if scope is not None else ""
     out: list[str] = []
@@ -385,6 +408,39 @@ def duplicate_queries(schema: Schema, scope: str | None = None) -> list[str]:
                     f"AND n.{other_prop} IS NOT NULL "
                     f"RETURN count(n) AS duplicates /* also stored as {other_label}.{other_prop} */"
                 )
+    for name, rel in schema.relationships.items():
+        if rel.same_fact_as:
+            out += _relationship_duplicate_queries(schema, name, rel, rel.same_fact_as, scope)
+    return out
+
+
+def _relationship_duplicate_queries(
+    schema: Schema, name: str, rel: Relationship, twin: str, scope: str | None
+) -> list[str]:
+    """Return one count query per (source, target) pair of ``rel`` whose ``a``/``b`` hold ``twin``.
+
+    ``twin`` is a relationship type (the same two nodes linked by it too) or ``Label.prop``
+    (the endpoint carrying ``Label`` holds ``prop``; a pair with ``Label`` at neither end
+    yields no query).
+    """
+    scope_filter = " AND a.scope = $scope AND b.scope = $scope" if scope is not None else ""
+    out: list[str] = []
+    for source in rel.sources:
+        for target in rel.targets:
+            if twin in schema.relationships:
+                condition = f"EXISTS {{ (a)-[:{twin}]-(b) }}"
+            else:
+                label, _, prop = twin.partition(".")
+                if source == label:
+                    condition = f"a.{prop} IS NOT NULL"
+                elif target == label:
+                    condition = f"b.{prop} IS NOT NULL"
+                else:
+                    continue
+            out.append(
+                f"MATCH (a:{source})-[r:{name}]->(b:{target}) WHERE {condition}{scope_filter} "
+                "RETURN count(r) AS duplicates"
+            )
     return out
 
 
