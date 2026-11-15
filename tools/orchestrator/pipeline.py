@@ -15,14 +15,15 @@ under test with its own environment, built by ``setup`` from the lock file.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import tempfile
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from tools import ledger
-from tools.ci import pytest_gate
 from tools.orchestrator import audit, engine, gates, gitops, spec, state
 from tools.orchestrator.config import Config
 from tools.orchestrator.executor import Executor, Result, allowed_env, executor_for
@@ -99,11 +100,19 @@ def _refuse(cfg: Config, task_id: str, problems: list[str]) -> Outcome:
 
 def run_task(cfg: Config, task: Task, known_ids: Collection[str] = ()) -> Outcome:
     """Run one task end to end and return its outcome (the state records it)."""
-    st = state.State(cfg)
     try:
         sp = spec.load(task.spec)
     except spec.SpecError as exc:
         return _refuse(cfg, task.task_id, [str(exc)])
+    try:
+        with state.run_lock(cfg):
+            return _run_locked(cfg, task, sp, known_ids)
+    except state.BusyError as exc:
+        return Outcome(task.task_id, REJECTED, str(exc))
+
+
+def _run_locked(cfg: Config, task: Task, sp: spec.Spec, known_ids: Collection[str]) -> Outcome:
+    st = state.State(cfg)
     known = {*known_ids, *st.task_ids()}
     problems = precheck(cfg, sp, task.task_id, task.paths, known)
     paths = gates.normalize_paths(task.paths or sp.paths) if not problems else ()
@@ -111,6 +120,12 @@ def run_task(cfg: Config, task: Task, known_ids: Collection[str] = ()) -> Outcom
     if not problems:
         try:
             engines = engine.pick_engines(cfg, task.engine)
+            if cfg.executor == "local" and engines["coder"] not in cfg.local_coder_engines:
+                msg = (
+                    f"coder engine {engines['coder']} is refused while the executor is local "
+                    f"(allowed: {', '.join(cfg.local_coder_engines)})"
+                )
+                raise state.WipConflictError(msg)
             st.claim(
                 task.task_id,
                 task.worker or cfg.worker,
@@ -162,9 +177,32 @@ class _Run:
         self.ident = gitops.identity_env(cfg.identity_name, cfg.identity_email)
         self.created: set[Path] = set()
         self.calls = 0
+        self.gate_script = gates.PYTEST_GATE
+        self.gate_env: dict[str, str] = {}
 
     # -------------------------------------------------------------- top level
     def go(self) -> Outcome:
+        with tempfile.TemporaryDirectory(prefix="memini-orch-") as tmp:
+            private = Path(tmp)
+            # a private copy of the pytest gate (watched) and a throwaway HOME for every gate,
+            # setup and hold-out run; uv keeps its real cache and Python installs
+            self.gate_script = private / "pytest_gate.py"
+            shutil.copyfile(gates.PYTEST_GATE, self.gate_script)
+            (private / "home").mkdir()
+            home = Path.home()
+            self.gate_env = {
+                "HOME": str(private / "home"),
+                "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR") or str(home / ".cache" / "uv"),
+                "UV_PYTHON_INSTALL_DIR": os.environ.get("UV_PYTHON_INSTALL_DIR")
+                or str(home / ".local" / "share" / "uv" / "python"),
+            }
+            return self._go_guarded()
+
+    def _base_env(self) -> dict[str, str]:
+        """Return the env for git commands that may run hooks (allow-listed, private HOME)."""
+        return allowed_env(self.cfg.env_allow, self.gate_env)
+
+    def _go_guarded(self) -> Outcome:
         try:
             return self._go()
         except _Stop as stop:
@@ -184,18 +222,28 @@ class _Run:
             raise _Stop(FAILED, f"branch {self.branch} exists from an earlier run")
         self.run_dir.mkdir(parents=True, exist_ok=True)
         cfg.worktrees_dir.mkdir(parents=True, exist_ok=True)
-        gitops.git(self.repo, "worktree", "add", "-q", "-b", self.branch, str(self.wt), base)
+        gitops.git(
+            self.repo,
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            self.branch,
+            str(self.wt),
+            base,
+            base_env=self._base_env(),
+        )
         self.created.add(self.wt)
         self._setup(self.wt)
         qa_sha, files = self._qa(base)
         sealed = gates.seal(self.repo, qa_sha, files)
-        self._coder(base, qa_sha, files, sealed)
-        return self._merge(qa_sha, files, sealed)
+        snap = self._coder(base, qa_sha, files, sealed)
+        return self._merge(snap, qa_sha, files, sealed)
 
     # -------------------------------------------------------------- helpers
     def _setup(self, wt: Path) -> None:
         for cmd in self.cfg.setup:
-            res = self.ex.run(cmd, cwd=wt, timeout=self.cfg.gate_timeout_s)
+            res = self.ex.run(cmd, cwd=wt, env=self.gate_env, timeout=self.cfg.gate_timeout_s)
             if res.code != 0:
                 raise _Stop(FAILED, f"setup {' '.join(cmd)} failed: {res.output.strip()[-500:]}")
 
@@ -205,7 +253,16 @@ class _Run:
             if path not in self.created:  # pragma: no cover - refused at the start of the run
                 raise _Stop(FAILED, f"{path} was not created by this run")
             gitops.git(self.repo, "worktree", "remove", "--force", str(path))
-        gitops.git(self.repo, "worktree", "add", "-q", "--detach", str(path), commit)
+        gitops.git(
+            self.repo,
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            str(path),
+            commit,
+            base_env=self._base_env(),
+        )
         self.created.add(path)
         if setup:
             self._setup(path)
@@ -282,41 +339,74 @@ class _Run:
             refs.append(spec.resolve_reference(self.cfg, self.sp.reference)[0])
         return tuple(dict.fromkeys(refs))
 
-    def _watched_files(self) -> dict[Path, bytes | None]:
-        """Return the bytes of the files no step may change (state, queue, inbox, git, hold-out)."""
+    def _watch_sets(self) -> tuple[list[Path], list[Path]]:
+        """Return (files restored after tampering, files only reported).
+
+        Restored: files only this run writes while it holds the global run lock (the
+        orchestrator state, git config, hooks and info, the task branch ref, the hold-out
+        tests, the private pytest gate). Only reported, never byte-restored: the queue, the
+        inbox, main's ref and packed-refs, which a person may legitimately write meanwhile.
+        """
         cfg = self.cfg
         common = gitops.common_dir(self.repo)
         roots = [common / "hooks", common / "info", gates.holdout_dir(cfg, self.task_id)]
-        files = [cfg.state_dir / "state.json", cfg.queue, cfg.inbox, common / "config"]
-        files += [f for r in roots if r.is_dir() for f in sorted(r.rglob("*")) if f.is_file()]
-        return {f: (f.read_bytes() if f.is_file() else None) for f in files}
+        own = [
+            cfg.state_dir / "state.json",
+            common / "config",
+            common / "refs" / "heads" / self.branch,
+            self.gate_script,
+        ]
+        own += [f for r in roots if r.is_dir() for f in sorted(r.rglob("*")) if f.is_file()]
+        shared = [
+            cfg.queue,
+            cfg.inbox,
+            common / "refs" / "heads" / cfg.main_branch,
+            common / "packed-refs",
+        ]
+        return own, shared
+
+    def _watched_files(self) -> dict[Path, bytes | None]:
+        """Return the bytes of the files no step may change (see :meth:`_watch_sets`)."""
+        own, shared = self._watch_sets()
+        return {f: (f.read_bytes() if f.is_file() else None) for f in (*own, *shared)}
 
     def watch(self, what: str, before: dict[Path, bytes | None]) -> None:
-        """Compare with ``before``; on any change restore it, alert the owner and reject."""
+        """Compare with ``before``; on any change restore our own files, alert and reject."""
         after = self._watched_files()
         changed = sorted(p for p in {*before, *after} if before.get(p) != after.get(p))
         if not changed:
             return
+        shared = set(self._watch_sets()[1])
+        restored = []
         for path in changed:
+            if path in shared:
+                continue  # shared state: reported, never byte-restored
             old = before.get(path)
             if old is None:
                 path.unlink(missing_ok=True)  # a file planted by the step
             else:
                 path.write_bytes(old)
+            restored.append(path)
         names = ", ".join(str(p) for p in changed)
         state.inbox_append(
             self.cfg,
             self.task_id,
-            "SECURITY: protected files changed (restored)",
+            "SECURITY: protected files changed",
             2,
-            f"during {what}: {names}",
+            f"during {what}: {names}; restored: {', '.join(map(str, restored)) or 'none'}",
         )
-        raise _Stop(REJECTED, f"{what} changed protected orchestrator or git files (restored)")
+        raise _Stop(REJECTED, f"{what} changed protected orchestrator or git files")
 
     def _holdout(self, commit: str) -> list[gates.Failure]:
         before = self._watched_files()
         ok = gates.holdout_passes(
-            self.cfg, self.repo, commit, self.task_id, self.run_dir / "holdout.log"
+            self.cfg,
+            self.repo,
+            commit,
+            self.task_id,
+            self.run_dir / "holdout.log",
+            gate_script=self.gate_script,
+            env=self.gate_env,
         )
         self.watch("the hold-out run", before)
         return [] if ok else [gates.Failure(gates.HOLDOUT_FAILED)]
@@ -354,13 +444,15 @@ class _Run:
         self._fresh(self.gate_wt, qa_sha)
         if not gates.defines_tests(self.gate_wt, files):
             raise _Stop(REJECTED, "the QA files define no test function")
-        res = gates.run_tests(cfg, self.ex, self.gate_wt, files, gates.Profile("defaults", {}))
+        run = self._gate_run(self.gate_wt, qa_sha, files)
+        res = gates.run_tests(cfg, self.ex, run, files, gates.Profile("defaults", {}))
         if res.code == 0:
             raise _Stop(REJECTED, "the QA tests pass on the base without any implementation")
         return qa_sha, files
 
     # -------------------------------------------------------------- coder
-    def _coder(self, base: str, qa_sha: str, files: list[str], sealed: dict[str, str]) -> None:
+    def _coder(self, base: str, qa_sha: str, files: list[str], sealed: dict[str, str]) -> str:
+        """Run the coder attempts; return the commit the audit passed (the one to merge)."""
         cfg = self.cfg
         protected = [*cfg.protected, *cfg.guard_protected]
         reference = "none"
@@ -383,25 +475,31 @@ class _Run:
             res = self._agent("coder", prompt, self.wt, self.paths, protected)  # watched
             for item in engine.follow_ups(res.stdout):
                 state.inbox_append(cfg, self.task_id, "follow-up proposal (not queued)", 1, item)
+            # leftovers, snapshot and anti-cheat checks come before a dispute is accepted
             left = self._leftovers(self.paths, self._path_protected())
-            if left:  # checked before a dispute is accepted (S4)
+            if left:
                 raise _Stop(REJECTED, "; ".join(left))
-            reason = engine.dispute(res.stdout)
-            if reason:
-                state.inbox_append(cfg, self.task_id, "test dispute", 1, reason)
-                raise _Stop(DISPUTED, f"the coder disputes the tests: {reason}")
             snap = gitops.snapshot(self.wt, f"{self.task_id}: coder attempt {attempt}", self.ident)
             cheats = self._cheats(qa_sha, snap, sealed, extra=())
             if cheats:
                 raise _Stop(REJECTED, "; ".join(cheats))
+            reason = engine.dispute(res.stdout)
+            if reason:
+                state.inbox_append(cfg, self.task_id, "test dispute", 1, reason)
+                raise _Stop(DISPUTED, f"the coder disputes the tests: {reason}")
             if snap == qa_sha:
                 failures = ["no change was made"]
+                continue
+            diff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap)
+            hits = gates.deny_hits(diff, cfg.deny_patterns)
+            if hits:
+                failures = [f"deny scan: {h}" for h in hits[:20]]
                 continue
             failures = [f.summary() for f in self._gate_slice(snap, base, files)]
             if not failures:
                 verdict = self._audit(qa_sha, snap, files)
                 if verdict.passed:
-                    return
+                    return snap
                 failures = [f"audit: {f[:300]}" for f in verdict.findings[:10]]
         raise _Stop(
             REJECTED,
@@ -430,18 +528,29 @@ class _Run:
         names = [e for e in self.cfg.guard_protected if e.startswith("**/")]
         return [*self.cfg.protected, *names]
 
+    def _gate_run(self, worktree: Path, commit: str, files: list[str]) -> gates.GateRun:
+        tracked = gitops.out(self.repo, "ls-tree", "-r", "--name-only", commit)
+        tests = {p for p in tracked.splitlines() if p.rsplit("/", 1)[-1].startswith("test_")}
+        return gates.GateRun(
+            worktree=worktree,
+            log=self.run_dir / "gates.log",
+            test_files=frozenset({*files, *tests}),
+            env=self.gate_env,
+            gate_script=self.gate_script,
+        )
+
     def _gate_slice(self, snap: str, base: str, files: list[str]) -> list[gates.Failure]:
         cfg = self.cfg
-        log = self.run_dir / "gates.log"
         self._fresh(self.gate_wt, snap)
-        fails = gates.qa_test_failures(cfg, self.ex, self.gate_wt, files, log)
-        fails += gates.run_gates(cfg, self.ex, self.gate_wt, "slice", base, log)
+        run = self._gate_run(self.gate_wt, snap, files)
+        fails = gates.qa_test_failures(cfg, self.ex, run, files)
+        fails += gates.run_gates(cfg, self.ex, run, "slice", base)
         return fails + self._holdout(snap)
 
     def _audit(self, qa_sha: str, snap: str, files: list[str]) -> audit.Verdict:
         diff = gitops.out(self.repo, "diff", qa_sha, snap)
-        if len(diff) > _DIFF_LIMIT:
-            diff = diff[:_DIFF_LIMIT] + "\n[diff truncated]"
+        if len(diff) > _DIFF_LIMIT:  # never audit half a change
+            return audit.Verdict(False, ("diff too large for one audit",))
         prompt = engine.render(
             self.cfg,
             "audit",
@@ -455,13 +564,14 @@ class _Run:
         return audit.parse(res.stdout)
 
     # -------------------------------------------------------------- merge
-    def _merge(self, qa_sha: str, files: list[str], sealed: dict[str, str]) -> Outcome:
+    def _merge(self, snap: str, qa_sha: str, files: list[str], sealed: dict[str, str]) -> Outcome:
         cfg = self.cfg
-        log = self.run_dir / "gates.log"
         with state.locked(cfg.state_dir / "merge.lock"):
             for _ in range(cfg.merge_retries):
+                if gitops.rev(self.repo, self.branch) != snap:
+                    raise _Stop(REJECTED, "the task branch moved after the audit")
                 main_sha = gitops.rev(self.repo, cfg.main_branch)
-                tip = self._rebased(main_sha)
+                tip = self._rebased(main_sha, snap)
                 cheats = self._cheats(main_sha, tip, sealed, extra=files)
                 if cheats:
                     raise _Stop(REJECTED, "after rebase: " + "; ".join(cheats))
@@ -469,8 +579,9 @@ class _Run:
                 cheats = self._cheats(main_sha, squash, sealed, extra=(*files, *LEDGER_FILES))
                 if cheats:  # pragma: no cover - the squash holds the checked tree + ledger rows
                     raise _Stop(REJECTED, "squash commit: " + "; ".join(cheats))
-                fails = gates.qa_test_failures(cfg, self.ex, self.merge_wt, files, log)
-                fails += gates.run_gates(cfg, self.ex, self.merge_wt, "merge", main_sha, log)
+                run = self._gate_run(self.merge_wt, squash, files)
+                fails = gates.qa_test_failures(cfg, self.ex, run, files)
+                fails += gates.run_gates(cfg, self.ex, run, "merge", main_sha)
                 fails += self._holdout(squash)
                 if fails:
                     reason = "; ".join(f.summary() for f in fails)
@@ -482,15 +593,23 @@ class _Run:
                     )
             raise _Stop(FAILED, f"main moved {cfg.merge_retries} times during the merge")
 
-    def _rebased(self, main_sha: str) -> str:
+    def _rebased(self, main_sha: str, snap: str) -> str:
         """Rebase the slice onto ``main_sha`` in the integration checkout; return the new tip.
 
         The coder's worktree and branch are never touched: the integration checkout starts
         detached at the slice tip and is rebased there.
         """
-        self._fresh(self.merge_wt, gitops.rev(self.repo, self.branch), setup=False)
-        if not gitops.is_ancestor(self.repo, main_sha, self.branch):
-            res = gitops.git(self.merge_wt, "rebase", "-q", main_sha, env=self.ident, check=False)
+        self._fresh(self.merge_wt, snap, setup=False)
+        if not gitops.is_ancestor(self.repo, main_sha, snap):
+            res = gitops.git(
+                self.merge_wt,
+                "rebase",
+                "-q",
+                main_sha,
+                env=self.ident,
+                check=False,
+                base_env=self._base_env(),
+            )
             if res.returncode != 0:
                 gitops.git(self.merge_wt, "rebase", "--abort", check=False)
                 raise _Stop(FAILED, "the slice does not rebase cleanly on the latest main")
@@ -532,7 +651,7 @@ class _Run:
             str(msg_file),
             env=self.ident,
             check=False,
-            base_env=allowed_env(cfg.env_allow),  # the hooks run repository code
+            base_env=self._base_env(),  # the hooks run repository code
         )
         self.watch("the squash commit hooks", before)
         if res.returncode != 0:
@@ -561,7 +680,7 @@ class _Run:
             checks="orchestrator: QA tests per env profile, hold-out, CI gates, diff audit",
         )
         if fid and layer:
-            node_ids = self._collect(files)
+            node_ids = gates.test_node_ids(self.merge_wt, files)
             rows = [
                 ledger.insert(
                     "feature",
@@ -578,23 +697,6 @@ class _Run:
                 fh.write("".join(r + "\n" for r in rows))
         gitops.git(self.merge_wt, "add", "ledgers")
         return cid
-
-    def _collect(self, files: list[str]) -> list[str]:
-        argv = [
-            gates.python_for(self.cfg, self.merge_wt),
-            "-P",
-            "-m",
-            "pytest",
-            *self.cfg.pytest_args,
-            "--collect-only",
-            "--verbosity=-1",
-            *files,
-        ]
-        res = self.ex.run(argv, cwd=self.merge_wt, timeout=self.cfg.gate_timeout_s)
-        ids = pytest_gate.collected_ids(res.stdout)
-        if res.code != 0 or not ids:
-            raise _Stop(FAILED, "cannot collect the QA test ids for the feature ledger")
-        return ids
 
     def _advance(self, squash: str, main_sha: str) -> bool:
         """Fast-forward main to ``squash``; False when main moved meanwhile."""
@@ -623,7 +725,15 @@ class _Run:
             return True
         if gitops.rev(self.repo, main) != main_sha:
             return False
-        raise _Stop(FAILED, f"main could not be fast-forwarded: {gitops.tail(res)}")
+        state.inbox_append(
+            self.cfg,
+            self.task_id,
+            "merge blocked: main could not be fast-forwarded",
+            1,
+            f"{holder or self.repo}: {gitops.tail(res, 300)}; the squash commit {squash[:10]} "
+            f"waits in {self.merge_wt}",
+        )
+        raise _Stop(FAILED, "main could not be fast-forwarded (see the inbox)")
 
     def _cleanup(self, squash: str) -> str:
         """Remove this run's worktrees and the merged task branch; return a note if one stays."""

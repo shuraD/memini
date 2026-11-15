@@ -266,3 +266,17 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-011', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-011', 'tests/gates/test_orchestrator.py::test_b2_guard_lets_ordinary_reads_and_reference_git_through');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-011', 'tests/gates/test_orchestrator.py::test_qa_and_audit_stay_on_claude_by_default');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-011', 'tests/gates/test_orchestrator.py::test_n5_claude_loads_no_user_project_or_local_settings');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-foundation-030', 'Automated dependency-rule check (AGENTS.md item 7): a new third-party package''s first PyPI release age, its OSI licence compatible with AGPL-3.0-or-later (PyPI classifiers) and pip-audit are checked by a gate, not by the planner by hand', 'infra', 'owner rule 2026-11-15 (AGENTS.md item 7), relayed by vp-rnd; second orchestrator review item 10', 'planned', 'foundation', 'C-20261115-0004');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-001', 'tests/gates/test_orchestrator.py::test_r2_notes_an_untracked_file_blocking_the_fast_forward_gives_an_inbox_entry');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-001', 'tests/gates/test_orchestrator.py::test_r2_notes_feature_ids_come_from_the_ast');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r2_1_in_process_result_forging_is_caught_by_the_deny_scan');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r2_1_deny_scan_reads_only_added_lines');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r2_2_the_merged_commit_is_exactly_the_audited_one');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r2_2_a_gate_that_moves_a_ref_is_rejected');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-002', 'tests/gates/test_orchestrator.py::test_r2_6_a_dispute_after_a_path_cheat_is_rejected');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-004', 'tests/gates/test_orchestrator.py::test_r2_3_only_safe_known_test_ids_reach_the_retry_prompt');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-004', 'tests/gates/test_orchestrator.py::test_r2_8_and_9_gates_use_a_private_pytest_gate_and_home');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-006', 'tests/gates/test_orchestrator.py::test_r2_7_one_orchestrator_run_at_a_time');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-008', 'tests/gates/test_orchestrator.py::test_r2_1_the_audit_prompt_names_result_forging');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-008', 'tests/gates/test_orchestrator.py::test_r2_4_a_diff_too_large_for_one_audit_is_rejected');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-011', 'tests/gates/test_orchestrator.py::test_r2_5_non_claude_coders_are_refused_while_the_executor_is_local');

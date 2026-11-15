@@ -23,6 +23,30 @@ ACTIVE = "active"
 DONE_STATUSES = frozenset({"merged"})
 
 
+class BusyError(RuntimeError):
+    """Another orchestrator run holds the global run lock."""
+
+
+@contextlib.contextmanager
+def run_lock(cfg: Config) -> Iterator[None]:
+    """Hold the global run lock: one orchestrator run at a time (no parallel workers yet).
+
+    A second process gets :class:`BusyError` at once instead of waiting.
+    """
+    path = cfg.state_dir / "run.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", encoding="utf-8") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            msg = "another orchestrator run is active: one run at a time (global run lock)"
+            raise BusyError(msg) from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 class WipConflictError(RuntimeError):
     """The task would break the WIP rule (worker busy or paths overlap)."""
 

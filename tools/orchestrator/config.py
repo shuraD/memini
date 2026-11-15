@@ -8,6 +8,7 @@ repository or the worktree directory (agents work there; they must never reach t
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -77,6 +78,8 @@ class Config:
     engine_preference: tuple[str, ...]
     executor: str
     allow: tuple[str, ...]
+    deny_patterns: tuple[str, ...]
+    local_coder_engines: tuple[str, ...]
     module_roots: Mapping[str, str]
     ignored_ok: tuple[str, ...]
     reference_repos: Mapping[str, Path]
@@ -203,6 +206,13 @@ def load_config(
     if _inside(paths["worktrees_dir"], repo):
         msg = "worktrees_dir must be outside the repository"
         raise ConfigError(msg)
+    deny = _strs(raw, "deny_patterns")
+    for pattern in deny:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            msg = f"deny pattern {pattern!r} is not a valid regex: {exc}"
+            raise ConfigError(msg) from exc
     env_allow = _strs(raw, "env_allow")
     if any(name.startswith("MEMINI_ORCH_") for name in env_allow):
         msg = "env_allow must not pass MEMINI_ORCH_* variables to an executor"
@@ -232,6 +242,8 @@ def load_config(
         engine_preference=_strs(raw, "engine_preference"),
         executor="local",
         allow=_strs(raw, "allow"),
+        deny_patterns=deny,
+        local_coder_engines=_strs(raw, "local_coder_engines"),
         module_roots={str(k): str(v) for k, v in raw.get("module_roots", {}).items()},
         ignored_ok=_strs(raw, "ignored_ok"),
         reference_repos={

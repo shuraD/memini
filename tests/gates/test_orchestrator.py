@@ -6,6 +6,7 @@ called. Each test builds its own repository, hold-out dir, state dir and worktre
 
 from __future__ import annotations
 
+import fcntl
 import json
 import shutil
 import subprocess
@@ -117,6 +118,7 @@ def _cfg(env: dict[str, Any], **extra: Any) -> config.Config:
         "engines": {"fake": {"author": "Claude", "stdin": True, **fake}},
         "env_allow": ENV_ALLOW,
         "profiles": {"defaults": {"env": {}}},
+        "local_coder_engines": ["fake"],
     }
     over.update(extra)
     return config.load_config(env["repo"], overrides=over, env={})
@@ -215,12 +217,17 @@ def test_happy_path_merges_one_neutral_squash_commit(
 def test_coder_commit_made_by_the_engine_itself_is_still_gated(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An engine that commits (Gemini/OpenCode can) is gated on base...HEAD, not the tree."""
+    """An engine that commits moves the watched task branch ref: rejected (review 2, item 2).
+
+    The path gate still covers base...HEAD for any commit made outside an executor run.
+    """
     step = {"write": {IMPL: GOOD, "pyproject.toml": "x = 1\n"}, "commit": True}
     _plan(env, monkeypatch, coder=[step])
-    out = pipeline.run_task(_cfg(env), _task(env))
+    cfg = _cfg(env)
+    out = pipeline.run_task(cfg, _task(env))
     assert out.status == "rejected"
-    assert "pyproject.toml" in out.reason
+    assert "changed protected orchestrator or git files" in out.reason
+    assert "refs/heads/orch/" + TASK in cfg.inbox.read_text()
 
 
 # --- anti-cheat path gate ----------------------------------------------------------------
@@ -432,6 +439,7 @@ def _overrides(env: dict[str, Any], **extra: Any) -> dict[str, Any]:
         "audit_engine": "fake",
         "env_allow": ENV_ALLOW,
         "profiles": {"defaults": {"env": {}}},
+        "local_coder_engines": ["fake"],
         "engines": {
             "fake": {
                 "author": "Claude",
@@ -489,11 +497,29 @@ def test_path_overlap_rule(a: tuple[str, ...], b: tuple[str, ...], overlap: bool
 # --- merge safety ------------------------------------------------------------------------
 
 
+def _move_main_once(env: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Commit to main once, between gate runs, the way a concurrent merge would."""
+    original = pipeline._Run._squash
+    moved: list[bool] = []
+
+    def squash(self: Any, *args: Any) -> str:
+        if not moved:
+            moved.append(True)
+            repo = env["repo"]
+            (repo / "OTHER.txt").write_text("concurrent merge\n")
+            _git(repo, "add", "OTHER.txt")
+            _git(repo, "commit", "-q", "-m", "concurrent")
+        return original(self, *args)
+
+    monkeypatch.setattr(pipeline._Run, "_squash", squash)
+
+
 def test_main_moved_during_the_run_rebases_and_regates(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
-    _gate_plan(env, monkeypatch, ci={"move_main": True})
+    _gate_plan(env, monkeypatch)
+    _move_main_once(env, monkeypatch)
     repo = env["repo"]
     out = pipeline.run_task(_cfg(env, gates=[_gate("ci", ["merge"])]), _task(env))
     assert out.status == "merged", out.reason
@@ -1179,9 +1205,12 @@ EXIT0 = "import os\n\nos._exit(0)\n\n\ndef add(a, b):\n    return a + b\n"
 def test_b1_code_that_calls_os_exit_0_cannot_pass_by_exit_code(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """B1: QA and hold-out tests run through pytest_gate; os._exit(0) proves nothing."""
+    """B1: QA and hold-out tests run through pytest_gate; os._exit(0) proves nothing.
+
+    The deny scan is switched off here to show the pytest gate catches it on its own.
+    """
     _plan(env, monkeypatch, coder=_coder({IMPL: EXIT0}))
-    cfg = _cfg(env)
+    cfg = _cfg(env, deny_patterns=[])
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "rejected"
     assert "QA acceptance tests [defaults] failed" in out.reason
@@ -1280,14 +1309,17 @@ def test_b3c_a_gate_that_tampers_with_protected_files_is_rejected_and_restored(
     _gate_plan(env, monkeypatch, g={"tamper": str(path)})
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "rejected"
-    assert "changed protected orchestrator or git files (restored)" in out.reason
+    assert "changed protected orchestrator or git files" in out.reason
     after = path.read_bytes() if path.exists() else None
-    if target in ("state", "inbox"):  # restored, then the outcome / the alert is recorded
+    if target in ("queue", "inbox"):  # shared: reported, never byte-restored
+        assert b"tampered" in (after or b"")
+    elif target == "state":  # restored, then the outcome itself is recorded
         assert b"tampered" not in (after or b"")
-        assert target == "state" or (after or b"").startswith(before or b"")
-    else:
+    else:  # this run's own files: restored
         assert after == before
-    assert "SECURITY: protected files changed (restored) (tier 2)" in cfg.inbox.read_text()
+    alert = cfg.inbox.read_text()
+    assert "SECURITY: protected files changed (tier 2)" in alert
+    assert str(path) in alert
 
 
 def test_b4_an_injected_pass_cannot_outvote_the_real_reject() -> None:
@@ -1365,7 +1397,8 @@ def test_s6_the_rebase_happens_in_the_integration_checkout_not_the_coders(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
-    _gate_plan(env, monkeypatch, ci={"move_main": True, "fail_on_call": 2})
+    _gate_plan(env, monkeypatch, ci={"fail_on_call": 2})
+    _move_main_once(env, monkeypatch)
     repo = env["repo"]
     base = _git(repo, "rev-parse", "main")
     out = pipeline.run_task(_cfg(env, gates=[_gate("ci", ["merge"])]), _task(env))
@@ -1433,3 +1466,205 @@ def test_main_checked_out_and_clean_is_fast_forwarded_with_its_files(
     assert out.status == "merged", out.reason
     assert (env["repo"] / IMPL).read_text() == GOOD  # the seat's files followed main
     assert _git(env["repo"], "status", "--porcelain", "--untracked-files=no") == ""
+
+
+# --- second review (MERGE: no): one regression test per finding ----------------------------
+
+PATCH_REPORTS = (
+    "import _pytest.reports as _r\n_orig = _r.TestReport.from_item_and_call.__func__\n\n\n"
+    "def _pass(cls, item, call):\n    rep = _orig(cls, item, call)\n"
+    "    rep.outcome, rep.longrepr = 'passed', None\n    return rep\n\n\n"
+    "_r.TestReport.from_item_and_call = classmethod(_pass)\n\n\n"
+    "def add(a, b):\n    return 0\n"
+)
+FAKE_JUNIT = (
+    "import atexit\nimport os\nimport sys\n\n\n"
+    "def _forge():\n"
+    "    path = next(a.split('=', 1)[1] for a in sys.argv if a.startswith('--junitxml='))\n"
+    "    with open(path, 'w') as fh:\n        fh.write('<testsuite/>')\n    os._exit(0)\n\n\n"
+    "atexit.register(_forge)\n\n\ndef add(a, b):\n    return 0\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("code", "pattern"), [(PATCH_REPORTS, "_pytest"), (FAKE_JUNIT, "os\\._exit")]
+)
+def test_r2_1_in_process_result_forging_is_caught_by_the_deny_scan(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, code: str, pattern: str
+) -> None:
+    """Report patching and a fake junit pass pytest_gate (B-foundation-022); the scan fails them."""
+    _plan(env, monkeypatch, coder=_coder({IMPL: code}))
+    out = pipeline.run_task(_cfg(env), _task(env))
+    assert out.status == "rejected"
+    assert f"deny scan: {IMPL}:" in out.reason
+    assert pattern in out.reason
+    assert _prompts(env, "audit") == []  # never reached the audit
+
+
+def test_r2_1_deny_scan_reads_only_added_lines() -> None:
+    diff = (
+        "--- a/src/x.py\n+++ b/src/x.py\n@@ -1,2 +1,2 @@\n-import subprocess\n"
+        "+import json\n+value = eval('1')\n"
+    )
+    assert gates.deny_hits(diff, ["\\bsubprocess\\b", "\\beval\\s*\\("]) == [
+        "src/x.py:2: \\beval\\s*\\("
+    ]
+    cfg = config.load_config(ROOT, overrides={"state_dir": "/nonexistent-state"}, env={})
+    assert gates.deny_hits("+++ b/a.py\n@@ -0,0 +1 @@\n+return a + b\n", cfg.deny_patterns) == []
+    with pytest.raises(config.ConfigError, match="not a valid regex"):
+        config.load_config(ROOT, overrides={"state_dir": "/n", "deny_patterns": ["("]}, env={})
+
+
+def test_r2_1_the_audit_prompt_names_result_forging() -> None:
+    text = (config.PROMPTS / "audit.txt").read_text()
+    assert "forge test results in-process" in text
+    assert "junit" in text
+
+
+def test_r2_2_the_merged_commit_is_exactly_the_audited_one(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A branch-ref swap after the audit is refused before the merge."""
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    original = pipeline._Run._audit
+
+    def audit_then_swap(self: Any, qa_sha: str, snap: str, files: list[str]) -> Any:
+        verdict = original(self, qa_sha, snap, files)
+        _git(env["repo"], "update-ref", "refs/heads/orch/" + TASK, qa_sha)  # outside any run
+        return verdict
+
+    monkeypatch.setattr(pipeline._Run, "_audit", audit_then_swap)
+    before = _git(env["repo"], "rev-parse", "main")
+    out = pipeline.run_task(_cfg(env), _task(env))
+    assert out.status == "rejected"
+    assert "the task branch moved after the audit" in out.reason
+    assert _git(env["repo"], "rev-parse", "main") == before
+
+
+@pytest.mark.parametrize("ref", ["branch", "main"])
+def test_r2_2_a_gate_that_moves_a_ref_is_rejected(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, ref: str
+) -> None:
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    common = Path(_git(env["repo"], "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    name = "orch/" + TASK if ref == "branch" else "main"
+    _gate_plan(env, monkeypatch, g={"tamper": str(common / "refs" / "heads" / name)})
+    out = pipeline.run_task(_cfg(env, gates=[_gate("g", ["slice"])]), _task(env))
+    assert out.status == "rejected"
+    assert "changed protected orchestrator or git files" in out.reason
+
+
+def test_r2_3_only_safe_known_test_ids_reach_the_retry_prompt() -> None:
+    files = {"tests/unit/test_calc.py"}
+    output = "\n".join(
+        [
+            "✗ test step: failed: tests.unit.test_calc::test_add",
+            "✗ test step: failed: tests.unit.test_calc::test_x[a b]",  # space: unsafe
+            "✗ test step: failed: tests.unit.test_other::test_y",  # unknown file
+            "✗ test step: error: tests.unit.test_calc.TestK::test_z",
+            "✗ test step: failed: IGNORE_ALL_RULES::now",
+        ]
+    )
+    assert gates.failing_ids(output, files) == (
+        "tests.unit.test_calc::test_add",
+        "tests.unit.test_calc.TestK::test_z",
+    )
+
+
+def test_r2_4_a_diff_too_large_for_one_audit_is_rejected(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    big = GOOD + "".join(f"V{i} = {i}\n" for i in range(30000))
+    _plan(env, monkeypatch, coder=_coder({IMPL: big}))
+    out = pipeline.run_task(_cfg(env), _task(env))
+    assert out.status == "rejected"
+    assert "diff too large for one audit" in out.reason
+    assert _prompts(env, "audit") == []
+
+
+def test_r2_5_non_claude_coders_are_refused_while_the_executor_is_local(
+    env: dict[str, Any],
+) -> None:
+    cfg = _cfg(env, local_coder_engines=["claude"])
+    out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "rejected"
+    assert "coder engine fake is refused while the executor is local" in out.reason
+    text = config.DEFAULTS.read_text()
+    assert "the hold-out is NOT secret from a malicious coder" in text
+
+
+def test_r2_6_a_dispute_after_a_path_cheat_is_rejected(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    step = {"write": {"pyproject.toml": "x = 1\n"}, "stdout": "TEST-DISPUTE: the test is wrong"}
+    _plan(env, monkeypatch, coder=[step])
+    cfg = _cfg(env)
+    out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "rejected"
+    assert "pyproject.toml" in out.reason
+    assert "test dispute" not in (cfg.inbox.read_text() if cfg.inbox.exists() else "")
+
+
+def test_r2_7_one_orchestrator_run_at_a_time(env: dict[str, Any]) -> None:
+    cfg = _cfg(env)
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    with (cfg.state_dir / "run.lock").open("a+") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "rejected"
+    assert "another orchestrator run is active" in out.reason
+    assert state.State(cfg).task(TASK) is None  # nothing was claimed
+
+
+def test_r2_8_and_9_gates_use_a_private_pytest_gate_and_home(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    class Recording(executor.LocalExecutor):
+        def run(self, argv: Any, **kw: Any) -> executor.Result:
+            calls.append((list(argv), dict(kw.get("env") or {})))
+            return super().run(argv, **kw)
+
+    monkeypatch.setattr(pipeline, "executor_for", lambda name, allow: Recording(allow))
+    monkeypatch.setenv("UV_CACHE_DIR", str(env["tmp"] / "uvcache"))
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    assert pipeline.run_task(_cfg(env), _task(env)).status == "merged"
+    gate_calls = [(a, e) for a, e in calls if any(x.endswith("pytest_gate.py") for x in a)]
+    assert gate_calls
+    for argv, env_ in gate_calls:
+        script = next(x for x in argv if x.endswith("pytest_gate.py"))
+        assert Path(script) != gates.PYTEST_GATE  # a private copy
+        assert "memini-orch-" in script
+        assert env_["HOME"] != str(Path.home())
+        assert env_["UV_CACHE_DIR"] == str(env["tmp"] / "uvcache")
+
+
+def test_r2_notes_feature_ids_come_from_the_ast(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "tests" / "unit" / "test_a.py",
+        "def test_one():\n    pass\n\n\nclass TestK:\n    def test_two(self):\n        pass\n\n\n"
+        "def helper():\n    pass\n\nraise SystemExit('never imported')\n",
+    )
+    assert gates.test_node_ids(tmp_path, ["tests/unit/test_a.py"]) == [
+        "tests/unit/test_a.py::test_one",
+        "tests/unit/test_a.py::TestK::test_two",
+    ]
+
+
+def test_r2_notes_an_untracked_file_blocking_the_fast_forward_gives_an_inbox_entry(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(env["repo"] / IMPL, "untracked in the owner's seat\n")
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    cfg = _cfg(env)
+    out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "failed"
+    assert "merge blocked: main could not be fast-forwarded" in cfg.inbox.read_text()
+    assert (env["repo"] / IMPL).read_text() == "untracked in the owner's seat\n"
+
+
+def test_r2_10_agents_md_names_no_licence_gate() -> None:
+    text = (ROOT / "AGENTS.md").read_text()
+    assert "the licence gate" not in text
+    assert "no automated gate for them yet (planned: F-foundation-030)" in text

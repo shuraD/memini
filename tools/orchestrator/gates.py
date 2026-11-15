@@ -14,7 +14,7 @@ import shutil
 import sys
 import tarfile
 import tempfile
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -186,7 +186,8 @@ def gate_argv(cfg: Config, gate: Gate, worktree: Path, base: str) -> list[str]:
 
 
 PYTEST_GATE = Path(__file__).resolve().parents[1] / "ci" / "pytest_gate.py"
-_FAILED_ID = re.compile(r"^✗ test step: (?:failed|error): (\S+)", re.MULTILINE)
+_FAILED_ID = re.compile(r"^✗ test step: (?:failed|error): (.+?)[ \t]*$", re.MULTILINE)
+_SAFE_ID = re.compile(r"[\w.\[\]/:-]{1,200}")
 _MAX_IDS = 20
 
 
@@ -206,9 +207,44 @@ class Failure:
         return f"{self.gate}; failing tests: {shown}{more}"
 
 
-def failing_ids(output: str) -> tuple[str, ...]:
-    """Return the failing test ids that tools/ci/pytest_gate.py reported in ``output``."""
-    return tuple(dict.fromkeys(_FAILED_ID.findall(output)))
+def _id_file(label: str, test_files: Collection[str]) -> bool:
+    """Return True when the junit label ``a.b.test_x[.Class]::name`` names a known test file."""
+    dotted = label.split("::", 1)[0].split(".")
+    return any("/".join(dotted[:n]) + ".py" in test_files for n in range(1, len(dotted) + 1))
+
+
+def failing_ids(output: str, test_files: Collection[str]) -> tuple[str, ...]:
+    r"""Return the failing test ids pytest_gate reported, keeping only safe, known ones.
+
+    An id is kept only when it names a sealed QA file or a tracked test file and matches
+    ``[\w.[]/:-]{1,200}``; anything else in the output (crafted names, paths, messages) is
+    dropped, so the coder's retry prompt never carries text the code under test chose.
+    """
+    found = (i for i in _FAILED_ID.findall(output) if _SAFE_ID.fullmatch(i))
+    return tuple(dict.fromkeys(i for i in found if _id_file(i, test_files)))
+
+
+# ------------------------------------------------------------------ deny scan
+def deny_hits(diff: str, patterns: Sequence[str]) -> list[str]:
+    """Return ``file:line: pattern`` for every added line of ``diff`` matching a deny regex.
+
+    ``diff`` is ``git diff -U0`` text; only added lines count. The scan is deterministic
+    and engine independent: it catches in-process result forging (patching pytest, faking
+    the junit report, exiting early) that no test outcome can reveal.
+    """
+    compiled = [re.compile(p) for p in patterns]
+    hits: list[str] = []
+    path, line_no = "", 0
+    for raw in diff.splitlines():
+        if raw.startswith("+++ "):
+            path = raw[6:] if raw.startswith("+++ b/") else raw[4:]
+        elif raw.startswith("@@"):
+            m = re.search(r"\+(\d+)", raw)
+            line_no = int(m.group(1)) if m else 0
+        elif raw.startswith("+"):
+            hits += [f"{path}:{line_no}: {p.pattern}" for p in compiled if p.search(raw[1:])]
+            line_no += 1
+    return hits
 
 
 def _log(log: Path, label: str, output: str) -> None:
@@ -216,13 +252,25 @@ def _log(log: Path, label: str, output: str) -> None:
         fh.write(f"== {label}\n{output}\n")
 
 
-def run_gates(  # noqa: PLR0917 — one call site, every argument names the run
-    cfg: Config, executor: Executor, worktree: Path, stage: str, base: str, log: Path
+@dataclass(frozen=True)
+class GateRun:
+    """Where and how one round of gates runs."""
+
+    worktree: Path
+    log: Path
+    test_files: frozenset[str]  # sealed QA files + tracked test files: the ids we may name
+    env: Mapping[str, str]  # e.g. a private HOME
+    gate_script: Path  # the run's private copy of tools/ci/pytest_gate.py
+
+
+def run_gates(
+    cfg: Config, executor: Executor, run: GateRun, stage: str, base: str
 ) -> list[Failure]:
     """Run the configured gates of ``stage``; return a :class:`Failure` per failed run.
 
     Profile-aware gates run once per env profile. The raw output goes only to ``log``.
     """
+    worktree, log = run.worktree, run.log
     failures = []
     profs = profiles(cfg, worktree)
     for gate in cfg.gates:
@@ -235,66 +283,74 @@ def run_gates(  # noqa: PLR0917 — one call site, every argument names the run
             failures.append(Failure(f"gate {gate.name} cannot run (configuration)"))
             continue
         for prof in profs if gate.profiles else [Profile("defaults", {})]:
-            env = {"MEMINI_AUDIT_BASE": base, **prof.env}
+            env = {**run.env, "MEMINI_AUDIT_BASE": base, **prof.env}
             res = executor.run(argv, cwd=worktree, env=env, timeout=cfg.gate_timeout_s)
             label = f"gate {gate.name}" + (f" [{prof.name}]" if gate.profiles else "")
             _log(log, f"{label} exit {res.code}", res.output)
             if res.code != 0:
-                failures.append(Failure(f"{label} failed", failing_ids(res.output)))
+                failures.append(Failure(f"{label} failed", failing_ids(res.output, run.test_files)))
             elif gate.forbid_output and re.search(cfg.forbid_output, res.output):
                 failures.append(Failure(f"{label}: skipped or deselected tests are not allowed"))
     return failures
 
 
-def pytest_gate_argv(python: str, cfg: Config, *targets: str) -> list[str]:
+def pytest_gate_argv(python: str, cfg: Config, script: Path, *targets: str) -> list[str]:
     """Return the argv that runs ``targets`` through the orchestrator's own pytest gate.
 
     Only its junit check counts (every collected test ran and passed, more than zero
     collected): code that calls ``os._exit(0)`` cannot pass by exit code.
     """
-    return [python, "-P", str(PYTEST_GATE), *cfg.pytest_args, *targets]
+    return [python, "-P", str(script), *cfg.pytest_args, *targets]
 
 
 def run_tests(
-    cfg: Config, executor: Executor, worktree: Path, files: Sequence[str], prof: Profile
+    cfg: Config, executor: Executor, run: GateRun, files: Sequence[str], prof: Profile
 ) -> Result:
-    """Run the test ``files`` in ``worktree`` under ``prof`` through the pytest gate."""
-    argv = pytest_gate_argv(python_for(cfg, worktree), cfg, *files)
-    return executor.run(argv, cwd=worktree, env=dict(prof.env), timeout=cfg.gate_timeout_s)
+    """Run the test ``files`` in the gate checkout under ``prof`` through the pytest gate."""
+    argv = pytest_gate_argv(python_for(cfg, run.worktree), cfg, run.gate_script, *files)
+    env = {**run.env, **prof.env}
+    return executor.run(argv, cwd=run.worktree, env=env, timeout=cfg.gate_timeout_s)
 
 
-def defines_tests(worktree: Path, files: Sequence[str]) -> bool:
-    """Return True when the files define at least one test function (parsed, not imported)."""
+def test_node_ids(worktree: Path, files: Sequence[str]) -> list[str]:
+    """Return the pytest node ids the files define, from their AST (never by importing)."""
+    ids: list[str] = []
     for rel in files:
         try:
             tree = ast.parse((worktree / rel).read_text(encoding="utf-8"))
         except (OSError, SyntaxError, ValueError):
             continue
         for node in tree.body:
-            bodies = (
-                node.body
-                if isinstance(node, ast.ClassDef) and node.name.startswith("Test")
-                else [node]
-            )
-            if any(
-                isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name.startswith("test")
-                for n in bodies
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith(
+                "test"
             ):
-                return True
-    return False
+                ids.append(f"{rel}::{node.name}")
+            elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+                ids += [
+                    f"{rel}::{node.name}::{n.name}"
+                    for n in node.body
+                    if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+                    and n.name.startswith("test")
+                ]
+    return ids
+
+
+def defines_tests(worktree: Path, files: Sequence[str]) -> bool:
+    """Return True when the files define at least one test function (parsed, not imported)."""
+    return bool(test_node_ids(worktree, files))
 
 
 def qa_test_failures(
-    cfg: Config, executor: Executor, worktree: Path, files: Sequence[str], log: Path
+    cfg: Config, executor: Executor, run: GateRun, files: Sequence[str]
 ) -> list[Failure]:
     """Return a :class:`Failure` per profile in which the sealed QA tests do not all pass."""
     out = []
-    for prof in profiles(cfg, worktree):
-        res = run_tests(cfg, executor, worktree, files, prof)
+    for prof in profiles(cfg, run.worktree):
+        res = run_tests(cfg, executor, run, files, prof)
         label = f"QA acceptance tests [{prof.name}]"
-        _log(log, f"{label} exit {res.code}", res.output)
+        _log(run.log, f"{label} exit {res.code}", res.output)
         if res.code != 0:
-            out.append(Failure(f"{label} failed", failing_ids(res.output)))
+            out.append(Failure(f"{label} failed", failing_ids(res.output, run.test_files)))
         elif re.search(cfg.forbid_output, res.output):
             out.append(Failure(f"{label}: skipped tests are not allowed"))
     return out
@@ -311,7 +367,16 @@ def has_holdout(cfg: Config, task_id: str) -> bool:
     return any(holdout_dir(cfg, task_id).glob("test_*.py"))
 
 
-def holdout_passes(cfg: Config, repo: Path, commit: str, task_id: str, log: Path) -> bool:
+def holdout_passes(
+    cfg: Config,
+    repo: Path,
+    commit: str,
+    task_id: str,
+    log: Path,
+    *,
+    gate_script: Path = PYTEST_GATE,
+    env: Mapping[str, str] | None = None,
+) -> bool:
     """Run the hold-out tests on the host against an export of ``commit``.
 
     They run through the pytest gate (junit, never the exit code alone), once per env
@@ -330,14 +395,15 @@ def holdout_passes(cfg: Config, repo: Path, commit: str, task_id: str, log: Path
             tar.extractall(export, filter="data")
         ok = True
         for prof in profiles(cfg, export):
-            env = {
+            run_env = {
+                **(env or {}),
                 "PYTHONPATH": f"{export / 'src'}:{export}",
                 "PYTHONDONTWRITEBYTECODE": "1",
                 **prof.env,
             }
-            argv = pytest_gate_argv(python, cfg, "--rootdir", str(tests), str(tests))
+            argv = pytest_gate_argv(python, cfg, gate_script, "--rootdir", str(tests), str(tests))
             res = run_on_host(
-                argv, cwd=export, env_allow=cfg.env_allow, env=env, timeout=cfg.gate_timeout_s
+                argv, cwd=export, env_allow=cfg.env_allow, env=run_env, timeout=cfg.gate_timeout_s
             )
             _log(log, f"hold-out {task_id} {commit[:10]} [{prof.name}] exit {res.code}", res.output)
             ok = ok and res.code == 0 and not re.search(cfg.forbid_output, res.output)

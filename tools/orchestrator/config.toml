@@ -13,9 +13,13 @@ default_engine = "claude"
 # only Claude loads the guard hook (the hold-out and private dirs stay unread) and runs the
 # audit with no tools at all (--tools "").
 qa_engine = "claude"
-# Until the microVM executor exists, keep the coder on Claude (the default engine): Gemini
-# and OpenCode load no guard hook, so as coders they could read the hold-out directory.
+# Until the microVM executor exists the hold-out is NOT secret from a malicious coder: the
+# guard hook only warns a cooperative Claude, and coder code run by a gate can read any file
+# this user can. The defences until then are the deny-pattern scan, the one-shot audit and
+# the diff the owner sees. Non-Claude coders are refused while the executor is "local".
 coder_engine = ""
+# engines allowed to code while executor = "local"
+local_coder_engines = ["claude"]
 audit_engine = "claude"
 engine_preference = ["claude", "gemini", "opencode"]
 # where agent steps and gate commands run: "local" (a subprocess in the task worktree).
@@ -24,6 +28,22 @@ engine_preference = ["claude", "gemini", "opencode"]
 executor = "local"
 # interpreter for the host-side hold-out run; empty = the orchestrator's own interpreter
 holdout_python = ""
+
+# Deny scan: every line the coder ADDS is matched against these regexes; one hit rejects the
+# slice. They catch in-process result forging (patching pytest, writing a fake junit report,
+# exiting early), process and interpreter control. A slice that truly needs one of them is
+# an owner decision, not a coder's.
+deny_patterns = [
+  '_pytest', '\bpytest\b', 'conftest', 'junit', 'os\._exit', '\bsys\.exit\b',
+  '\bos\.(kill|abort|system|popen|spawn\w*|exec\w*|fork\w*)\b', 'sys\.argv',
+  'gc\.get_(objects|referrers|referents)', 'pluginmanager', '\bpluggy\b', '\batexit\b',
+  '\bsubprocess\b', '\bctypes\b', '\bcffi\b', '\bexec\s*\(', '\beval\s*\(',
+  '\bcompile\s*\(', '\bimportlib\b', '__import__', 'sys\.modules', '\bbuiltins\b',
+  '__builtins__', 'sys\.(settrace|setprofile|_getframe|addaudithook|meta_path|path_hooks)',
+  'inspect\.(stack|currentframe|getframeinfo|getouterframes)', '\bsignal\.', '\bmultiprocessing\b', '\bpty\.|import pty', '\bmarshal\b',
+  '\bpickle\b', '\bsocket\b', 'sitecustomize|usercustomize|site-packages', '\.pth\b', 'PYTEST_', 'COV_CORE',
+  '\bglobals\s*\(', '\bsetattr\s*\(\s*(sys|os|builtins)\b', '\bcode\.(interact|InteractiveConsole)',
+]
 
 # the coder may change only these paths (a trailing "/" is a directory) ...
 allow = ["src/memini/"]
