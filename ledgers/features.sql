@@ -593,3 +593,17 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/-002', 'tests/unit/test_graph_access.py::test_require_same_scope_different_raises_isolation_error');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/-002', 'tests/unit/test_graph_access.py::test_require_same_scope_equal_returns_none');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/-002', 'tests/unit/test_graph_access.py::test_require_same_scope_is_case_sensitive');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/infra/llm_providers/-013', 'Compute per provider and per role: calls, cache-hit percent, p50/p95/max', 'infra', 'slice spec LP-19; acceptance tests sealed at 06079272d1', 'active', 'src/memini/infra/llm_providers/', 'C-20261115-0145');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_summary_types_are_frozen_dataclasses');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_ten_row_log_matches_hand_computed_values');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_percentiles_use_nearest_rank_not_interpolation');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_rows_split_by_provider_and_by_role');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_cost_sums_per_group_and_none_counts_as_zero');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_group_with_only_none_costs_has_zero_cost');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_wait_seconds_sum_per_group');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_failures_by_reason_counts_each_reason');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_budget_used_shows_used_tokens_against_configured_limit');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_budget_used_role_without_section_is_unlimited');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_empty_log_gives_empty_groups_without_division_error');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_only_cache_hits_do_not_divide_by_zero');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-013', 'tests/unit/test_llm_providers_perf_summary.py::test_embed_rows_counted_separately_and_do_not_distort_generation');
