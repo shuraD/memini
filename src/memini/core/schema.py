@@ -2,7 +2,7 @@
 
 The schema lives in ``config/graph_schema.yaml`` (spec: SPEC-graph-schema). This
 module loads and validates it, exposes the typed names all Cypher must use, derives
-the index statements and the duplicate-detector queries, and holds two guards:
+the constraint, index and setup statements and the duplicate-detector queries, and holds two guards:
 ``is_local_uri`` (production is never touched) and ``unlabeled_matches`` (every
 ``MATCH`` names a label, so no query scans the whole graph).
 """
@@ -289,18 +289,77 @@ def names(schema: Schema) -> Names:
     )
 
 
-def index_statements(schema: Schema) -> list[str]:
-    """Return idempotent ``CREATE INDEX`` statements for every declared index."""
+_UNIQUE_KEY = ("scope", "id")
+_STATUS_INDEX = ("scope", "status")
+
+
+def constraint_statements(schema: Schema) -> list[str]:
+    """Return one idempotent ``(scope, id)`` uniqueness constraint per label that has an ``id``.
+
+    Labels follow ``schema.nodes`` order; ``id`` may be the label's own or a common field.
+    """
     out: list[str] = []
+    for label in schema.nodes:
+        if "id" in node_properties(schema, label):
+            cols = ", ".join(f"n.{c}" for c in _UNIQUE_KEY)
+            name = f"{label.lower()}_{'_'.join(_UNIQUE_KEY)}_unique"
+            target = f"FOR (n:{label}) REQUIRE ({cols}) IS UNIQUE"
+            out.append(f"CREATE CONSTRAINT {name} IF NOT EXISTS {target}")
+    return out
+
+
+def _indexes(
+    schema: Schema, vector_dimensions: int | None
+) -> list[tuple[str, tuple[str, ...], str]]:
+    """Return ``(label, columns, statement)`` for every declared and generated index."""
+    out: list[tuple[str, tuple[str, ...], str]] = []
     for label, node in schema.nodes.items():
-        for ix in node.indexes:
+        props = node_properties(schema, label)
+        ixs = list(node.indexes)
+        if all(c in props for c in _STATUS_INDEX) and _STATUS_INDEX not in ixs:
+            ixs.append(_STATUS_INDEX)
+        for ix in ixs:
             cols = ", ".join(f"n.{c}" for c in ix)
             ix_name = f"{label.lower()}_{'_'.join(ix)}"
-            out.append(f"CREATE INDEX {ix_name} IF NOT EXISTS FOR (n:{label}) ON ({cols})")
+            out.append(
+                (label, ix, f"CREATE INDEX {ix_name} IF NOT EXISTS FOR (n:{label}) ON ({cols})")
+            )
         for col in node.vector_indexes:
             ix_name = f"{label.lower()}_{col}"
-            out.append(f"CREATE VECTOR INDEX {ix_name} IF NOT EXISTS FOR (n:{label}) ON (n.{col})")
+            st = f"CREATE VECTOR INDEX {ix_name} IF NOT EXISTS FOR (n:{label}) ON (n.{col})"
+            if vector_dimensions is not None:
+                st += (
+                    f" OPTIONS {{indexConfig: {{`vector.dimensions`: {vector_dimensions}, "
+                    "`vector.similarity_function`: 'cosine'}}"
+                )
+            out.append((label, (col,), st))
     return out
+
+
+def index_statements(schema: Schema, *, vector_dimensions: int | None = None) -> list[str]:
+    """Return idempotent ``CREATE INDEX`` statements for every declared index.
+
+    Every label holding both ``scope`` and ``status`` (own or common) also gets a
+    ``(scope, status)`` index unless it declares one. Vector indexes carry cosine
+    ``OPTIONS`` with ``vector_dimensions`` only when it is given.
+    """
+    return [st for _, _, st in _indexes(schema, vector_dimensions)]
+
+
+def setup_statements(schema: Schema, *, vector_dimensions: int | None = None) -> list[str]:
+    """Return the ordered setup list: constraints first, then the indexes no constraint backs.
+
+    An index on a constrained label whose columns equal the constraint's ``(scope, id)``
+    is dropped (the constraint already provides it); no statement appears twice.
+    """
+    constraints = constraint_statements(schema)
+    constrained = {label for label in schema.nodes if "id" in node_properties(schema, label)}
+    indexes = [
+        st
+        for label, cols, st in _indexes(schema, vector_dimensions)
+        if not (label in constrained and cols == _UNIQUE_KEY)
+    ]
+    return list(dict.fromkeys(constraints + indexes))
 
 
 def duplicate_queries(schema: Schema) -> list[str]:
