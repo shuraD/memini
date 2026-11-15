@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -204,7 +205,19 @@ def test_hook_and_ci_check_names_too() -> None:
     assert 'commit_identity --base "$MEMINI_AUDIT_BASE" --names tools/ci/commit-names.txt' in ci
 
 
-def test_the_public_name_list_holds_only_the_neutral_name() -> None:
-    lines = (ROOT / "tools" / "ci" / "commit-names.txt").read_text(encoding="utf-8").splitlines()
-    entries = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
-    assert entries == [NEUTRAL_NAME], entries
+def _entries(name: str) -> list[str]:
+    lines = (ROOT / "tools" / "ci" / name).read_text(encoding="utf-8").splitlines()
+    return [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+
+
+def test_the_public_name_list_holds_only_the_neutral_name_and_noreply_logins() -> None:
+    # owner 2026-11-15: every new commit is the owner's; the only other allowed name is the
+    # GitHub login of a noreply address on the identity list, never a personal name.
+    logins = {
+        m.group(1)
+        for e in _entries("commit-identities.txt")
+        if (m := re.fullmatch(r"\d+\+([A-Za-z0-9-]+)@users\.noreply\.github\.com", e))
+    }
+    entries = _entries("commit-names.txt")
+    assert NEUTRAL_NAME in entries, entries
+    assert all(e in logins for e in entries if e != NEUTRAL_NAME), entries
