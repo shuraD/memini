@@ -69,6 +69,16 @@ class ProfileSpec:
 
 
 @dataclass(frozen=True)
+class StageSpec:
+    """One stage of the chain before ``code``: its queue, prompt and the stage it feeds."""
+
+    name: str
+    queue: Path
+    next: str
+    prompt: str
+
+
+@dataclass(frozen=True)
 class Config:
     """Every setting the orchestrator uses (see ``config.toml`` for their meaning)."""
 
@@ -131,6 +141,9 @@ class Config:
     profiles: tuple[ProfileSpec, ...]
     gates: tuple[Gate, ...]
     engines: Mapping[str, EngineSpec]
+    # the stage chain (owner 2026-11-15): stages before "code", and where the spec stage writes
+    stages: tuple[StageSpec, ...] = ()
+    spec_dir: Path = Path()
 
     @property
     def parallel(self) -> bool:
@@ -151,6 +164,43 @@ def _merge(base: dict[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:
 def _path(repo: Path, value: str) -> Path:
     p = Path(value).expanduser()
     return (p if p.is_absolute() else repo / p).resolve()
+
+
+CODE_STAGE = "code"  # the slice pipeline; its queue is ``queue``
+
+
+def _stages(repo: Path, raw: object, paths: Mapping[str, Path]) -> tuple[StageSpec, ...]:
+    """Return the configured stages; each feeds a later stage or ``code``, never a loop."""
+    if not isinstance(raw, list):
+        msg = "stages must be a list of tables"
+        raise ConfigError(msg)
+    out = []
+    for item in raw:
+        name = str(item.get("name", ""))
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", name) or name == CODE_STAGE:
+            msg = (
+                f"stage name {name!r} must be lowercase letters, digits or '-', not {CODE_STAGE!r}"
+            )
+            raise ConfigError(msg)
+        queue = _path(repo, str(item.get("queue", "")))
+        for root in (repo, paths["worktrees_dir"]):
+            if not item.get("queue") or _inside(queue, root):
+                msg = f"stage {name}: queue {queue} must be set and outside the repository"
+                raise ConfigError(msg)
+        out.append(StageSpec(name, queue, str(item.get("next", "")), str(item.get("prompt", name))))
+    names = [s.name for s in out]
+    if len(set(names)) != len(names):
+        msg = f"stage names must be unique: {names}"
+        raise ConfigError(msg)
+    for i, stage in enumerate(out):
+        later = {*names[i + 1 :], CODE_STAGE}
+        if stage.next not in later:
+            msg = (
+                f"stage {stage.name}: next must be a later stage or {CODE_STAGE!r}, "
+                f"not {stage.next!r}"
+            )
+            raise ConfigError(msg)
+    return tuple(out)
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -255,6 +305,7 @@ def load_config(
             if _inside(paths[key], root):
                 msg = f"{key} {paths[key]} must be outside the repository and every worktree"
                 raise ConfigError(msg)
+    stages = _stages(repo, raw.get("stages", []), paths)
     if _inside(paths["worktrees_dir"], repo):
         msg = "worktrees_dir must be outside the repository"
         raise ConfigError(msg)
@@ -355,4 +406,6 @@ def load_config(
         profiles=profiles,
         gates=_gates(raw.get("gates", [])),
         engines=engines,
+        stages=stages,
+        spec_dir=_path(repo, str(raw.get("spec_dir") or "../specs")),
     )

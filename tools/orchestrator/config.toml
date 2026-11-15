@@ -119,6 +119,12 @@ worktrees_dir = "../memini-orchestrator-worktrees"
 inbox = "../.memini-orchestrator/OWNER_INBOX.md"
 queue = "../.memini-orchestrator/queue.txt"
 prompts_dir = ""                           # empty: the prompts next to this file
+# The stage chain (owner 2026-11-15: "we can have more than 2 queues"). Each stage has its own
+# queue; a task that passes a stage's checks moves into the queue of its `next` stage. "code"
+# is the slice pipeline above (QA tests, coder, gates, hold-out, audit, merge) and reads
+# `queue`. Stages run side by side: run-queue --stage <name>, or --all.
+spec_dir = "../memini/docs/internal/slices"  # the spec stage writes <spec_dir>/<module>/<ID>.md
+# (the [[stages]] tables are at the end of this file)
 holdout_required = true
 
 python = ".venv/bin/python"                # relative paths resolve inside each worktree
@@ -299,3 +305,11 @@ stdin = false
 qa = ["opencode", "run", "--dir", "{workdir}", "{prompt}"]
 coder = ["opencode", "run", "--dir", "{workdir}", "{prompt}"]
 audit = ["opencode", "run", "--dir", "{workdir}", "--agent", "plan", "{prompt}"]
+
+# --- stage chain (see spec_dir above) --------------------------------------------------------
+[[stages]]
+# a task line -> its spec and hidden (hold-out) tests, written by one QA agent from the sources
+name = "spec"
+queue = "../.memini-orchestrator/queue-spec.txt"
+next = "code"
+prompt = "spec"

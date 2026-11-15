@@ -13,7 +13,17 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from tools.orchestrator import config, dockerexec, gates, pipeline, schedule, spec, state
+from tools.orchestrator import (
+    config,
+    dockerexec,
+    gates,
+    pipeline,
+    schedule,
+    spec,
+    specstage,
+    stages,
+    state,
+)
 from tools.orchestrator.executor import clean_env
 
 EPILOG = f"""\
@@ -23,6 +33,9 @@ configuration:
   single paths: MEMINI_ORCH_STATE_DIR, MEMINI_ORCH_HOLDOUT_DIR, MEMINI_ORCH_WORKTREES_DIR,
                 MEMINI_ORCH_INBOX, MEMINI_ORCH_QUEUE
   queue line:  <task id> <spec file> [engine|-] [path,path,...]   ('#' starts a comment)
+  stage line:  <task id> <module path> <deps|-> <source,...> <one-line task>   (stage queues)
+  stages:      run-queue --stage <name> runs one stage, --all runs every stage and code side
+               by side; a task that passes a stage moves into the next stage's queue
 
 exit codes: 0 done/merged, 1 rejected, disputed, failed or blocked, 2 usage or config error,
             3 run-queue: entries left that wait on depends_on
@@ -77,6 +90,15 @@ def _deps(entry: state.QueueEntry) -> tuple[str, ...]:
 
 
 def _cmd_run_queue(cfg: config.Config, args: argparse.Namespace) -> int:
+    if args.all:
+        return _run_all(cfg, args)
+    if args.stage != config.CODE_STAGE:
+        return stages.run_stage(
+            cfg,
+            stages.stage(cfg, args.stage).name,
+            workers=max(1, args.workers),
+            launch=_stage_launcher(args, args.stage),
+        )
     workers = min(args.workers, cfg.max_parallel)
     if workers > 1 and cfg.parallel:
         return run_queue_parallel(cfg, workers=workers, launch=_launcher(args, cfg))
@@ -111,10 +133,16 @@ def run_queue_parallel(
     """
     st = state.State(cfg)
     entries = state.read_queue(cfg.queue)
-    by_id = {e.task_id: e for e in entries}
+    seen = {e.task_id for e in entries}
     failed = _blocked(st, entries)  # only the slices that depend on them wait
     running: dict[str, Any] = {}
     while True:
+        # an earlier stage may hand new entries over while this loop runs (stage chain)
+        entries = state.read_queue(cfg.queue) if cfg.queue.exists() else entries
+        new = [e for e in entries if e.task_id not in seen]
+        failed |= _blocked(st, new)
+        seen |= {e.task_id for e in new}
+        by_id = {e.task_id: e for e in entries}
         _reap(st, running, failed)
         merged = {e.task_id for e in entries if _done(st, e.task_id)}
         cands = [
@@ -131,10 +159,48 @@ def run_queue_parallel(
         ):
             print(f"{task_id}: started")
             running[task_id] = launch(by_id[task_id])
-        if not running:
+        if not running and not stages.upstream_active(cfg):
             break
         time.sleep(pause)
     return _queue_exit(st, entries, failed)
+
+
+def _stage_launcher(args: argparse.Namespace, stage_name: str) -> Callable[[stages.StageItem], Any]:
+    """Return a function that starts one ``stage-run`` of a stage item as its own process."""
+    base = [sys.executable, "-m", "tools.orchestrator"]
+    if args.config:
+        base += ["--config", str(args.config)]
+    if args.config_json:
+        base += ["--config-json", args.config_json]
+
+    def launch(item: stages.StageItem) -> Any:
+        argv = [*base, "stage-run", stage_name, item.task_id]
+        return subprocess.Popen(argv, cwd=_repo())  # noqa: S603 — our own CLI, no shell
+
+    return launch
+
+
+def _run_all(cfg: config.Config, args: argparse.Namespace) -> int:
+    """Run every stage loop and the code loop side by side; return the worst exit code."""
+    base = [sys.executable, "-m", "tools.orchestrator"]
+    if args.config:
+        base += ["--config", str(args.config)]
+    if args.config_json:
+        base += ["--config-json", args.config_json]
+    procs = []
+    for name in [*(s.name for s in cfg.stages), config.CODE_STAGE]:
+        argv = [*base, "run-queue", "--stage", name, "--workers", str(args.workers)]
+        if args.worker:
+            argv += ["--worker", args.worker]
+        procs.append(subprocess.Popen(argv, cwd=_repo()))  # noqa: S603 — our own CLI
+        if name != config.CODE_STAGE:
+            time.sleep(1)  # the stage loop takes its active lock before code looks for it
+    codes = [p.wait() for p in procs]
+    return 1 if 1 in codes else max(codes)
+
+
+def _cmd_stage_run(cfg: config.Config, args: argparse.Namespace) -> int:
+    return specstage.run(cfg, stages.stage(cfg, args.stage), args.task_id)
 
 
 def _holdout_ready(cfg: config.Config, task_id: str) -> bool:
@@ -286,6 +352,7 @@ def status_lines(cfg: config.Config) -> list[str]:
     others = sorted(set(tasks) - {e.task_id for e in entries})
     for task_id in others:
         lines.append(f"  {task_id}: {tasks[task_id]['status']} (not in the queue)")
+    lines += stages.status_lines(cfg)
     heads = _INBOX_HEAD.findall(cfg.inbox.read_text(encoding="utf-8")) if cfg.inbox.exists() else []
     lines.append(f"inbox: {cfg.inbox} ({len(heads)} entries)")
     lines += [f"  {h}" for h in heads]
@@ -314,6 +381,19 @@ def _cmd_sandbox_pytest(cfg: config.Config, args: argparse.Namespace) -> int:
 
 
 def _cmd_release(cfg: config.Config, args: argparse.Namespace) -> int:
+    if args.stage != config.CODE_STAGE:
+        rec = stages.StageState(cfg, stages.stage(cfg, args.stage).name)
+        try:
+            with state.task_lock(cfg, f"{args.stage}-{args.task_id}"):
+                if rec.status(args.task_id) is None:
+                    print(f"{args.stage}/{args.task_id}: unknown task")
+                    return 1
+                rec.set(args.task_id, stages.RELEASED, args.reason)
+        except state.BusyError as exc:
+            print(f"{args.stage}/{args.task_id}: not released: {exc}")
+            return 1
+        print(f"{args.stage}/{args.task_id}: released")
+        return 0
     st = state.State(cfg)
     try:
         with state.run_lock(cfg, args.task_id):  # never release a task while it runs
@@ -356,8 +436,10 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--engine", help="the coder's engine (QA and audit: see config)")
     run.add_argument("--paths", nargs="*", help="narrow the spec's paths")
     run.add_argument("--worker")
-    rq = add("run-queue", "run the queue file in order")
+    rq = add("run-queue", "run a stage's queue (default: code, the slice pipeline)")
     rq.add_argument("--worker")
+    rq.add_argument("--stage", default=config.CODE_STAGE, help="the stage to run (default code)")
+    rq.add_argument("--all", action="store_true", help="every stage and code, side by side")
     rq.add_argument(
         "--workers",
         type=int,
@@ -372,6 +454,10 @@ def parser() -> argparse.ArgumentParser:
     rel = add("release", "mark a task released (frees its paths and worker)")
     rel.add_argument("task_id")
     rel.add_argument("--reason", default="released by the owner")
+    rel.add_argument("--stage", default=config.CODE_STAGE, help="the task's stage (default code)")
+    sr = add("stage-run", "run one stage task (started by run-queue --stage)")
+    sr.add_argument("stage")
+    sr.add_argument("task_id")
     return ap
 
 
@@ -382,6 +468,7 @@ _COMMANDS = {
     "sandbox-pytest": _cmd_sandbox_pytest,
     "status": _cmd_status,
     "release": _cmd_release,
+    "stage-run": _cmd_stage_run,
 }
 
 

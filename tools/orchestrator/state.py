@@ -52,6 +52,16 @@ def run_lock(cfg: Config, task_id: str = "") -> Iterator[None]:
         yield
 
 
+@contextlib.contextmanager
+def task_lock(cfg: Config, name: str) -> Iterator[None]:
+    """Hold ``locks/<name>.lock`` for one stage task; no run slot (stages run beside ``code``)."""
+    with contextlib.ExitStack() as stack:
+        if not _try_lock(stack, cfg.state_dir / "locks" / f"{name}.lock"):
+            msg = f"{name} is already running"
+            raise BusyError(msg)
+        yield
+
+
 def _try_lock(stack: contextlib.ExitStack, path: Path) -> bool:
     """Take a non-blocking exclusive lock on ``path``; it is released when ``stack`` closes."""
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -93,8 +93,15 @@ def _rule(tool: str, abs_path: Path, is_dir: bool) -> str:
 
 
 def private_paths(cfg: Config) -> list[tuple[Path, bool]]:
-    """Return the paths no agent may read or write: hold-out, state, queue, inbox."""
-    return [(cfg.holdout_dir, True), (cfg.state_dir, True), (cfg.queue, False), (cfg.inbox, False)]
+    """Return the paths no agent may read or write: hold-out, state, queues, inbox."""
+    stage_queues = [(s.queue, False) for s in cfg.stages]
+    return [
+        (cfg.holdout_dir, True),
+        (cfg.state_dir, True),
+        (cfg.queue, False),
+        (cfg.inbox, False),
+        *stage_queues,
+    ]
 
 
 def settings(
