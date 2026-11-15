@@ -113,6 +113,7 @@ class Config:
     python: str
     setup: tuple[tuple[str, ...], ...]
     pytest_args: tuple[str, ...]
+    qa_lint: tuple[tuple[str, ...], ...]
     env_allow: tuple[str, ...]
     max_coder_attempts: int
     merge_retries: int
@@ -336,6 +337,7 @@ def load_config(
         python=str(raw["python"]),
         setup=tuple(tuple(cmd) for cmd in raw.get("setup", [])),
         pytest_args=_strs(raw, "pytest_args"),
+        qa_lint=tuple(tuple(cmd) for cmd in raw.get("qa_lint", [])),
         env_allow=env_allow,
         max_coder_attempts=int(raw["max_coder_attempts"]),
         merge_retries=int(raw["merge_retries"]),

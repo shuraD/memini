@@ -452,17 +452,45 @@ class _Run:
     # -------------------------------------------------------------- QA
     def _qa(self, base: str) -> tuple[str, list[str]]:
         cfg = self.cfg
-        prompt = engine.render(
-            cfg, "qa", task_id=self.task_id, spec=self.sp.text(), qa_allow=", ".join(cfg.qa_allow)
-        )
         protected = [*cfg.protected, "**/conftest.py"]
-        self._agent("qa", prompt, self.wt, cfg.qa_allow, protected)
-        left = self._leftovers(cfg.qa_allow, protected)
-        if left:
-            raise _Stop(REJECTED, "QA: " + "; ".join(left))
-        qa_sha = gitops.snapshot(
-            self.wt, f"{self.task_id}: QA acceptance tests (sealed)", self.ident
-        )
+        failures = "none (first attempt)"
+        for attempt in (1, 2):
+            prompt = engine.render(
+                cfg,
+                "qa",
+                task_id=self.task_id,
+                spec=self.sp.text(),
+                qa_allow=", ".join(cfg.qa_allow),
+                failures=failures,
+            )
+            self._agent("qa", prompt, self.wt, cfg.qa_allow, protected)
+            left = self._leftovers(cfg.qa_allow, protected)
+            if left:
+                raise _Stop(REJECTED, "QA: " + "; ".join(left))
+            qa_sha = gitops.snapshot(
+                self.wt, f"{self.task_id}: QA acceptance tests (sealed)", self.ident
+            )
+            files = self._qa_files(base, qa_sha)
+            if not gates.defines_tests(self.wt, files):  # before lint: the plainer reason
+                raise _Stop(REJECTED, "the QA files define no test function")
+            lint = self._qa_lint(files)
+            if not lint:
+                break
+            if attempt == 2:  # noqa: PLR2004 — one retry
+                raise _Stop(REJECTED, "the QA tests fail lint after a retry: " + lint[:500])
+            failures = "Your test files fail lint; fix only that:\n" + lint
+        self._fresh(self.gate_wt, qa_sha)
+        if not gates.defines_tests(self.gate_wt, files):
+            raise _Stop(REJECTED, "the QA files define no test function")
+        run = self._gate_run(self.gate_wt, qa_sha, files)
+        res = gates.run_tests(cfg, self.ex, run, files, gates.Profile("defaults", {}))
+        if res.code == 0:
+            raise _Stop(REJECTED, "the QA tests pass on the base without any implementation")
+        return qa_sha, files
+
+    def _qa_files(self, base: str, qa_sha: str) -> list[str]:
+        """Return the test files QA added; reject anything else it changed."""
+        cfg = self.cfg
         files, problems = [], []
         for status, path in gitops.name_status(self.repo, base, qa_sha):
             name = path.rsplit("/", 1)[-1]
@@ -479,14 +507,22 @@ class _Run:
             raise _Stop(REJECTED, "; ".join(problems))
         if not files:
             raise _Stop(REJECTED, "QA wrote no test file")
-        self._fresh(self.gate_wt, qa_sha)
-        if not gates.defines_tests(self.gate_wt, files):
-            raise _Stop(REJECTED, "the QA files define no test function")
-        run = self._gate_run(self.gate_wt, qa_sha, files)
-        res = gates.run_tests(cfg, self.ex, run, files, gates.Profile("defaults", {}))
-        if res.code == 0:
-            raise _Stop(REJECTED, "the QA tests pass on the base without any implementation")
-        return qa_sha, files
+        return files
+
+    def _qa_lint(self, files: Sequence[str]) -> str:
+        """Return the lint output of QA's files, or "" when they are clean (runs on the host)."""
+        python = gates.python_for(self.cfg, self.wt)
+        out = []
+        for cmd in self.cfg.qa_lint:
+            argv: list[str] = []
+            for arg in cmd:
+                argv += list(files) if arg == "{files}" else [arg.replace("{python}", python)]
+            res = self.host.run(
+                argv, cwd=self.wt, env=self.gate_env, timeout=self.cfg.gate_timeout_s
+            )
+            if res.code != 0:
+                out.append(res.output.strip())
+        return "\n".join(out)[-1500:]
 
     # -------------------------------------------------------------- coder
     def _coder(self, base: str, qa_sha: str, files: list[str], sealed: dict[str, str]) -> str:

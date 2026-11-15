@@ -11,6 +11,9 @@ Rules:
 - Keep the tests deterministic: no network, no clock, no randomness without a fixed seed, no skips.
 - To check that your tests fail now, run exactly (no cd, no pipes, no other command):
     uv run python -m tools.orchestrator sandbox-pytest <your test files>
+  and keep them lint-clean (they are sealed after you; nobody can fix them later):
+    uv run ruff check <your test files>
+    uv run ruff format <your test files>
   The tests run in a sandbox container; any other command is refused.
 - Follow AGENTS.md in the repository.
 
@@ -18,5 +21,8 @@ Specification:
 -----
 $spec
 -----
+
+Result of the previous attempt:
+$failures
 
 When you are done, reply with one line listing the test files you wrote.

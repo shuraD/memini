@@ -1911,3 +1911,51 @@ def test_a_parallel_run_still_guards_what_it_owns(env: dict[str, Any]) -> None:
     with pytest.raises(pipeline._Stop):
         run.watch("a step", before)
     assert run.gate_script.read_text() == "# gate copy\n"  # restored
+
+
+# --------------------------------------------------------------------------------------------
+# LP-02 (2026-11-15): QA sealed a test file that failed the lint gate (S105), so no coder could
+# ever pass it. QA's files are now linted before they are sealed: one QA retry with the lint
+# output, then the slice is rejected before any coder runs.
+# Tests-Author: Claude/vp-rnd (new tests for its own change).
+# --------------------------------------------------------------------------------------------
+LINT_BAD = "import os\n" + QA_TEST  # an unused import: ruff F401
+
+
+def test_qa_gets_one_retry_when_its_tests_fail_lint(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(
+        env,
+        monkeypatch,
+        qa=[
+            {"write": {"tests/unit/test_calc.py": LINT_BAD}},
+            {"write": {"tests/unit/test_calc.py": QA_TEST}},
+        ],
+        coder=[{"write": {IMPL: GOOD}}],
+    )
+    _holdout(env, TASK)
+    out = pipeline.run_task(_cfg(env), _task(env))
+    assert out.status == "merged", out.reason
+    prompts = _prompts(env, "qa")
+    assert len(prompts) == 2
+    assert "F401" in prompts[1]  # the retry names the lint failure
+
+
+def test_qa_tests_that_stay_unlinted_reject_the_slice_before_the_coder(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(
+        env,
+        monkeypatch,
+        qa=[
+            {"write": {"tests/unit/test_calc.py": LINT_BAD}},
+            {"write": {"tests/unit/test_calc.py": LINT_BAD}},
+        ],
+        coder=[{"write": {IMPL: GOOD}}],
+    )
+    _holdout(env, TASK)
+    out = pipeline.run_task(_cfg(env), _task(env))
+    assert out.status == "rejected", out.reason
+    assert "lint" in out.reason
+    assert _prompts(env, "coder") == []  # no coder ever started
