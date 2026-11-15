@@ -368,3 +368,14 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_p
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-003', 'tests/unit/test_llm_providers_config.py::test_every_known_role_is_accepted_as_models_key');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-003', 'tests/unit/test_llm_providers_config.py::test_key_env_stores_only_the_variable_name');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-003', 'tests/unit/test_llm_providers_config.py::test_parse_never_reads_the_environment');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/infra/llm_providers/-004', 'Limit simultaneous calls to a provider (max_concurrent from config) acro', 'infra', 'slice spec LP-10; acceptance tests sealed at b3bc5bffef', 'active', 'src/memini/infra/llm_providers/', 'C-20261115-0123');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-004', 'tests/unit/test_llm_providers_limiter.py::test_slot_returns_a_context_manager_yielding_none');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-004', 'tests/unit/test_llm_providers_limiter.py::test_at_most_max_concurrent_threads_inside_slot');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-004', 'tests/unit/test_llm_providers_limiter.py::test_a_full_provider_blocks_the_next_caller_until_a_slot_frees');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-004', 'tests/unit/test_llm_providers_limiter.py::test_roles_share_the_provider_limit_not_their_model_limits');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-004', 'tests/unit/test_llm_providers_limiter.py::test_each_provider_limit_is_applied_separately');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-004', 'tests/unit/test_llm_providers_limiter.py::test_no_max_concurrent_key_never_blocks');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-004', 'tests/unit/test_llm_providers_limiter.py::test_unlimited_slot_nests_in_one_thread');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-004', 'tests/unit/test_llm_providers_limiter.py::test_exception_inside_slot_releases_the_slot');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-004', 'tests/unit/test_llm_providers_limiter.py::test_no_lock_is_held_while_the_body_runs');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-004', 'tests/unit/test_llm_providers_limiter.py::test_concurrent_first_use_creates_one_shared_semaphore');
