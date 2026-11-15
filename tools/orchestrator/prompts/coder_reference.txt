@@ -1,0 +1,3 @@
+An earlier implementation exists as read-only context: branch $branch in the local repository $repo.
+You may read it only with: git -C $repo show $branch:<path>, git -C $repo diff <commit>...$branch, git -C $repo log $branch
+Never fetch, pull, merge, cherry-pick or copy that branch into this repository. Write new code here from the specification; the reference only helps you understand it.

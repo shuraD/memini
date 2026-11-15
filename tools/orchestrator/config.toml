@@ -1,0 +1,179 @@
+# Orchestrator defaults (atomic slice workflow, owner 2026-11-14).
+# Override with --config <file.toml> or MEMINI_ORCH_CONFIG; single paths also by env:
+# MEMINI_ORCH_STATE_DIR, MEMINI_ORCH_HOLDOUT_DIR, MEMINI_ORCH_WORKTREES_DIR,
+# MEMINI_ORCH_INBOX, MEMINI_ORCH_QUEUE. Relative paths resolve against the repository root.
+# The state, hold-out, inbox and queue must lie outside the repository and every worktree.
+
+main_branch = "main"
+branch_prefix = "orch/"
+worker = "default"
+default_engine = "claude"
+# engine per role; empty = automatic: QA and audit use a different engine from the coder
+# when one in engine_preference is installed, else the coder's engine
+qa_engine = ""
+coder_engine = ""
+audit_engine = ""
+engine_preference = ["claude", "gemini", "opencode"]
+# where agent steps and gate commands run: "local" (a subprocess in the task worktree).
+# The hold-out gate never runs in the executor: it runs on the host, against the slice's
+# commit, so a future sandboxed executor never sees the hold-out, state, inbox or keys.
+executor = "local"
+# interpreter for the host-side hold-out run; empty = the orchestrator's own interpreter
+holdout_python = ""
+
+# the coder may change only these paths (a trailing "/" is a directory) ...
+allow = ["src/memini/"]
+# ... except these, which win over the allow list (and are blocked by the guard hook)
+protected = ["src/memini/infra/flags.py"]
+# the guard hook also blocks these for the coder (early warning; the path gate decides)
+guard_protected = [
+  "tests/", "tools/", "ledgers/", ".github/", ".githooks/", "config/", "docs/",
+  "pyproject.toml", "uv.lock", "**/conftest.py", "**/pytest.ini", "**/setup.cfg",
+]
+# a module is <root><first path component>; a spec's paths must lie inside one module,
+# and the root names the ledger layer of the feature row written on merge
+module_roots = { "src/memini/core/" = "core", "src/memini/extensions/" = "extensions", "src/memini/infra/" = "infra" }
+# untracked or ignored files an agent may leave outside its paths (caches and its venv);
+# anything else rejects the step. Gates never run in an agent worktree anyway.
+ignored_ok = ["__pycache__/", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".venv/"]
+# the QA agent may only ADD test files (test_*.py) under these
+qa_allow = ["tests/unit/"]
+
+state_dir = "../.memini-orchestrator"
+holdout_dir = "../memini-holdout"         # hold-out tests: <holdout_dir>/<TASK-ID>/test_*.py
+worktrees_dir = "../memini-orchestrator-worktrees"
+inbox = "../.memini-orchestrator/OWNER_INBOX.md"
+queue = "../.memini-orchestrator/queue.txt"
+prompts_dir = ""                           # empty: the prompts next to this file
+holdout_required = true
+
+python = ".venv/bin/python"                # relative paths resolve inside each worktree
+setup = [["uv", "sync", "--frozen"]]        # run in every new worktree
+test_args = ["-P", "-m", "pytest", "-q", "-o", "addopts=", "-p", "no:cacheprovider"]
+
+# `reference: [<repo>@]<branch>` in a spec is read-only context for the coder only. <repo>
+# is a name from this table (or a path); the orchestrator never fetches, copies or merges it.
+reference_tools = "Bash(git -C {repo} show *),Bash(git -C {repo} diff *),Bash(git -C {repo} log *)"
+
+max_coder_attempts = 2
+merge_retries = 3
+engine_timeout_s = 1800
+gate_timeout_s = 1800
+failure_tail_chars = 3000
+max_budget_usd = "3"
+# a test gate whose output matches this fails: zero skips
+forbid_output = '\b\d+ (skipped|xfailed|xpassed|deselected)\b'
+
+[reference_repos]
+# private = "../memini"
+
+[identity]
+name = "memini-author"
+email = "memini-author@example.invalid"
+
+# env profiles: each profile-aware gate (QA tests, hold-out, gates with profiles = true)
+# runs once per profile. all_flags = true sets every flag the flags file reads to on_value.
+[flags]
+file = "src/memini/infra/flags.py"
+function = "_env_bool"
+on_value = "1"
+
+[profiles.defaults]
+env = {}
+
+[profiles.all-flags-on]
+all_flags = true
+
+# Gates: a ci_step is the `run:` of the ci.yml step whose name starts with it (the same
+# commands CI runs); `run` is an argv. Placeholders: {base} {python} {workdir}.
+# Stages: "slice" (the coder's work, before the audit), "merge" (the squash commit).
+[[gates]]
+name = "format"
+ci_step = "Format"
+stages = ["slice", "merge"]
+
+[[gates]]
+name = "lint"
+ci_step = "Lint"
+stages = ["slice", "merge"]
+
+[[gates]]
+name = "types"
+ci_step = "Types"
+stages = ["slice", "merge"]
+
+[[gates]]
+name = "tests"
+ci_step = "Tests"
+stages = ["slice", "merge"]
+profiles = true
+forbid_output = true
+
+[[gates]]
+name = "architecture"
+ci_step = "Architecture contracts"
+stages = ["slice", "merge"]
+
+[[gates]]
+name = "export"
+ci_step = "Export gate"
+stages = ["slice", "merge"]
+
+[[gates]]
+name = "identities"
+ci_step = "Commit identities"
+stages = ["merge"]
+
+[[gates]]
+name = "ledger"
+ci_step = "Ledger guards"
+stages = ["merge"]
+
+[[gates]]
+name = "commit-messages"
+ci_step = "Commit messages"
+stages = ["merge"]
+
+[[gates]]
+name = "gitleaks"
+run = ["gitleaks", "git", "--no-banner", "--redact", "--log-opts={base}..HEAD", "."]
+stages = ["merge"]
+
+# Engines: argv per role. Placeholders (whole argument): {prompt} {settings} {workdir}
+# {max_budget_usd}; inside an argument: {reference_tools} (empty without a reference).
+# stdin = true sends the prompt on stdin. Only Claude loads the guard hook (--settings);
+# the path gate covers every engine.
+[engines.claude]
+author = "Claude"
+stdin = true
+qa = [
+  "claude", "-p", "--settings", "{settings}", "--setting-sources", "project,local",
+  "--strict-mcp-config", "--permission-mode", "dontAsk", "--permission-prompts", "none",
+  "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run pytest *)",
+  "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
+]
+coder = [
+  "claude", "-p", "--settings", "{settings}", "--setting-sources", "project,local",
+  "--strict-mcp-config", "--permission-mode", "dontAsk", "--permission-prompts", "none",
+  "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run pytest *),Bash(uv run ruff *),Bash(uv run mypy *){reference_tools}",
+  "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
+]
+audit = [
+  "claude", "-p", "--setting-sources", "project,local", "--strict-mcp-config",
+  "--permission-mode", "dontAsk", "--permission-prompts", "none", "--tools", "",
+  "--no-session-persistence", "--output-format", "text", "--max-budget-usd", "{max_budget_usd}",
+]
+
+[engines.gemini]
+author = "Gemini"
+stdin = false
+qa = ["gemini", "--approval-mode", "auto_edit", "-p", "{prompt}"]
+coder = ["gemini", "--approval-mode", "auto_edit", "-p", "{prompt}"]
+audit = ["gemini", "--approval-mode", "plan", "-p", "{prompt}"]
+
+[engines.opencode]
+author = "OpenCode"
+stdin = false
+qa = ["opencode", "run", "--dir", "{workdir}", "{prompt}"]
+coder = ["opencode", "run", "--dir", "{workdir}", "{prompt}"]
+audit = ["opencode", "run", "--dir", "{workdir}", "--agent", "plan", "{prompt}"]

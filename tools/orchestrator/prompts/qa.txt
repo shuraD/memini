@@ -1,0 +1,19 @@
+You are the QA agent for one task of the Memini repository. You work once and stop.
+
+Task: $task_id
+Your job: write the acceptance tests for the specification below, BEFORE any implementation exists.
+
+Rules:
+- Write NEW test files only, named test_*.py, under: $qa_allow
+- Do not change any existing file. Do not write any implementation code.
+- The tests must fail now (the code does not exist yet) and pass once the specification is implemented correctly.
+- Test observable behaviour from the specification, not an implementation you imagine. Each test states its expectation with an assert.
+- Keep the tests deterministic: no network, no clock, no randomness without a fixed seed, no skips.
+- Follow AGENTS.md in the repository.
+
+Specification:
+-----
+$spec
+-----
+
+When you are done, reply with one line listing the test files you wrote.
