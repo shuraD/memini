@@ -28,23 +28,40 @@ class BusyError(RuntimeError):
 
 
 @contextlib.contextmanager
-def run_lock(cfg: Config) -> Iterator[None]:
-    """Hold the global run lock: one orchestrator run at a time (no parallel workers yet).
+def run_lock(cfg: Config, task_id: str = "") -> Iterator[None]:
+    """Hold a run slot for ``task_id``; a process that gets none gets :class:`BusyError` at once.
 
-    A second process gets :class:`BusyError` at once instead of waiting.
+    With the local executor (or ``max_parallel`` 1) there is one slot: one orchestrator run at a
+    time. With the docker executor up to ``max_parallel`` runs hold a slot at once, and a task
+    that is already running is refused.
     """
-    path = cfg.state_dir / "run.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+", encoding="utf-8") as fh:
-        try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
+    cfg.state_dir.mkdir(parents=True, exist_ok=True)
+    with contextlib.ExitStack() as stack:
+        if cfg.parallel and task_id:
+            task_lock = cfg.state_dir / "locks" / f"task-{task_id}.lock"
+            if not _try_lock(stack, task_lock):
+                msg = f"{task_id} is already running"
+                raise BusyError(msg)
+            slots = [cfg.state_dir / "locks" / f"slot-{i}.lock" for i in range(cfg.max_parallel)]
+            if not any(_try_lock(stack, slot) for slot in slots):
+                msg = f"all {cfg.max_parallel} run slots are busy"
+                raise BusyError(msg)
+        elif not _try_lock(stack, cfg.state_dir / "run.lock"):
             msg = "another orchestrator run is active: one run at a time (global run lock)"
-            raise BusyError(msg) from exc
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            raise BusyError(msg)
+        yield
+
+
+def _try_lock(stack: contextlib.ExitStack, path: Path) -> bool:
+    """Take a non-blocking exclusive lock on ``path``; it is released when ``stack`` closes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = stack.enter_context(path.open("a+", encoding="utf-8"))
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    stack.callback(fcntl.flock, fh, fcntl.LOCK_UN)
+    return True
 
 
 class WipConflictError(RuntimeError):

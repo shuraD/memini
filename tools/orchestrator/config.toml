@@ -130,6 +130,11 @@ reference_tools = "Bash(git -C {repo} show *),Bash(git -C {repo} diff *),Bash(gi
 
 max_coder_attempts = 2
 merge_retries = 3
+# slices that may run at once (owner 2026-11-15: many agents, not one serial line). Above 1 only
+# with the docker executor, where coder code cannot reach the host's state or git refs; the
+# local executor always runs one slice at a time. Each run is its own process with one-shot
+# agents, so the cost rate grows with this number.
+max_parallel = 4
 engine_timeout_s = 1800
 gate_timeout_s = 1800
 max_budget_usd = "3"

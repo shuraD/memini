@@ -116,6 +116,7 @@ class Config:
     env_allow: tuple[str, ...]
     max_coder_attempts: int
     merge_retries: int
+    max_parallel: int
     engine_timeout_s: int
     gate_timeout_s: int
     max_budget_usd: str
@@ -129,6 +130,11 @@ class Config:
     profiles: tuple[ProfileSpec, ...]
     gates: tuple[Gate, ...]
     engines: Mapping[str, EngineSpec]
+
+    @property
+    def parallel(self) -> bool:
+        """Return True when slices may run at once (docker executor and max_parallel > 1)."""
+        return self.executor == "docker" and self.max_parallel > 1
 
 
 def _merge(base: dict[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:
@@ -279,6 +285,10 @@ def load_config(
             msg = f"unknown engine {name!r} (configured: {sorted(engines)})"
             raise ConfigError(msg)
     executor = str(raw.get("executor", "") or _default_executor(raw))
+    max_parallel = int(raw.get("max_parallel", 1))
+    if max_parallel < 1:
+        msg = f"max_parallel must be at least 1, not {max_parallel}"
+        raise ConfigError(msg)
     if executor not in ("local", "docker"):
         msg = f"executor {executor!r} is not available (use 'local' or 'docker')"
         raise ConfigError(msg)
@@ -329,6 +339,7 @@ def load_config(
         env_allow=env_allow,
         max_coder_attempts=int(raw["max_coder_attempts"]),
         merge_retries=int(raw["merge_retries"]),
+        max_parallel=max_parallel,
         engine_timeout_s=int(raw["engine_timeout_s"]),
         gate_timeout_s=int(raw["gate_timeout_s"]),
         max_budget_usd=str(raw["max_budget_usd"]),

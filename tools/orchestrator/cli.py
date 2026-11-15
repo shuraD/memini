@@ -7,11 +7,13 @@ import json
 import re
 import shutil
 import subprocess
-from collections.abc import Sequence
+import sys
+import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from tools.orchestrator import config, dockerexec, pipeline, spec, state
+from tools.orchestrator import config, dockerexec, pipeline, schedule, spec, state
 from tools.orchestrator.executor import clean_env
 
 EPILOG = f"""\
@@ -75,6 +77,125 @@ def _deps(entry: state.QueueEntry) -> tuple[str, ...]:
 
 
 def _cmd_run_queue(cfg: config.Config, args: argparse.Namespace) -> int:
+    workers = min(args.workers, cfg.max_parallel)
+    if workers > 1 and cfg.parallel:
+        return run_queue_parallel(cfg, workers=workers, launch=_launcher(args))
+    if args.workers > 1:
+        print(
+            "run-queue: parallel runs need the docker executor and max_parallel > 1; one at a time"
+        )
+    return _run_queue_serial(cfg, args)
+
+
+def _entry_paths(entry: state.QueueEntry) -> tuple[str, ...]:
+    if entry.paths:
+        return entry.paths
+    try:
+        return spec.load(entry.spec).paths
+    except spec.SpecError:
+        return ()  # run_task refuses the spec and reports it
+
+
+def run_queue_parallel(
+    cfg: config.Config,
+    *,
+    workers: int,
+    launch: Callable[[state.QueueEntry], Any],
+    pause: float = 2.0,
+) -> int:
+    """Run the queue with up to ``workers`` slices at once; return the exit code.
+
+    A slice starts when its dependencies are merged and its paths overlap no running slice. A
+    failed or blocked slice holds back only the slices that depend on it (owner 2026-11-15: "it
+    should be able to work alone"); the run reports it at the end and exits 1.
+    """
+    st = state.State(cfg)
+    entries = state.read_queue(cfg.queue)
+    by_id = {e.task_id: e for e in entries}
+    failed = _blocked(st, entries)  # only the slices that depend on them wait
+    running: dict[str, Any] = {}
+    while True:
+        _reap(st, running, failed)
+        merged = {e.task_id for e in entries if _done(st, e.task_id)}
+        cands = [
+            schedule.Candidate(e.task_id, _entry_paths(e), _deps(e))
+            for e in entries
+            if e.task_id not in merged and e.task_id not in running and e.task_id not in failed
+        ]
+        busy = {t: _entry_paths(by_id[t]) for t in running}
+        for task_id in schedule.pick(
+            cands, merged=merged, running=busy, free=workers - len(running)
+        ):
+            print(f"{task_id}: started")
+            running[task_id] = launch(by_id[task_id])
+        if not running:
+            break
+        time.sleep(pause)
+    return _queue_exit(st, entries, failed)
+
+
+def _blocked(st: state.State, entries: Sequence[state.QueueEntry]) -> set[str]:
+    """Return the queue entries that failed in an earlier run and were not released."""
+    out = set()
+    for entry in entries:
+        rec = st.task(entry.task_id)
+        if rec and not _done(st, entry.task_id) and rec["status"] not in ("released",):
+            print(f"{entry.task_id}: blocked ({rec['status']}): {rec.get('reason', '')}")
+            out.add(entry.task_id)
+    return out
+
+
+def _reap(st: state.State, running: dict[str, Any], failed: set[str]) -> None:
+    """Collect finished runs: a merged one is marked done, any other one is failed."""
+    for task_id, proc in list(running.items()):
+        code = proc.poll()
+        if code is None:
+            continue
+        del running[task_id]
+        if code == 0 and _done(st, task_id):
+            st.mark_done(task_id)
+        else:
+            failed.add(task_id)
+            print(f"{task_id}: run ended with exit {code}; its dependents wait")
+
+
+def _queue_exit(st: state.State, entries: Sequence[state.QueueEntry], failed: set[str]) -> int:
+    """Print the queue summary; return 1 on any failure, 3 when entries wait, else 0."""
+    left = [e.task_id for e in entries if not _done(st, e.task_id) and e.task_id not in failed]
+    if failed:
+        print("failed or blocked: " + ", ".join(sorted(failed)))
+    if left:
+        print("waiting on depends_on: " + ", ".join(left))
+    if failed:
+        return 1
+    if left:
+        return _EXIT_WAITING
+    print("queue done")
+    return 0
+
+
+def _launcher(args: argparse.Namespace) -> Callable[[state.QueueEntry], Any]:
+    """Return a function that starts one ``run`` of an entry as its own process."""
+    base = [sys.executable, "-m", "tools.orchestrator"]
+    if args.config:
+        base += ["--config", str(args.config)]
+    if args.config_json:
+        base += ["--config-json", args.config_json]
+
+    def launch(entry: state.QueueEntry) -> Any:
+        argv = [*base, "run", entry.task_id, "--spec", str(entry.spec)]
+        if entry.engine:
+            argv += ["--engine", entry.engine]
+        if entry.paths:
+            argv += ["--paths", *entry.paths]
+        if args.worker:
+            argv += ["--worker", args.worker]
+        return subprocess.Popen(argv, cwd=_repo())  # noqa: S603 — our own CLI, no shell
+
+    return launch
+
+
+def _run_queue_serial(cfg: config.Config, args: argparse.Namespace) -> int:
     st = state.State(cfg)
     entries = state.read_queue(cfg.queue)
     ids = {e.task_id for e in entries}
@@ -184,7 +305,7 @@ def _cmd_sandbox_pytest(cfg: config.Config, args: argparse.Namespace) -> int:
 def _cmd_release(cfg: config.Config, args: argparse.Namespace) -> int:
     st = state.State(cfg)
     try:
-        with state.run_lock(cfg):  # never release a task under a running orchestrator
+        with state.run_lock(cfg, args.task_id):  # never release a task while it runs
             if st.task(args.task_id) is None:
                 print(f"{args.task_id}: unknown task")
                 return 1
@@ -226,6 +347,12 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--worker")
     rq = add("run-queue", "run the queue file in order")
     rq.add_argument("--worker")
+    rq.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="slices at once (docker executor; capped by max_parallel)",
+    )
     cs = add("check-spec", "the $0 pre-dispatch check of spec files")
     cs.add_argument("specs", nargs="+")
     sp = add("sandbox-pytest", "run pytest in a sandbox container (the coder's test wrapper)")

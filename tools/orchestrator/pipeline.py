@@ -111,7 +111,7 @@ def run_task(cfg: Config, task: Task, known_ids: Collection[str] = ()) -> Outcom
     except spec.SpecError as exc:
         return _refuse(cfg, task.task_id, [str(exc)])
     try:
-        with state.run_lock(cfg):
+        with state.run_lock(cfg, task.task_id):
             return _run_locked(cfg, task, sp, known_ids)
     except state.BusyError as exc:
         return Outcome(task.task_id, REJECTED, str(exc))
@@ -370,7 +370,7 @@ class _Run:
     def _watch_sets(self) -> tuple[list[Path], list[Path]]:
         """Return (files restored after tampering, files only reported).
 
-        Restored: files only this run writes while it holds the global run lock (the
+        Restored: files only this run writes while it holds its run slot (the
         orchestrator state, git config, hooks and info, the hold-out tests, the private
         pytest gate). Only reported, never byte-restored: the queue, the inbox, every ref
         (``for-each-ref``, refs/replace included) and packed-refs.
@@ -378,8 +378,13 @@ class _Run:
         cfg = self.cfg
         common = gitops.common_dir(self.repo)
         roots = [common / "hooks", common / "info", gates.holdout_dir(cfg, self.task_id)]
-        own = [cfg.state_dir / "state.json", common / "config", self.gate_script]
+        own = [common / "config", self.gate_script]
         own += [f for r in roots if r.is_dir() for f in sorted(r.rglob("*")) if f.is_file()]
+        if cfg.parallel:
+            # other runs update the state, inbox and queue, add branches and move main; only
+            # this run's own files and refs are watched (coder code runs in docker, no .git)
+            return own, [_REFS]
+        own.insert(0, cfg.state_dir / "state.json")
         shared = [cfg.queue, cfg.inbox, common / "packed-refs", _REFS]
         return own, shared
 
@@ -389,7 +394,11 @@ class _Run:
         files = {
             f: (f.read_bytes() if f.is_file() else None) for f in (*own, *shared) if f != _REFS
         }
-        files[_REFS] = gitops.all_refs(self.repo)  # every ref, refs/replace included
+        refs = gitops.all_refs(self.repo)  # every ref, refs/replace included
+        if self.cfg.parallel:  # only this run's branch and every replace ref
+            mine = (f"refs/heads/{self.branch} ", "refs/replace/")
+            refs = b"\n".join(r for r in refs.splitlines() if r.decode().startswith(mine))
+        files[_REFS] = refs
         return files
 
     def watch(self, what: str, before: dict[Path, bytes | None]) -> None:

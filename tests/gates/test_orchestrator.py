@@ -1868,3 +1868,46 @@ def test_a_task_without_a_commit_identity_is_refused_before_dispatch(
     assert "no commit identity" in out.reason
     log = env["log"]
     assert not log.exists() or not log.read_text().strip(), "an engine ran"
+
+
+# --------------------------------------------------------------------------------------------
+# Parallel runs (owner 2026-11-15: many agents at once): with the docker executor and
+# max_parallel > 1 a run's tamper watch covers only what this run owns (its branch, its
+# hold-out, its gate copy, git config and hooks). Another run's state, inbox and queue
+# updates, its branch and its merge into main are not tampering.
+# Tests-Author: Claude/vp-rnd (new tests for its own change).
+# --------------------------------------------------------------------------------------------
+
+
+def _parallel_run(env: dict[str, Any]) -> pipeline._Run:
+    cfg = _cfg(env, executor="docker", max_parallel=2)
+    run = pipeline._Run(cfg, TASK, spec.load(_spec(env)), ("src/memini/core/calc/",), {})
+    run.gate_script = env["tmp"] / "gate.py"
+    run.gate_script.write_text("# gate copy\n")
+    return run
+
+
+def test_a_parallel_run_ignores_other_runs(env: dict[str, Any]) -> None:
+    run = _parallel_run(env)
+    cfg = run.cfg
+    before = run._watched_files()
+    _write(cfg.state_dir / "state.json", '{"tasks": {}, "queue_done": []}\n')
+    _write(cfg.inbox, "## another run's entry\n")
+    _write(cfg.queue, "")
+    _git(env["repo"], "branch", "orch/OTHER")
+    _git(env["repo"], "commit", "--allow-empty", "-qm", "another slice merged")
+    run.watch("another run's progress", before)  # no rejection
+    assert (cfg.state_dir / "state.json").read_text().startswith('{"tasks"')  # not restored
+
+
+def test_a_parallel_run_still_guards_what_it_owns(env: dict[str, Any]) -> None:
+    run = _parallel_run(env)
+    before = run._watched_files()
+    _git(env["repo"], "branch", run.branch, "main")  # its own branch moved by a step
+    with pytest.raises(pipeline._Stop):
+        run.watch("a step", before)
+    before = run._watched_files()
+    run.gate_script.write_text("# tampered\n")
+    with pytest.raises(pipeline._Stop):
+        run.watch("a step", before)
+    assert run.gate_script.read_text() == "# gate copy\n"  # restored
