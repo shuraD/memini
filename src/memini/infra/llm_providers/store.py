@@ -55,6 +55,11 @@ class Store:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("CREATE TABLE IF NOT EXISTS _store_schema (name TEXT PRIMARY KEY)")
 
+    @property
+    def path(self) -> str:
+        """The path given at open, as str (``":memory:"`` for an in-memory store)."""
+        return self._path
+
     def _connect(self) -> sqlite3.Connection:
         """Open one autocommit connection with the busy timeout applied."""
         conn = sqlite3.connect(

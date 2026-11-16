@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS llm_embedding_cache (
 """
 _SELECT = "SELECT vector FROM llm_embedding_cache WHERE key = ?"
 _INSERT = "INSERT OR IGNORE INTO llm_embedding_cache (key, vector) VALUES (?, ?)"
+_DELETE = "DELETE FROM llm_embedding_cache"
 _BATCH_SIZE_KEY = "batch_size"
 
 Kind = Literal["query", "document"]
@@ -176,6 +177,14 @@ class CachedEmbedder:
         size = self._batch_size or len(items)
         for start in range(0, len(items), size):
             yield items[start : start + size]
+
+    def clear(self) -> int:
+        """Delete every stored vector in this store; return how many were deleted.
+
+        Only the embedding table is touched; other tables of the store are kept.
+        """
+        with self._store.transaction() as conn:
+            return conn.execute(_DELETE).rowcount
 
     def embed(self, texts: Sequence[str], *, kind: Kind) -> list[list[float]]:
         """Return one vector per text in input order; only unique misses reach ``inner``."""

@@ -53,6 +53,7 @@ _INSERT = (
     "(key, text, provider, model, role, prompt_tokens, completion_tokens, seconds) "
     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
 )
+_DELETE = "DELETE FROM llm_generation_cache"
 
 
 def generation_key(  # noqa: PLR0917 - positional signature fixed by the interface
@@ -213,6 +214,14 @@ class CachedLLM:
                 gen.seconds,
             ),
         )
+
+    def clear(self) -> int:
+        """Delete every stored generation in this store; return how many were deleted.
+
+        Only the generation table is touched; other tables of the store are kept.
+        """
+        with self._store.transaction() as conn:
+            return conn.execute(_DELETE).rowcount
 
     def generate(
         self,
