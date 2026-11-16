@@ -1,0 +1,68 @@
+# Default provider chain, in fallback order: hosted free tiers first, one local model last.
+# Loaded by settings.load_default_config() through config.parse_config; every provider
+# serves a model for every role. key_env names the variable holding the key, never the key.
+
+providers:
+  - name: gemini
+    kind: gemini
+    key_env: GEMINI_API_KEY
+    base_url: https://generativelanguage.googleapis.com/v1beta
+    rest_default_s: 60
+    limits:
+      max_concurrent: 2
+      timeout_s: 60
+    models:
+      classifier: &gemini_fast {name: gemini-2.0-flash-lite}
+      filter: *gemini_fast
+      answer: &gemini_main {name: gemini-2.0-flash}
+      extraction: *gemini_main
+      summary: *gemini_main
+      judge: *gemini_main
+
+  - name: groq
+    kind: openai_compatible
+    key_env: GROQ_API_KEY
+    base_url: https://api.groq.com/openai/v1
+    rest_default_s: 60
+    limits:
+      max_concurrent: 2
+      timeout_s: 60
+    models:
+      classifier: &groq_fast {name: llama-3.1-8b-instant}
+      filter: *groq_fast
+      answer: &groq_main {name: llama-3.3-70b-versatile}
+      extraction: *groq_main
+      summary: *groq_main
+      judge: *groq_main
+
+  - name: openrouter
+    kind: openai_compatible
+    key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    rest_default_s: 60
+    limits:
+      max_concurrent: 1
+      timeout_s: 120
+    models:
+      classifier: &openrouter_main {name: "meta-llama/llama-3.3-70b-instruct:free"}
+      filter: *openrouter_main
+      answer: *openrouter_main
+      extraction: *openrouter_main
+      summary: *openrouter_main
+      judge: *openrouter_main
+
+  - name: ollama
+    kind: ollama
+    base_url: http://localhost:11434
+    rest_default_s: 5
+    limits:
+      max_concurrent: 1
+      timeout_s: 300
+      num_ctx: 8192
+    models:
+      classifier: &ollama_main {name: "qwen2.5:7b-instruct"}
+      filter: *ollama_main
+      answer: *ollama_main
+      extraction: *ollama_main
+      summary: *ollama_main
+      judge: *ollama_main
