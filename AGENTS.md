@@ -13,7 +13,10 @@ No code is copied from earlier projects. Earlier work is at most a *reference* f
 
 ## Owner rules (non-negotiable)
 1. **Verify before building.** Fetch and confirm every external doc, API or paper before relying on it. Never invent sources.
-2. **Generic, no hardcoding.** No business names, corpus vocabularies or fixed pipelines in `src/`. Corpus words may appear only in test data.
+2. **Generic, no hardcoding.** No business names, corpus vocabularies or fixed pipelines in `src/`. Corpus words may appear only in test data. **Owner 2026-11-16:**
+   - No string literal of a graph label, relationship type, property or allowed value in `src/`. Code reaches them only through the schema's typed names.
+   - Allowed values, keys and conditional requirements live in `config/graph_schema.yaml` (`values:`, `required_when:`), and are enforced generically for every property.
+   - Every other list of values (kinds, file types, categories, roles, thresholds) lives in `config/`, never in code.
 3. **Prompts live in text files** (`config/prompts/*.txt`), never in code.
 4. **Never delete history.** Use status transitions (superseded), not deletes. Destructive operations need the owner's explicit approval.
 5. **Never remove, switch off, or silently reshape a capability.** The feature ledger guards this. A removal needs `OWNER-APPROVED-REMOVAL: <ref>` in the commit message, and only the owner gives that ref.
@@ -27,6 +30,12 @@ No code is copied from earlier projects. Earlier work is at most a *reference* f
     - Full answer ≤ 10 s.
     - Each fact is stored once.
     - No model call per list item.
+12. **Simple architecture, no over-engineering (owner 2026-11-16).**
+    - Build only what your card line asks for. A card line is a capability of the old memini, in the baseline or the version being built.
+    - No protection or "enterprise" layers unless a card line names them: no access control, audit log, health score, confirmation strings or session guards.
+    - No new abstraction, wrapper or option without a second real caller.
+    - The old memini's logic may guide the design where it is correct; its code is never copied.
+    - A slice that passes merges to `main` behind its module's flag (`src/memini/infra/flags.py`), with its ledger rows in the same commit.
 
 ## How to work (TDD, small commits)
 1. Read the module spec in the capability map and the relevant ledger rows.
