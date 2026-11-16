@@ -216,7 +216,9 @@ class _Run:
 
     def _skip_markers(self) -> tuple[str, ...]:
         """Return the pytest markers deselected in the sandbox (none for the local executor)."""
-        return self.cfg.sandbox_skip_markers if self.sandbox is not None else ()
+        if self.sandbox is None or self.cfg.sandbox_network:
+            return ()  # a sandbox on the test-Neo4j network runs the integration tests too
+        return self.cfg.sandbox_skip_markers
 
     def _sandbox_note(self) -> str:
         markers = self._skip_markers()

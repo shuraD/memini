@@ -159,6 +159,9 @@ class Config:
     qa_gate_checks: Mapping[str, tuple[str, ...]] = dataclasses.field(default_factory=dict)
     # coding queues per work unit (owner 2026-11-15); a task whose module matches none goes to queue
     code_queues: Mapping[str, CodeQueue] = dataclasses.field(default_factory=dict)
+    sandbox_network: str = ""
+    sandbox_neo4j_uri: str = ""
+    sandbox_neo4j_user: str = ""
     # the plan stage refuses a module plan whose dependency chain needs more waves than this
     plan_max_waves: int = 4
 
@@ -449,6 +452,9 @@ def load_config(
         max_budget_usd=str(raw["max_budget_usd"]),
         forbid_output=str(raw["forbid_output"]),
         sandbox_skip_markers=_strs(raw, "sandbox_skip_markers"),
+        sandbox_network=str(raw.get("sandbox_network", "")),
+        sandbox_neo4j_uri=str(raw.get("sandbox_neo4j_uri", "")),
+        sandbox_neo4j_user=str(raw.get("sandbox_neo4j_user", "")),
         identity_name=ident_name,
         identity_email=ident_email,
         flags_file=str(flags.get("file", "")),

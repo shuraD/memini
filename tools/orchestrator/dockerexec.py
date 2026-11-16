@@ -4,7 +4,8 @@ Every command the pipeline sends through the executor (the coder's own pytest vi
 sandbox wrapper, the gates, the QA tests and the hold-out) runs in its own
 ``docker run --rm`` container built from the repo's locked image. The container gets:
 
-- ``--network none`` (no network at all);
+- ``--network none`` (no network at all), or, when ``sandbox_network`` is configured, only
+  the internal Docker network that holds the test Neo4j (no internet);
 - no host environment: only the executor's allow-list, passed explicitly;
 - no mount of ``$HOME`` or of the repo's ``.git``; the working directory is COPYed into the
   image at build-of-context time, not bind-mounted, so the container cannot reach the host
@@ -68,12 +69,14 @@ def docker_run_argv(
     env: Mapping[str, str],
     memory: str,
     pids: int,
+    network: str = "none",
 ) -> list[str]:
     """Return the ``docker run`` argv with the sandbox hardening flags (no command yet).
 
     The flags are asserted by the unit tests: no network, a read-only root with writable
     ``/tmp`` and workdir, a non-root user, dropped capabilities, no new privileges, limits,
-    and only the environment variables in ``env`` (never the host's).
+    and only the environment variables in ``env`` (never the host's). ``network`` is ``none``
+    unless the caller names the internal test-Neo4j network.
     """
     argv = [
         cli,
@@ -81,7 +84,7 @@ def docker_run_argv(
         "--rm",
         "-i",  # the slice tar arrives on stdin
         "--network",
-        "none",
+        network,
         "--read-only",
         "--tmpfs",
         "/tmp:rw,nosuid,nodev",  # noqa: S108  # nosec B108 — container tmpfs path, not a host dir
@@ -122,6 +125,9 @@ class DockerExecutor:
         memory: str = "2g",
         pids: int = 512,
         build_timeout: int = 1800,
+        network: str = "",
+        neo4j_uri: str = "",
+        neo4j_user: str = "",
     ) -> None:
         """Configure the executor; the image is built lazily on the first run."""
         self.cli = cli
@@ -131,6 +137,9 @@ class DockerExecutor:
         self.memory = memory
         self.pids = pids
         self.build_timeout = build_timeout
+        self.network = network
+        self.neo4j_uri = neo4j_uri
+        self.neo4j_user = neo4j_user
         self.tag = f"{image}:{lock_tag(dockerfile, lock)}"
         self._built = False
 
@@ -194,6 +203,14 @@ class DockerExecutor:
         # one (a host path inside the read-only container is at best missing, at worst a leak)
         forward = [k for k in (*self.env_allow, *pass_env) if k not in ("PATH", "HOME")]
         container_env = _container_env(allowed_env(forward, env), cwd)
+        if self.network:
+            password = os.environ.get("NEO4J_PASSWORD", "")
+            if not password:
+                return Result(125, "", "sandbox network is set but NEO4J_PASSWORD is not\n")
+            # fixed by the orchestrator: a coder-supplied value never names another host
+            container_env.update(
+                NEO4J_URI=self.neo4j_uri, NEO4J_USER=self.neo4j_user, NEO4J_PASSWORD=password
+            )
         extras: list[tuple[str, Path]] = []
         run_argv = docker_run_argv(
             self.cli,
@@ -202,6 +219,7 @@ class DockerExecutor:
             env=container_env,
             memory=self.memory,
             pids=self.pids,
+            network=self.network or "none",
         )
         prelude = f"tar xf - -C {WORKDIR} && "  # unpack the slice piped on stdin
         command = " ".join(_sh_quote(a) for a in _container_argv(argv, cwd, extras))
@@ -301,4 +319,7 @@ def build_executor(cfg: Config, env_allow: Sequence[str]) -> DockerExecutor:
         memory=cfg.docker_memory,
         pids=cfg.docker_pids,
         build_timeout=cfg.docker_run_timeout_s,
+        network=cfg.sandbox_network,
+        neo4j_uri=cfg.sandbox_neo4j_uri,
+        neo4j_user=cfg.sandbox_neo4j_user,
     )

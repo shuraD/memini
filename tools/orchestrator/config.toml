@@ -34,9 +34,17 @@ dockerfile = "tools/orchestrator/Dockerfile"
 docker_memory = "2g"
 docker_pids = 512
 docker_run_timeout_s = 1800
-# pytest markers skipped in the sandbox and reported, never hidden: integration tests need a
-# per-slice Neo4j, which is a later step. The orchestrator deselects them with -m and says so.
+# pytest markers skipped in the sandbox and reported, never hidden: integration tests need the
+# test Neo4j. The orchestrator deselects them with -m and says so, unless sandbox_network is set.
 sandbox_skip_markers = ["integration"]
+# Test Neo4j for the sandbox. Empty = no network (--network none) and integration tests are
+# skipped. Set it to the internal network of deploy/docker-compose.yml ("memini-test-net": no
+# internet, only that Neo4j on it) and the sandbox joins it with NEO4J_URI, NEO4J_USER and
+# NEO4J_PASSWORD (the password from the orchestrator's own environment). Tests isolate
+# themselves by their own `scope` value; there is no per-slice database.
+sandbox_network = ""
+sandbox_neo4j_uri = "bolt://memini-neo4j:7687"
+sandbox_neo4j_user = "neo4j"
 # interpreter for the host-side hold-out run; empty = the orchestrator's own interpreter
 holdout_python = ""
 
