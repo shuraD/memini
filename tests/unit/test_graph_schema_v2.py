@@ -22,6 +22,20 @@ memini.core.schema.Property gains (read by from_dict on node and relationship pr
     RELATED_TO.type                  required_when {kind: extracted}
     CODE_LINK.kind                   values [define, call, import]
 
+memini.core.schema.Relationship also carries two endpoint rules (read by from_dict):
+  endpoint_offset: EndpointOffset | None = None
+      EndpointOffset(property: str, offset: int)
+      YAML  endpoint_offset: {property: level, offset: -1}
+  pairs: tuple[tuple[str, str], ...] = ()
+      YAML  pairs: [[Entity, Entity], [Community, Community]]
+      empty = every declared (source, target) combination
+  config/graph_schema.yaml declares exactly these, and no other relationship declares either:
+    HIERARCHICAL_LINK   endpoint_offset {property: level, offset: 0}
+    INTER_LAYER_LINK    endpoint_offset {property: level, offset: -1}
+    RELATED_TO          pairs [[Entity, Entity], [Community, Community]]
+    SUPERSEDES          pairs: (L, L) for each of its labels (the same label at both ends)
+  order lives only on HAS_CHUNK; Chunk has no order property.
+
 memini.core.graph.types
   Statement gains a last field   scope: str | None = None
       (existing constructions stay valid).
@@ -55,6 +69,13 @@ memini.core.graph.writes.WriteBuilder(schema, *, scope: str, clock: Callable[[],
       (a name for a name-keyed label). Both endpoints are matched inside the scope:
       scope in the pattern map, or WHERE v.scope = ....
       Relationship rows carry no updated_by (audit fields are node fields).
+      The write is directed: MERGE (a)-[r:<TYPE>]->(b), also for SIMILAR and
+      HIERARCHICAL_LINK, as KNN writes them.
+      endpoint_offset: when both endpoint labels declare the property, the text holds
+      WHERE b.<property> = a.<property> + <offset> (a literal, or a parameter holding it)
+      and ends with RETURN count(r) AS written. Otherwise there is no check and no RETURN
+      (e.g. INTER_LAYER_LINK Community -> Entity).
+      pairs: a (from_label, to_label) that is not listed raises ValueError.
 
   Both merge_nodes and merge_relationships check each row's props against the schema of any
   label or type, with ValueError naming the property for:
@@ -114,7 +135,7 @@ NODES: dict[str, set[str]] = {
     "Project": {"name"},
     "Domain": {"name"},
     "Artifact": {"id", "type", "role", "content_hash", "summary", "labels", "status"},
-    "Chunk": {"id", "order", "content", "line_start", "line_end", "embedding"},
+    "Chunk": {"id", "content", "line_start", "line_end", "embedding"},
     "Entity": {
         "id",
         "name",
@@ -299,9 +320,29 @@ def _write(
         return builder.merge_nodes(owner, [row])
     spec = s.relationships[owner]
     row = {"from_id": "a", "to_id": "b", "props": props}
-    return builder.merge_relationships(
-        owner, [row], from_label=spec.sources[0], to_label=spec.targets[0]
-    )
+    pairs = _pairs(spec)
+    from_label, to_label = pairs[0] if pairs else (spec.sources[0], spec.targets[0])
+    return builder.merge_relationships(owner, [row], from_label=from_label, to_label=to_label)
+
+
+def _pairs(spec: schema.Relationship) -> tuple[tuple[str, str], ...]:
+    """The allowed pairs; read leniently so tests about other rules do not depend on them."""
+    return tuple(getattr(spec, "pairs", ()) or ())
+
+
+def _combinations(spec: schema.Relationship) -> list[tuple[str, str]]:
+    return [(a, b) for a in spec.sources for b in spec.targets]
+
+
+def _offset_in(stmt: Statement, prop: str) -> int | None:
+    """Return the offset of ``WHERE b.<prop> = a.<prop> + <offset>``, or None when absent."""
+    m = re.search(rf"WHERE b\.{prop}\s*=\s*a\.{prop}\s*\+\s*(-?\d+|\$(\w+))", stmt.cypher)
+    if m is None:
+        return None
+    return int(m.group(1)) if m.group(2) is None else stmt.params[m.group(2)]
+
+
+_RETURNS_COUNT = re.compile(r"RETURN count\(r\) AS written\s*$")
 
 
 # 1. schema contents
@@ -729,3 +770,133 @@ def test_perflog_keeps_the_scope_column(tmp_path: Path) -> None:
     session.run(Statement("q", "MATCH (n:Chunk) RETURN n", {}, "read", scope=SCOPE))
     log.record("direct", 0.5, 2, None, scope="scope-b")
     assert [(r.name, r.scope) for r in log.rows()] == [("q", SCOPE), ("direct", "scope-b")]
+
+
+# 9. endpoint rules: level offsets, allowed pairs, directed links (owner 2026-11-16)
+
+
+def test_endpoint_rules_are_schema_data(loaded: schema.Schema) -> None:
+    rels = loaded.relationships
+    offsets = {
+        name: (spec.endpoint_offset.property, spec.endpoint_offset.offset)
+        for name, spec in rels.items()
+        if spec.endpoint_offset is not None
+    }
+    assert offsets == {"HIERARCHICAL_LINK": ("level", 0), "INTER_LAYER_LINK": ("level", -1)}
+    pairs = {name: set(spec.pairs) for name, spec in rels.items() if spec.pairs}
+    assert pairs == {
+        "RELATED_TO": {("Entity", "Entity"), ("Community", "Community")},
+        "SUPERSEDES": {(label, label) for label in rels["SUPERSEDES"].sources},
+    }
+    for name, allowed in pairs.items():
+        assert allowed <= set(_combinations(rels[name])), name
+
+
+def test_order_lives_on_has_chunk_only(loaded: schema.Schema) -> None:
+    names = schema.names(loaded)
+    assert "order" not in names.props["Chunk"]
+    assert "order" in names.rel_props["HAS_CHUNK"]
+
+
+def test_endpoint_offset_is_written_from_the_schema(loaded: schema.Schema) -> None:
+    builder = _builder()
+    seen: dict[str, set[bool]] = {}
+    for name, spec in loaded.relationships.items():
+        rule = spec.endpoint_offset
+        if rule is None:
+            continue
+        for from_label, to_label in _pairs(spec) or _combinations(spec):
+            row = {"from_id": "a", "to_id": "b", "props": _filled(spec.properties, {})}
+            (stmt,) = builder.merge_relationships(
+                name, [row], from_label=from_label, to_label=to_label
+            )
+            both = all(
+                rule.property in loaded.nodes[lb].properties for lb in (from_label, to_label)
+            )
+            if both:
+                assert _offset_in(stmt, rule.property) == rule.offset, stmt.cypher
+                assert _RETURNS_COUNT.search(stmt.cypher), stmt.cypher
+            else:
+                assert f".{rule.property}" not in stmt.cypher, stmt.cypher
+                assert "RETURN" not in stmt.cypher, stmt.cypher
+            seen.setdefault(name, set()).add(both)
+            require_labeled(stmt.cypher)
+    assert seen == {"HIERARCHICAL_LINK": {True}, "INTER_LAYER_LINK": {True, False}}
+
+
+def test_pairs_are_enforced_for_any_relationship(loaded: schema.Schema) -> None:
+    builder = _builder()
+    refused = 0
+    for name, spec in loaded.relationships.items():
+        if not spec.pairs:
+            continue
+        for from_label, to_label in _combinations(spec):
+            row = {"from_id": "a", "to_id": "b", "props": _filled(spec.properties, {})}
+            if (from_label, to_label) in spec.pairs:
+                assert builder.merge_relationships(
+                    name, [row], from_label=from_label, to_label=to_label
+                )
+            else:
+                with pytest.raises(ValueError):
+                    builder.merge_relationships(
+                        name, [row], from_label=from_label, to_label=to_label
+                    )
+                refused += 1
+    assert refused >= 3  # RELATED_TO Entity<->Community both ways, SUPERSEDES across labels
+
+
+@pytest.mark.parametrize(
+    ("rel", "label"), [("SIMILAR", "Entity"), ("HIERARCHICAL_LINK", "Community")]
+)
+def test_knn_links_stay_directed(rel: str, label: str) -> None:
+    builder = _builder()
+    (stmt,) = builder.merge_relationships(
+        rel, [{"from_id": "a", "to_id": "b", "props": {}}], from_label=label, to_label=label
+    )
+    assert f"MERGE (a)-[r:{rel}]->(b)" in stmt.cypher
+    assert "<-" not in stmt.cypher
+
+
+def _custom_endpoint_schema() -> schema.Schema:
+    """A made-up schema: only schema data can drive the offset and pair rules."""
+
+    def prop() -> dict[str, Any]:
+        return {"layer": "core", "writer": "w.x", "readers": ["r.x"], "rule": "r"}
+
+    def rel(src: Any, dst: Any, **extra: Any) -> dict[str, Any]:
+        return {"from": src, "to": dst, "layer": "core", "writer": "w.x", "readers": ["r.x"]} | {
+            "rule": "a link",
+            **extra,
+        }
+
+    common = {name: prop() for name in COMMON}
+    return schema.from_dict(
+        {
+            "nodes": {
+                "Tier": {"rule": "a tier", "properties": {**common, "id": prop(), "depth": prop()}},
+                "Leaf": {"rule": "a leaf", "properties": {**common, "id": prop()}},
+            },
+            "relationships": {
+                "STEP": rel(
+                    "Tier", ["Tier", "Leaf"], endpoint_offset={"property": "depth", "offset": 2}
+                ),
+                "PAIRED": rel(["Tier", "Leaf"], ["Tier", "Leaf"], pairs=[["Tier", "Leaf"]]),
+            },
+        }
+    )
+
+
+def test_endpoint_rules_come_from_the_schema_not_from_src() -> None:
+    s = _custom_endpoint_schema()
+    builder = writes.WriteBuilder(s, scope=SCOPE, clock=lambda: NOW)
+    row = [{"from_id": "a", "to_id": "b", "props": {}}]
+    (step,) = builder.merge_relationships("STEP", row, from_label="Tier", to_label="Tier")
+    assert _offset_in(step, "depth") == 2
+    assert _RETURNS_COUNT.search(step.cypher)
+    (leaf,) = builder.merge_relationships("STEP", row, from_label="Tier", to_label="Leaf")
+    assert ".depth" not in leaf.cypher
+    assert "RETURN" not in leaf.cypher
+    assert builder.merge_relationships("PAIRED", row, from_label="Tier", to_label="Leaf")
+    for from_label, to_label in (("Leaf", "Tier"), ("Tier", "Tier"), ("Leaf", "Leaf")):
+        with pytest.raises(ValueError):
+            builder.merge_relationships("PAIRED", row, from_label=from_label, to_label=to_label)
