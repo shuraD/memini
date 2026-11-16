@@ -17,10 +17,13 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from collections.abc import Iterator, Sequence
+import time
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from typing import Literal
 
+from memini.infra.llm_providers.budgets import current_question
+from memini.infra.llm_providers.calllog import CallLog, CallRecord
 from memini.infra.llm_providers.config import EMBEDDING, ConfigError, LLMConfig
 from memini.infra.llm_providers.store import Store
 from memini.infra.llm_providers.types import Embedder
@@ -69,6 +72,14 @@ def _batch_size(config: LLMConfig, model: str) -> int | None:
     return None
 
 
+def _provider(config: LLMConfig, model: str) -> str | None:
+    """Return the first embedding provider serving ``model``, or None when none does."""
+    for name in config.provider_order(EMBEDDING):
+        if config.model_for(name, EMBEDDING) == model:
+            return name
+    return None
+
+
 class _KeyLocks:
     """One lock per key in flight, dropped once no caller holds or waits for it."""
 
@@ -97,8 +108,20 @@ class _KeyLocks:
 class CachedEmbedder:
     """An ``Embedder`` that serves stored vectors and batches the misses to ``inner``."""
 
-    def __init__(self, inner: Embedder, store: Store, config: LLMConfig, model: str) -> None:
+    def __init__(
+        self,
+        inner: Embedder,
+        store: Store,
+        config: LLMConfig,
+        model: str,
+        *,
+        call_log: CallLog | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         """Wrap ``inner`` (serving ``model``) and cache its vectors in ``store``.
+
+        With ``call_log`` every batch sent to ``inner`` writes one row, timed and
+        stamped with ``clock``.
 
         Raises:
             ConfigError: when the provider's ``batch_size`` is not a positive int.
@@ -108,6 +131,9 @@ class CachedEmbedder:
         self._store = store
         self._model = model
         self._batch_size = _batch_size(config, model)
+        self._provider = _provider(config, model)
+        self._call_log = call_log
+        self._clock = clock
         self._locks = _KeyLocks()
         store.ensure_schema(_SCHEMA_NAME, _DDL)
 
@@ -117,6 +143,31 @@ class CachedEmbedder:
         if not rows:
             return None
         return [float(x) for x in json.loads(str(rows[0][0]))]
+
+    def _log(self, texts: int, seconds: float) -> None:
+        """Write one row for a batch of ``texts`` embedded in ``seconds``."""
+        if self._call_log is None:
+            return
+        self._call_log.record(
+            CallRecord(
+                kind="embed",
+                provider=self._provider,
+                model=self._model,
+                role=EMBEDDING,
+                stage=None,
+                question_id=current_question(),
+                prompt_tokens=0,
+                completion_tokens=0,
+                seconds=seconds,
+                retries=0,
+                wait_seconds=0.0,
+                fallbacks=(),
+                cache_hit=False,
+                cost=None,
+                texts=texts,
+                ts=self._clock(),
+            )
+        )
 
     def _batches(self, items: list[str]) -> Iterator[list[str]]:
         """Split ``items`` into consecutive batches of the configured size."""
@@ -149,7 +200,9 @@ class CachedEmbedder:
                     else:
                         found[text] = vector
                 for batch in self._batches(still):
+                    started = self._clock()
                     vectors = self._inner.embed(batch, kind=kind)
+                    self._log(len(batch), self._clock() - started)
                     for text, vector in zip(batch, vectors, strict=True):
                         self._store.execute(_INSERT, (unique[text], json.dumps(vector)))
                         found[text] = [float(x) for x in vector]

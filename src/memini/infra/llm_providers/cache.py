@@ -16,12 +16,15 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from collections.abc import Iterator, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import Any
 
-from memini.infra.llm_providers.chain import ProviderChain
+from memini.infra.llm_providers.budgets import current_question
+from memini.infra.llm_providers.calllog import CallLog, CallRecord
+from memini.infra.llm_providers.chain import ProviderChain, call_cost
 from memini.infra.llm_providers.config import LLMConfig
 from memini.infra.llm_providers.store import Store
 from memini.infra.llm_providers.types import Generation, LLMError
@@ -114,11 +117,27 @@ class _KeyLocks:
 class CachedLLM:
     """An ``LLM`` that serves deterministic generations of one role from the store."""
 
-    def __init__(self, inner: ProviderChain, store: Store, config: LLMConfig, role: str) -> None:
-        """Wrap ``inner`` (the chain of ``role``) and cache its results in ``store``."""
+    def __init__(
+        self,
+        inner: ProviderChain,
+        store: Store,
+        config: LLMConfig,
+        role: str,
+        *,
+        call_log: CallLog | None = None,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        """Wrap ``inner`` (the chain of ``role``) and cache its results in ``store``.
+
+        With ``call_log`` every cache hit writes one row (the chain logs the misses);
+        ``clock`` stamps those rows.
+        """
         self._inner = inner
         self._store = store
         self._role = role
+        self._config = config
+        self._call_log = call_log
+        self._clock = clock
         self._providers = config.provider_order(role)
         self._models = {name: config.model_for(name, role) for name in self._providers}
         self._locks = _KeyLocks()
@@ -136,6 +155,31 @@ class CachedLLM:
         return generation_key(
             self._providers, self._models, self._role, prompt, system, json_mode, temperature, seed
         )
+
+    def _hit(self, gen: Generation, stage: str | None) -> Generation:
+        """Log the cache hit ``gen`` (no tokens charged) and return it."""
+        if self._call_log is not None:
+            self._call_log.record(
+                CallRecord(
+                    kind="generate",
+                    provider=gen.provider,
+                    model=gen.model,
+                    role=self._role,
+                    stage=stage,
+                    question_id=current_question(),
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    seconds=0.0,
+                    retries=0,
+                    wait_seconds=0.0,
+                    fallbacks=(),
+                    cache_hit=True,
+                    cost=call_cost(self._config, gen.provider, self._role, 0, 0),
+                    texts=None,
+                    ts=self._clock(),
+                )
+            )
+        return gen
 
     def _lookup(self, key: str) -> Generation | None:
         """Return the stored generation of ``key`` marked cached, or None on a miss."""
@@ -198,11 +242,11 @@ class CachedLLM:
         key = self._key(prompt, system, json_mode, temperature, seed)
         hit = self._lookup(key)
         if hit is not None:
-            return hit
+            return self._hit(hit, stage)
         with self._locks.hold(key):
             hit = self._lookup(key)
             if hit is not None:
-                return hit
+                return self._hit(hit, stage)
             gen = self._inner.generate(prompt, **options)
             self._save(key, gen)
             return replace(gen, cached=False)
@@ -232,7 +276,10 @@ class CachedLLM:
         if not is_cacheable(temperature, seed):
             return self._inner.generate_many(prompts, **options)
         keys = [self._key(p, system, json_mode, temperature, seed) for p in prompts]
-        results: list[Generation | LLMError | None] = [self._lookup(k) for k in keys]
+        results: list[Generation | LLMError | None] = []
+        for k in keys:
+            found = self._lookup(k)
+            results.append(None if found is None else self._hit(found, stage))
         missing = [i for i, found in enumerate(results) if found is None]
         if missing:
             fresh = self._inner.generate_many([prompts[i] for i in missing], **options)

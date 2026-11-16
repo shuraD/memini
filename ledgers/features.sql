@@ -1105,3 +1105,15 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_p
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_provider_is_first_in_order_serving_the_model');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_empty_request_makes_no_inner_call');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_batch_size_not_positive_int_raises_config_error');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/infra/llm_providers/-020', 'Make the chain, the generation cache and the embedding cache write one C', 'infra', 'slice spec LP-18; acceptance tests sealed at 4c99147ee5', 'active', 'src/memini/infra/llm_providers/', 'C-20261116-0171');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_one_successful_call_writes_exactly_one_row');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_chain_without_call_log_still_generates');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_cached_repeat_writes_one_more_row_marked_hit_with_no_tokens');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_fallback_after_429_lists_provider_and_wait');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_retry_after_503_counts_one_retry');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_total_failure_still_writes_a_row_with_reasons');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_cost_uses_configured_price');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_cost_is_none_without_price');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_question_id_inside_and_outside_question');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_embedding_of_250_texts_writes_one_row_per_batch');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-020', 'tests/unit/test_llm_providers_calllog_emit.py::test_embedder_without_call_log_still_embeds');
