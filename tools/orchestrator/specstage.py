@@ -196,7 +196,7 @@ class _Job:
             self.stage.prompt,
             task_id=item.task_id,
             module=item.module,
-            depends_on=", ".join(item.depends_on) or "none",
+            depends_on=", ".join(item.depends_on) or "(no dependencies: leave the field empty)",
             task=item.title,
             sources="\n".join(f"  {s}" for s in sources) or "  none",
             qa_allow=", ".join(cfg.qa_allow),

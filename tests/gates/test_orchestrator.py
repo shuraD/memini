@@ -2095,3 +2095,45 @@ def test_the_reuse_key_ignores_only_the_excluded_files(env: dict[str, Any]) -> N
     assert reuse.key(repo, [PY, str(repo / "x")], {"MEMINI_FLAG": "1"}) != reuse.key(
         repo, [PY, str(repo / "x")], {}
     )
+
+
+# ---------------------------------------------------- owner 2026-11-16: spec header and format
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("src/a.py (new), src/b/ (the parsers)", ("src/a.py", "src/b/")),
+        (["src/a.py (new)", "src/b/"], ("src/a.py", "src/b/")),
+        ("none", ()),
+        ("-", ()),
+        ("None", ()),
+        ("T-1, T-2", ("T-1", "T-2")),
+    ],
+)
+def test_a_spec_list_ignores_notes_in_brackets_and_placeholder_words(
+    raw: object, expected: tuple[str, ...]
+) -> None:
+    assert spec._list(raw) == expected
+
+
+def test_a_spec_with_depends_on_none_has_no_dependencies(env: dict[str, Any]) -> None:
+    path = _spec(env, depends_on="none", paths="src/memini/core/calc/ (the package)")
+    loaded = spec.load(path)
+    assert loaded.depends_on == ()
+    assert loaded.paths == ("src/memini/core/calc/",)
+
+
+def test_the_coders_unformatted_file_is_formatted_before_the_gates(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ugly = "def add( a,b ):\n    return a+b\n"
+    _plan(env, monkeypatch, coder=_coder({IMPL: ugly}))
+    fmt = {
+        "name": "format",
+        "run": ["{python}", "-m", "ruff", "format", "--check", "src"],
+        "stages": ["slice"],
+        "profiles": False,
+    }
+    out = pipeline.run_task(_cfg(env, gates=[fmt]), _task(env))
+    assert out.status == "merged", out.reason
+    merged = _git(env["repo"], "show", f"main:{IMPL}")
+    assert merged == "def add(a, b):\n    return a + b"

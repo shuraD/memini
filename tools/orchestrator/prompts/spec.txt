@@ -20,7 +20,7 @@ interfaces as given, never redefine them. Read the current code of the repositor
 ---
 id: $task_id
 module: $module
-paths: <the files or directories this slice creates or changes, all inside $module>
+paths: <the files or directories this slice creates or changes, all inside $module; paths only, no notes>
 depends_on: <task ids, keep every one of: $depends_on>
 flag: none
 behavior: <one sentence: what the slice does>

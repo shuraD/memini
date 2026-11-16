@@ -525,6 +525,22 @@ class _Run:
         return "\n".join(out)[-1500:]
 
     # -------------------------------------------------------------- coder
+    def _autoformat(self) -> None:
+        """Format the coder's own changed Python files before the gates (owner 2026-11-16).
+
+        Formatting is mechanical, so it never fails a slice (LT-02 was rejected twice for it).
+        Only files inside the coder's paths are touched; QA's sealed tests never are.
+        """
+        lines = gitops.out(self.wt, "status", "--porcelain", "--untracked-files=all").splitlines()
+        changed = [ln[3:].split(" -> ")[-1] for ln in lines]
+        files = [
+            f for f in changed if f.endswith(".py") and any(gates.matches(p, f) for p in self.paths)
+        ]
+        if files:
+            python = gates.python_for(self.cfg, self.wt)
+            argv = [python, "-m", "ruff", "format", "--quiet", *files]
+            self.host.run(argv, cwd=self.wt, env=self.gate_env, timeout=self.cfg.gate_timeout_s)
+
     def _coder(self, base: str, qa_sha: str, files: list[str], sealed: dict[str, str]) -> str:
         """Run the coder attempts; return the commit the audit passed (the one to merge)."""
         cfg = self.cfg
@@ -556,6 +572,7 @@ class _Run:
             left = self._leftovers(self.paths, self._path_protected())
             if left:
                 raise _Stop(REJECTED, "; ".join(left))
+            self._autoformat()
             snap = gitops.snapshot(self.wt, f"{self.task_id}: coder attempt {attempt}", self.ident)
             cheats = self._cheats(qa_sha, snap, sealed, extra=())
             if cheats:

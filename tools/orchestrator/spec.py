@@ -10,6 +10,7 @@ out, so the QA agent and the audit never see it.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,14 +90,27 @@ class Spec:
         return f"{dumped.rstrip()}\n\n{self.body.strip()}\n".rstrip() + "\n"
 
 
+_NOTE = re.compile(r"\s*\([^)]*\)")
+_EMPTY_WORDS = frozenset({"none", "-", "n/a"})
+
+
 def _list(value: object) -> tuple[str, ...]:
+    """Return the entries of a list field.
+
+    Notes in brackets and placeholder words such as ``none`` are not entries (owner
+    2026-11-16: IN-07 wrote ``x.py (new)``, AR-01 wrote ``none``).
+    """
     if value is None or value == "":
         return ()
-    if isinstance(value, str):
-        return tuple(v.strip() for v in value.split(",") if v.strip())
-    if isinstance(value, list):
-        return tuple(str(v).strip() for v in value if str(v).strip())
-    return (str(value),)
+    items = (
+        value.split(",")
+        if isinstance(value, str)
+        else value
+        if isinstance(value, list)
+        else [value]
+    )
+    out = (_NOTE.sub("", str(v)).strip() for v in items)
+    return tuple(v for v in out if v and v.lower() not in _EMPTY_WORDS)
 
 
 def load(path: Path) -> Spec:
