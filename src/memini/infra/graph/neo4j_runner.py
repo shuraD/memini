@@ -16,9 +16,24 @@ from neo4j import GraphDatabase
 
 from memini.infra.graph.guard import guard_from_env
 
-__all__ = ["Neo4jRunner", "RunResult"]
+__all__ = ["DatabaseUnreachableError", "Neo4jRunner", "RunResult"]
 
 _PROFILE_PREFIX = "PROFILE "
+_DEFAULT_URI = "bolt://localhost:7687"
+_ENV_URI = "NEO4J_URI"
+_ENV_USER = "NEO4J_USER"
+_ENV_CREDENTIAL = "NEO4J_PASSWORD"
+_ENV_DATABASE = "NEO4J_DATABASE"
+
+
+class DatabaseUnreachableError(RuntimeError):
+    """Raised when the graph database cannot be reached."""
+
+
+def _env_value(env: Mapping[str, str], key: str) -> str | None:
+    """Return ``env[key]`` stripped, or ``None`` when missing or blank."""
+    value = env.get(key, "").strip()
+    return value or None
 
 
 @dataclass(frozen=True)
@@ -97,6 +112,64 @@ class Neo4jRunner:
         self.uri = uri
         self._database = database
         self._driver: Any = driver_factory(uri, auth=auth)
+
+    @classmethod
+    def from_env(
+        cls,
+        env: Mapping[str, str] = os.environ,
+        *,
+        driver_factory: Callable[..., Any] | None = None,
+    ) -> Neo4jRunner:
+        """Build a guarded runner from ``env`` and verify it can connect.
+
+        Reads only ``env``: ``NEO4J_URI`` (default ``bolt://localhost:7687``),
+        ``NEO4J_USER`` and ``NEO4J_PASSWORD`` (auth only when both are set) and
+        ``NEO4J_DATABASE`` (``None`` uses the server default). Values are
+        stripped; blank values count as missing.
+
+        Args:
+            env: Mapping holding the connection settings and guard settings.
+            driver_factory: Passed through to the constructor.
+
+        Returns:
+            A runner whose database answered a connectivity check.
+
+        Raises:
+            UnsafeDatabaseError: If the guard refuses the URI; no driver is made.
+            DatabaseUnreachableError: If the database cannot be reached; the
+                driver is closed first.
+
+        """
+        uri = _env_value(env, _ENV_URI) or _DEFAULT_URI
+        user = _env_value(env, _ENV_USER)
+        secret = _env_value(env, _ENV_CREDENTIAL)
+        auth = (user, secret) if user is not None and secret is not None else None
+        runner = cls(
+            uri,
+            auth,
+            database=_env_value(env, _ENV_DATABASE),
+            env=env,
+            driver_factory=driver_factory,
+        )
+        try:
+            runner.verify_connectivity()
+        except DatabaseUnreachableError:
+            runner.close()
+            raise
+        return runner
+
+    def verify_connectivity(self) -> None:
+        """Check once that the database can be reached.
+
+        Raises:
+            DatabaseUnreachableError: If the driver's check fails; the original
+                error is chained as the cause. The message names only the URI.
+
+        """
+        try:
+            self._driver.verify_connectivity()
+        except Exception as error:
+            raise DatabaseUnreachableError(f"graph database unreachable at {self.uri}") from error
 
     def run(
         self,
