@@ -2211,3 +2211,18 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/query/
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/query/classify.py-001', 'tests/unit/test_query_classify.py::test_fallback_not_called_when_draw_valid');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/query/classify.py-001', 'tests/unit/test_query_classify.py::test_fallback_raising_gives_default_intent');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/query/classify.py-001', 'tests/unit/test_query_classify.py::test_no_fallback_gives_default_intent');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'Turns one parser result''s structural edges (define, call, import) into C', 'core', 'slice spec AR-19; acceptance tests sealed at 3890d07834', 'active', 'src/memini/core/archrag/code_links.py', 'C-20261116-0215');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_from_config_reads_kinds');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_from_config_rejects_bad_section');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_rows_one_per_edge_in_parser_order_with_kind_and_line');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_row_line_falls_back_to_dst_line_start');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_unmapped_edge_type_is_skipped');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_unresolved_edges_returned_unchanged_in_order');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_duplicate_pair_first_edge_wins');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_reverse_pair_is_a_distinct_pair');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_python_ast_defines_become_define_rows');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_statements_merge_code_links_between_entities');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_statements_empty_when_no_resolved_edge');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_statements_empty_for_result_without_edges');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_statements_reject_kind_outside_schema_values');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/archrag/code_links.py-001', 'tests/unit/test_archrag_code_links.py::test_statements_reject_empty_scope');
