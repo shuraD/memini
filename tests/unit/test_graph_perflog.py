@@ -60,11 +60,10 @@ def test_construction_creates_table(store: Store, db_path: Path) -> None:
 
 
 def test_record_with_every_field_round_trips(log: QueryPerfLog) -> None:
-    log.record("read:Unit", "scope-a", 0.125, 42, 314)
+    log.record("read:Unit", 0.125, 42, 314)
     assert log.rows() == [
         QueryRecord(
             name="read:Unit",
-            scope="scope-a",
             seconds=0.125,
             rows=42,
             db_hits=314,
@@ -73,13 +72,12 @@ def test_record_with_every_field_round_trips(log: QueryPerfLog) -> None:
     ]
 
 
-def test_record_with_none_scope_and_db_hits_round_trips(log: QueryPerfLog) -> None:
-    log.record("write:Unit", None, 0.5, 7, None)
+def test_record_with_none_db_hits_round_trips(log: QueryPerfLog) -> None:
+    log.record("write:Unit", 0.5, 7, None)
     rows = log.rows()
     assert len(rows) == 1
-    assert rows[0].scope is None
     assert rows[0].db_hits is None
-    assert rows[0] == QueryRecord("write:Unit", None, 0.5, 7, None, FIXED_TS)
+    assert rows[0] == QueryRecord("write:Unit", 0.5, 7, None, FIXED_TS)
 
 
 def test_ts_is_clock_value_at_record_time(store: Store) -> None:
@@ -90,23 +88,23 @@ def test_ts_is_clock_value_at_record_time(store: Store) -> None:
 
     perf = QueryPerfLog(store, clock=clock)
     now[0] = 111.5
-    perf.record("a", None, 0.1, 1, None)
+    perf.record("a", 0.1, 1, None)
     now[0] = 222.25
-    perf.record("a", None, 0.2, 1, None)
+    perf.record("a", 0.2, 1, None)
     assert [r.ts for r in perf.rows()] == [111.5, 222.25]
 
 
 def test_rows_filtered_by_name_in_insertion_order(log: QueryPerfLog) -> None:
-    log.record("b", None, 0.3, 3, None)
-    log.record("a", "s1", 0.1, 1, None)
-    log.record("b", None, 0.2, 2, 5)
-    log.record("c", None, 0.4, 4, None)
-    log.record("a", "s2", 0.05, 9, None)
+    log.record("b", 0.3, 3, None)
+    log.record("a", 0.1, 1, None)
+    log.record("b", 0.2, 2, 5)
+    log.record("c", 0.4, 4, None)
+    log.record("a", 0.05, 9, None)
 
     only_a = log.rows("a")
-    assert [(r.name, r.scope, r.seconds) for r in only_a] == [
-        ("a", "s1", 0.1),
-        ("a", "s2", 0.05),
+    assert [(r.name, r.seconds) for r in only_a] == [
+        ("a", 0.1),
+        ("a", 0.05),
     ]
     only_b = log.rows(name="b")
     assert [r.seconds for r in only_b] == [0.3, 0.2]
@@ -126,7 +124,7 @@ def test_summary_twenty_records(log: QueryPerfLog) -> None:
     # Insert in a shuffled (fixed) order so the summary must sort.
     order = [7, 19, 0, 13, 4, 18, 1, 10, 15, 2, 9, 17, 5, 12, 3, 16, 8, 11, 6, 14]
     for i in order:
-        log.record("read:Unit", None, round((i + 1) * 0.01, 2), 1, None)
+        log.record("read:Unit", round((i + 1) * 0.01, 2), 1, None)
 
     summary = log.query_summary()
     s = summary["read:Unit"]
@@ -139,7 +137,7 @@ def test_summary_twenty_records(log: QueryPerfLog) -> None:
 
 
 def test_summary_single_record(log: QueryPerfLog) -> None:
-    log.record("one", None, 0.37, 5, None)
+    log.record("one", 0.37, 5, None)
     s = log.query_summary()["one"]
     assert s.count == 1
     assert s.p50 == pytest.approx(0.37)
@@ -149,9 +147,9 @@ def test_summary_single_record(log: QueryPerfLog) -> None:
 
 def test_summary_per_name_independent(log: QueryPerfLog) -> None:
     for sec in (0.1, 0.2, 0.3):
-        log.record("x", None, sec, 10, None)
+        log.record("x", sec, 10, None)
     for sec in (5.0, 1.0):
-        log.record("y", None, sec, 4, None)
+        log.record("y", sec, 4, None)
 
     summary = log.query_summary()
     assert set(summary) == {"x", "y"}
@@ -178,16 +176,16 @@ def test_summary_empty_log(log: QueryPerfLog) -> None:
 
 
 def test_rows_per_second(log: QueryPerfLog) -> None:
-    log.record("write:Unit", None, 0.5, 200, None)
-    log.record("write:Unit", None, 0.5, 300, None)
-    log.record("write:Unit", None, 1.0, 500, None)
+    log.record("write:Unit", 0.5, 200, None)
+    log.record("write:Unit", 0.5, 300, None)
+    log.record("write:Unit", 1.0, 500, None)
     s = log.query_summary()["write:Unit"]
     assert s.rows_per_second == pytest.approx(500.0)
 
 
 def test_rows_per_second_none_when_all_seconds_zero(log: QueryPerfLog) -> None:
-    log.record("write:Unit", None, 0.0, 10, None)
-    log.record("write:Unit", None, 0.0, 20, None)
+    log.record("write:Unit", 0.0, 10, None)
+    log.record("write:Unit", 0.0, 20, None)
     s = log.query_summary()["write:Unit"]
     assert s.rows_per_second is None
     assert s.max == 0.0
@@ -197,25 +195,25 @@ def test_db_hits_p95_only_over_sampled_rows(log: QueryPerfLog) -> None:
     # 20 sampled values 1..20 (nearest-rank p95 = rank 19 -> 19), interleaved
     # with unsampled rows that must be ignored.
     for i in range(1, 21):
-        log.record("q", None, 0.01, 1, i)
-        log.record("q", None, 0.01, 1, None)
+        log.record("q", 0.01, 1, i)
+        log.record("q", 0.01, 1, None)
     s = log.query_summary()["q"]
     assert s.count == 40
     assert s.db_hits_p95 == 19
 
 
 def test_db_hits_p95_small_sample(log: QueryPerfLog) -> None:
-    log.record("q", None, 0.1, 1, None)
-    log.record("q", None, 0.1, 1, 300)
-    log.record("q", None, 0.1, 1, None)
-    log.record("q", None, 0.1, 1, 100)
+    log.record("q", 0.1, 1, None)
+    log.record("q", 0.1, 1, 300)
+    log.record("q", 0.1, 1, None)
+    log.record("q", 0.1, 1, 100)
     s = log.query_summary()["q"]
     assert s.db_hits_p95 == 300
 
 
 def test_db_hits_p95_none_when_not_sampled(log: QueryPerfLog) -> None:
-    log.record("q", None, 0.1, 1, None)
-    log.record("q", "s", 0.2, 2, None)
+    log.record("q", 0.1, 1, None)
+    log.record("q", 0.2, 2, None)
     s = log.query_summary()["q"]
     assert s.db_hits_p95 is None
 
@@ -223,7 +221,7 @@ def test_db_hits_p95_none_when_not_sampled(log: QueryPerfLog) -> None:
 def _hammer(perf: QueryPerfLog) -> None:
     def worker(n: int) -> None:
         for i in range(25):
-            perf.record(f"t{n}", None, 0.001 * (i + 1), i, None)
+            perf.record(f"t{n}", 0.001 * (i + 1), i, None)
 
     threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
     for t in threads:
@@ -261,7 +259,7 @@ def test_coexists_with_other_table(db_path: Path) -> None:
     first.execute("INSERT INTO other_log (label) VALUES (?)", ("beta",))
 
     perf = QueryPerfLog(first, clock=_clock)
-    perf.record("read:Unit", None, 0.1, 3, None)
+    perf.record("read:Unit", 0.1, 3, None)
     first.close()
 
     assert {"other_log", "graph_query_log"} <= _tables(db_path)
@@ -276,8 +274,8 @@ def test_coexists_with_other_table(db_path: Path) -> None:
 def test_reopen_file_returns_same_records(db_path: Path) -> None:
     first = Store(db_path)
     perf = QueryPerfLog(first, clock=_clock)
-    perf.record("read:Unit", "scope-a", 0.25, 10, 99)
-    perf.record("write:Unit", None, 0.75, 20, None)
+    perf.record("read:Unit", 0.25, 10, 99)
+    perf.record("write:Unit", 0.75, 20, None)
     before = perf.rows()
     first.close()
 
@@ -293,8 +291,8 @@ def test_reopen_file_returns_same_records(db_path: Path) -> None:
 def test_two_instances_share_rows(store: Store) -> None:
     a = QueryPerfLog(store, clock=_clock)
     b = QueryPerfLog(store, clock=_clock)
-    a.record("x", None, 0.1, 1, None)
-    b.record("y", None, 0.2, 2, None)
+    a.record("x", 0.1, 1, None)
+    b.record("y", 0.2, 2, None)
     assert a.rows() == b.rows()
     assert [r.name for r in a.rows()] == ["x", "y"]
     assert set(a.query_summary()) == {"x", "y"}

@@ -1,8 +1,8 @@
-"""GS-02: a (scope, id) uniqueness constraint per label with an id, a (scope, status) index per
-label with both fields, and one ordered setup list that never creates an index a constraint backs.
+"""GS-02: an id uniqueness constraint per label with an id, and one ordered setup list that
+never creates an index a constraint backs.
 
-Spec: SPEC-graph-schema, schema block ``constraints: [unique (scope, id) on every label that has
-an id]`` and ``<every label>(scope,status)`` index. No database in these tests.
+Spec: SPEC-graph-schema, schema block ``constraints: [unique id on every label that has an id]``
+(owner 2026-11-16: uniqueness on id per label; no scope, no status). No database in these tests.
 """
 
 from pathlib import Path
@@ -22,18 +22,18 @@ def _prop(rule: str = "a rule") -> dict:
 
 
 def _minimal() -> dict:
-    """Document{scope, id} declaring [scope, id]; Domain{scope, name} declaring [scope, name]."""
+    """Document{id} declaring [id]; Domain{name} declaring [name]."""
     return {
         "nodes": {
             "Document": {
                 "rule": "a source file",
-                "properties": {"scope": _prop("scoped"), "id": _prop("identity")},
-                "indexes": [["scope", "id"]],
+                "properties": {"id": _prop("identity")},
+                "indexes": [["id"]],
             },
             "Domain": {
                 "rule": "a vocabulary value",
-                "properties": {"scope": _prop("scoped"), "name": _prop("vocabulary value")},
-                "indexes": [["scope", "name"]],
+                "properties": {"name": _prop("vocabulary value")},
+                "indexes": [["name"]],
             },
         },
         "relationships": {},
@@ -41,24 +41,18 @@ def _minimal() -> dict:
 
 
 def _rich() -> dict:
-    """Common scope/status/id; labels covering every generation case, with a vector index."""
+    """Labels covering every generation case, with a vector index."""
     return {
-        "common": {
-            "nodes": {
-                "scope": _prop("scoped"),
-                "status": _prop("lifecycle"),
-            },
-        },
         "nodes": {
             "Document": {
                 "rule": "a source file",
                 "properties": {"id": _prop("identity")},
-                "indexes": [["scope", "id"]],
+                "indexes": [["id"]],
             },
             "Domain": {
                 "rule": "a vocabulary value",
                 "properties": {"name": _prop("vocabulary value")},
-                "indexes": [["scope", "name"], ["scope", "status"]],
+                "indexes": [["name"]],
             },
             "Chunk": {
                 "rule": "a passage",
@@ -83,30 +77,14 @@ def test_one_constraint_for_the_label_with_an_id_only() -> None:
     (st,) = stmts
     assert "FOR (n:Document)" in st
     assert "IF NOT EXISTS" in st
-    assert "CREATE CONSTRAINT document_scope_id_unique" in st
-    assert st.endswith("REQUIRE (n.scope, n.id) IS UNIQUE")
+    assert "CREATE CONSTRAINT document_id_unique" in st
+    assert st.endswith("REQUIRE n.id IS UNIQUE")
 
 
 def test_constraint_statement_has_the_exact_form() -> None:
     stmts = schema.constraint_statements(schema.from_dict(_minimal()))
     assert stmts == [
-        "CREATE CONSTRAINT document_scope_id_unique IF NOT EXISTS "
-        "FOR (n:Document) REQUIRE (n.scope, n.id) IS UNIQUE"
-    ]
-
-
-def test_a_label_with_id_only_from_common_gets_a_constraint() -> None:
-    raw = {
-        "common": {"nodes": {"scope": _prop("scoped"), "id": _prop("identity")}},
-        "nodes": {
-            "Topic": {"rule": "a topic", "properties": {"title": _prop("title")}},
-        },
-        "relationships": {},
-    }
-    stmts = schema.constraint_statements(schema.from_dict(raw))
-    assert stmts == [
-        "CREATE CONSTRAINT topic_scope_id_unique IF NOT EXISTS "
-        "FOR (n:Topic) REQUIRE (n.scope, n.id) IS UNIQUE"
+        "CREATE CONSTRAINT document_id_unique IF NOT EXISTS FOR (n:Document) REQUIRE n.id IS UNIQUE"
     ]
 
 
@@ -115,38 +93,10 @@ def test_constraints_follow_schema_nodes_order() -> None:
     assert len(stmts) == 2
     assert "FOR (n:Document)" in stmts[0]
     assert "FOR (n:Chunk)" in stmts[1]
-    assert "CREATE CONSTRAINT chunk_scope_id_unique" in stmts[1]
+    assert "CREATE CONSTRAINT chunk_id_unique" in stmts[1]
 
 
-# --- index_statements: (scope, status) ---------------------------------------------------------
-
-
-def test_scope_status_index_is_generated_from_common_fields() -> None:
-    stmts = schema.index_statements(schema.from_dict(_rich()))
-    for label in ("Document", "Chunk"):
-        fragment = f"FOR (n:{label}) ON (n.scope, n.status)"
-        assert _count(stmts, fragment) == 1
-        matching = [st for st in stmts if fragment in st]
-        assert matching == [
-            f"CREATE INDEX {label.lower()}_scope_status IF NOT EXISTS "
-            f"FOR (n:{label}) ON (n.scope, n.status)"
-        ]
-
-
-def test_scope_status_index_is_generated_from_own_fields() -> None:
-    raw = {
-        "nodes": {
-            "Task": {
-                "rule": "a task",
-                "properties": {"scope": _prop("scoped"), "status": _prop("lifecycle")},
-            },
-        },
-        "relationships": {},
-    }
-    stmts = schema.index_statements(schema.from_dict(raw))
-    assert stmts == [
-        "CREATE INDEX task_scope_status IF NOT EXISTS FOR (n:Task) ON (n.scope, n.status)"
-    ]
+# --- index_statements ----------------------------------------------------------------------
 
 
 def test_no_scope_status_index_for_a_label_without_status() -> None:
@@ -154,20 +104,11 @@ def test_no_scope_status_index_for_a_label_without_status() -> None:
     assert not any("n.status" in st for st in stmts)
 
 
-def test_a_declared_scope_status_index_appears_exactly_once() -> None:
-    stmts = schema.index_statements(schema.from_dict(_rich()))
-    assert _count(stmts, "FOR (n:Domain) ON (n.scope, n.status)") == 1
-
-
 def test_declared_indexes_are_backward_compatible() -> None:
     stmts = schema.index_statements(schema.from_dict(_minimal()))
-    assert any("FOR (n:Document) ON (n.scope, n.id)" in st for st in stmts)
-    assert (
-        "CREATE INDEX document_scope_id IF NOT EXISTS FOR (n:Document) ON (n.scope, n.id)" in stmts
-    )
-    assert (
-        "CREATE INDEX domain_scope_name IF NOT EXISTS FOR (n:Domain) ON (n.scope, n.name)" in stmts
-    )
+    assert any("FOR (n:Document) ON (n.id)" in st for st in stmts)
+    assert "CREATE INDEX document_id IF NOT EXISTS FOR (n:Document) ON (n.id)" in stmts
+    assert "CREATE INDEX domain_name IF NOT EXISTS FOR (n:Domain) ON (n.name)" in stmts
 
 
 # --- vector options ----------------------------------------------------------------------------
@@ -214,23 +155,18 @@ def test_setup_puts_constraints_first_and_drops_backed_indexes() -> None:
     assert constraint_positions and index_positions
     assert max(constraint_positions) < min(index_positions)
     assert any(
-        "CREATE CONSTRAINT document_scope_id_unique" in st and "FOR (n:Document)" in st
-        for st in stmts
+        "CREATE CONSTRAINT document_id_unique" in st and "FOR (n:Document)" in st for st in stmts
     )
-    assert not any(_is_index(st) and "FOR (n:Document) ON (n.scope, n.id)" in st for st in stmts)
+    assert not any(_is_index(st) and "FOR (n:Document) ON (n.id)" in st for st in stmts)
 
 
 def test_setup_keeps_other_indexes_and_has_no_duplicates() -> None:
     s = schema.from_dict(_rich())
     stmts = schema.setup_statements(s, vector_dimensions=768)
     assert len(stmts) == len(set(stmts))
-    assert "CREATE INDEX domain_scope_name IF NOT EXISTS FOR (n:Domain) ON (n.scope, n.name)" in (
-        stmts
-    )
-    for label in ("Document", "Domain", "Chunk"):
-        assert _count(stmts, f"FOR (n:{label}) ON (n.scope, n.status)") == 1
+    assert "CREATE INDEX domain_name IF NOT EXISTS FOR (n:Domain) ON (n.name)" in stmts
     assert _count(stmts, "CREATE VECTOR INDEX chunk_embedding") == 1
-    assert not any(_is_index(st) and "ON (n.scope, n.id)" in st for st in stmts)
+    assert not any(_is_index(st) and "ON (n.id)" in st for st in stmts)
     constraints = [st for st in stmts if st.startswith("CREATE CONSTRAINT")]
     assert constraints == schema.constraint_statements(s)
     assert stmts[: len(constraints)] == constraints
@@ -239,9 +175,7 @@ def test_setup_keeps_other_indexes_and_has_no_duplicates() -> None:
 def test_setup_equals_constraints_then_unbacked_indexes() -> None:
     s = schema.from_dict(_rich())
     expected_indexes = [
-        st
-        for st in schema.index_statements(s, vector_dimensions=768)
-        if "ON (n.scope, n.id)" not in st
+        st for st in schema.index_statements(s, vector_dimensions=768) if "ON (n.id)" not in st
     ]
     assert schema.setup_statements(s, vector_dimensions=768) == (
         schema.constraint_statements(s) + expected_indexes

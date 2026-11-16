@@ -64,20 +64,11 @@ class Relationship:
 
 
 @dataclass(frozen=True)
-class Common:
-    """Properties declared once, applied to every label (``nodes``) or type (``relationships``)."""
-
-    nodes: dict[str, Property] = field(default_factory=dict)
-    relationships: dict[str, Property] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
 class Schema:
     """The whole schema."""
 
     nodes: dict[str, Node] = field(default_factory=dict)
     relationships: dict[str, Relationship] = field(default_factory=dict)
-    common: Common = field(default_factory=Common)
 
 
 @dataclass(frozen=True)
@@ -97,11 +88,7 @@ def _tuple(value: Any) -> tuple[str, ...]:
 
 
 def _properties(spec: dict[str, Any]) -> dict[str, Property]:
-    return _property_specs(spec.get("properties"))
-
-
-def _property_specs(specs: dict[str, Any] | None) -> dict[str, Property]:
-    """Build properties from a ``{name: {layer, writer, readers, rule, ...}}`` mapping."""
+    """Build the ``properties`` mapping ``{name: {layer, writer, readers, rule, ...}}``."""
     return {
         name: Property(
             layer=str(p.get("layer", "")),
@@ -112,7 +99,7 @@ def _property_specs(specs: dict[str, Any] | None) -> dict[str, Property]:
             same_fact_as=p.get("same_fact_as"),
             migrating_to=p.get("migrating_to"),
         )
-        for name, p in (specs or {}).items()
+        for name, p in (spec.get("properties") or {}).items()
     }
 
 
@@ -141,22 +128,7 @@ def from_dict(raw: dict[str, Any]) -> Schema:
         )
         for name, spec in (raw.get("relationships") or {}).items()
     }
-    common_raw = raw.get("common") or {}
-    common = Common(
-        nodes=_property_specs(common_raw.get("nodes")),
-        relationships=_property_specs(common_raw.get("relationships")),
-    )
-    return Schema(nodes=nodes, relationships=relationships, common=common)
-
-
-def node_properties(schema: Schema, label: str) -> dict[str, Property]:
-    """Return the common node properties merged with ``label``'s own (KeyError if unknown)."""
-    return {**schema.common.nodes, **schema.nodes[label].properties}
-
-
-def rel_properties(schema: Schema, rel: str) -> dict[str, Property]:
-    """Return the common relationship properties merged with ``rel``'s own (KeyError if unknown)."""
-    return {**schema.common.relationships, **schema.relationships[rel].properties}
+    return Schema(nodes=nodes, relationships=relationships)
 
 
 def load(path: Path | None = None) -> Schema:
@@ -209,21 +181,12 @@ def _property_problems(owner: str, properties: dict[str, Property]) -> list[str]
     return problems
 
 
-def _redeclared_problems(
-    owner: str, own: dict[str, Property], common: dict[str, Property]
-) -> list[str]:
-    return [
-        f"{owner}.{name}: declared in common (declare it once)" for name in own if name in common
-    ]
-
-
-def _node_problems(label: str, node: Node, common: dict[str, Property]) -> list[str]:
+def _node_problems(label: str, node: Node) -> list[str]:
     problems: list[str] = []
     if not node.rule.strip():
         problems.append(f"{label}: no rule")
     problems += _property_problems(label, node.properties)
-    problems += _redeclared_problems(label, node.properties, common)
-    declared = {**common, **node.properties}
+    declared = node.properties
     for ix in node.indexes:
         problems += [
             f"{label}: index {ix} names undeclared property {col!r}"
@@ -243,7 +206,7 @@ def _is_declared_twin(schema: Schema, target: str) -> bool:
     if target in schema.relationships:
         return True
     label, dot, prop = target.partition(".")
-    return bool(dot) and label in schema.nodes and prop in node_properties(schema, label)
+    return bool(dot) and label in schema.nodes and prop in schema.nodes[label].properties
 
 
 def _twin_problems(schema: Schema, owner: str, same_fact_as: str | None) -> list[str]:
@@ -254,7 +217,6 @@ def _twin_problems(schema: Schema, owner: str, same_fact_as: str | None) -> list
 
 
 def _relationship_problems(schema: Schema, name: str, rel: Relationship) -> list[str]:
-    common = schema.common.relationships
     problems = _proof_problems(
         name,
         layer=rel.layer,
@@ -269,7 +231,6 @@ def _relationship_problems(schema: Schema, name: str, rel: Relationship) -> list
     problems += _property_problems(name, rel.properties)
     for prop, p in rel.properties.items():
         problems += _twin_problems(schema, f"{name}.{prop}", p.same_fact_as)
-    problems += _redeclared_problems(name, rel.properties, common)
     problems += [
         f"{name}: endpoint {end!r} is not a declared node"
         for end in (*rel.sources, *rel.targets)
@@ -285,48 +246,46 @@ def validate(schema: Schema) -> list[str]:
     ``ingest_only`` reason) and a rule; a ``same_fact_as`` entry is accepted only as a
     declared migration (``migrating_to``), and on a relationship or relationship property it
     must name a declared relationship type or ``Label.prop``; indexes name declared
-    properties; relationship endpoints are declared nodes. Fields of the ``common`` section
-    carry the same proof, are declared there only (a label or type may not declare them
-    again), and count as declared for every label's indexes.
+    properties; relationship endpoints are declared nodes.
     """
-    problems = _property_problems("common.nodes", schema.common.nodes)
-    problems += _property_problems("common.relationships", schema.common.relationships)
+    problems: list[str] = []
     for label, node in schema.nodes.items():
-        problems += _node_problems(label, node, schema.common.nodes)
+        problems += _node_problems(label, node)
     for name, rel in schema.relationships.items():
         problems += _relationship_problems(schema, name, rel)
     return problems
 
 
 def names(schema: Schema) -> Names:
-    """Return the typed names derived from the schema (common fields included)."""
+    """Return the typed names derived from the schema."""
     return Names(
         labels={label: label for label in schema.nodes},
         rels={name: name for name in schema.relationships},
-        props={label: {p: p for p in node_properties(schema, label)} for label in schema.nodes},
+        props={label: {p: p for p in node.properties} for label, node in schema.nodes.items()},
         rel_props={
-            name: {p: p for p in rel_properties(schema, name)} for name in schema.relationships
+            name: {p: p for p in rel.properties} for name, rel in schema.relationships.items()
         },
     )
 
 
-_UNIQUE_KEY = ("scope", "id")
-_STATUS_INDEX = ("scope", "status")
+_UNIQUE_KEY = ("id",)
+
+
+def _has_id(node: Node) -> bool:
+    return "id" in node.properties
 
 
 def constraint_statements(schema: Schema) -> list[str]:
-    """Return one idempotent ``(scope, id)`` uniqueness constraint per label that has an ``id``.
+    """Return one idempotent ``id`` uniqueness constraint per label that has an ``id``.
 
-    Labels follow ``schema.nodes`` order; ``id`` may be the label's own or a common field.
+    Labels follow ``schema.nodes`` order.
     """
-    out: list[str] = []
-    for label in schema.nodes:
-        if "id" in node_properties(schema, label):
-            cols = ", ".join(f"n.{c}" for c in _UNIQUE_KEY)
-            name = f"{label.lower()}_{'_'.join(_UNIQUE_KEY)}_unique"
-            target = f"FOR (n:{label}) REQUIRE ({cols}) IS UNIQUE"
-            out.append(f"CREATE CONSTRAINT {name} IF NOT EXISTS {target}")
-    return out
+    return [
+        f"CREATE CONSTRAINT {label.lower()}_id_unique IF NOT EXISTS "
+        f"FOR (n:{label}) REQUIRE n.id IS UNIQUE"
+        for label, node in schema.nodes.items()
+        if _has_id(node)
+    ]
 
 
 def _indexes(
@@ -335,11 +294,7 @@ def _indexes(
     """Return ``(label, columns, statement)`` for every declared and generated index."""
     out: list[tuple[str, tuple[str, ...], str]] = []
     for label, node in schema.nodes.items():
-        props = node_properties(schema, label)
-        ixs = list(node.indexes)
-        if all(c in props for c in _STATUS_INDEX) and _STATUS_INDEX not in ixs:
-            ixs.append(_STATUS_INDEX)
-        for ix in ixs:
+        for ix in node.indexes:
             cols = ", ".join(f"n.{c}" for c in ix)
             ix_name = f"{label.lower()}_{'_'.join(ix)}"
             out.append(
@@ -360,9 +315,7 @@ def _indexes(
 def index_statements(schema: Schema, *, vector_dimensions: int | None = None) -> list[str]:
     """Return idempotent ``CREATE INDEX`` statements for every declared index.
 
-    Every label holding both ``scope`` and ``status`` (own or common) also gets a
-    ``(scope, status)`` index unless it declares one. Vector indexes carry cosine
-    ``OPTIONS`` with ``vector_dimensions`` only when it is given.
+    Vector indexes carry cosine ``OPTIONS`` with ``vector_dimensions`` only when it is given.
     """
     return [st for _, _, st in _indexes(schema, vector_dimensions)]
 
@@ -370,11 +323,11 @@ def index_statements(schema: Schema, *, vector_dimensions: int | None = None) ->
 def setup_statements(schema: Schema, *, vector_dimensions: int | None = None) -> list[str]:
     """Return the ordered setup list: constraints first, then the indexes no constraint backs.
 
-    An index on a constrained label whose columns equal the constraint's ``(scope, id)``
-    is dropped (the constraint already provides it); no statement appears twice.
+    An index on a constrained label whose columns equal the constraint's ``(id)`` is
+    dropped (the constraint already provides it); no statement appears twice.
     """
     constraints = constraint_statements(schema)
-    constrained = {label for label in schema.nodes if "id" in node_properties(schema, label)}
+    constrained = {label for label, node in schema.nodes.items() if _has_id(node)}
     indexes = [
         st
         for label, cols, st in _indexes(schema, vector_dimensions)
@@ -383,39 +336,36 @@ def setup_statements(schema: Schema, *, vector_dimensions: int | None = None) ->
     return list(dict.fromkeys(constraints + indexes))
 
 
-def duplicate_queries(schema: Schema, scope: str | None = None) -> list[str]:
+def duplicate_queries(schema: Schema) -> list[str]:
     """Return one count query per ``same_fact_as`` pair; each must return 0 on a clean graph.
 
-    With ``scope`` given, every query also requires ``n.scope = $scope``; the caller binds the
-    value as the Cypher parameter ``scope``, so the value itself never enters the query text.
     Node-property queries come first; then each relationship's ``same_fact_as`` yields one
-    query per (source, target) label pair (both ends filtered by ``$scope`` when given).
+    query per (source, target) label pair.
     """
-    scope_filter = "n.scope = $scope AND " if scope is not None else ""
     out: list[str] = []
     for label, node in schema.nodes.items():
         for prop, p in node.properties.items():
             if p.same_fact_as and p.same_fact_as in schema.relationships:
                 out.append(
-                    f"MATCH (n:{label}) WHERE {scope_filter}n.{prop} IS NOT NULL "
+                    f"MATCH (n:{label}) WHERE n.{prop} IS NOT NULL "
                     f"AND EXISTS {{ (n)-[:{p.same_fact_as}]-() }} "
                     f"RETURN count(n) AS duplicates"
                 )
             elif p.same_fact_as:
                 other_label, other_prop = p.same_fact_as.split(".", 1)
                 out.append(
-                    f"MATCH (n:{label}) WHERE {scope_filter}n.{prop} IS NOT NULL "
+                    f"MATCH (n:{label}) WHERE n.{prop} IS NOT NULL "
                     f"AND n.{other_prop} IS NOT NULL "
                     f"RETURN count(n) AS duplicates /* also stored as {other_label}.{other_prop} */"
                 )
     for name, rel in schema.relationships.items():
         if rel.same_fact_as:
-            out += _relationship_duplicate_queries(schema, name, rel, rel.same_fact_as, scope)
+            out += _relationship_duplicate_queries(schema, name, rel, rel.same_fact_as)
     return out
 
 
 def _relationship_duplicate_queries(
-    schema: Schema, name: str, rel: Relationship, twin: str, scope: str | None
+    schema: Schema, name: str, rel: Relationship, twin: str
 ) -> list[str]:
     """Return one count query per (source, target) pair of ``rel`` whose ``a``/``b`` hold ``twin``.
 
@@ -423,7 +373,6 @@ def _relationship_duplicate_queries(
     (the endpoint carrying ``Label`` holds ``prop``; a pair with ``Label`` at neither end
     yields no query).
     """
-    scope_filter = " AND a.scope = $scope AND b.scope = $scope" if scope is not None else ""
     out: list[str] = []
     for source in rel.sources:
         for target in rel.targets:
@@ -438,7 +387,7 @@ def _relationship_duplicate_queries(
                 else:
                     continue
             out.append(
-                f"MATCH (a:{source})-[r:{name}]->(b:{target}) WHERE {condition}{scope_filter} "
+                f"MATCH (a:{source})-[r:{name}]->(b:{target}) WHERE {condition} "
                 "RETURN count(r) AS duplicates"
             )
     return out

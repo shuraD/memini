@@ -22,7 +22,6 @@ _DDL = """
 CREATE TABLE IF NOT EXISTS graph_query_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    scope TEXT,
     seconds REAL NOT NULL,
     rows INTEGER NOT NULL,
     db_hits INTEGER,
@@ -37,7 +36,6 @@ class QueryRecord:
     """One logged query run."""
 
     name: str
-    scope: str | None
     seconds: float
     rows: int
     db_hits: int | None
@@ -73,14 +71,11 @@ class QueryPerfLog:
         self._clock = clock
         store.ensure_schema(SCHEMA_NAME, _DDL)
 
-    def record(
-        self, name: str, scope: str | None, seconds: float, rows: int, db_hits: int | None
-    ) -> None:
+    def record(self, name: str, seconds: float, rows: int, db_hits: int | None) -> None:
         """Insert one run, stamped with the clock value at call time."""
         self._store.execute(
-            "INSERT INTO graph_query_log (name, scope, seconds, rows, db_hits, ts)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (name, scope, float(seconds), int(rows), db_hits, float(self._clock())),
+            "INSERT INTO graph_query_log (name, seconds, rows, db_hits, ts) VALUES (?, ?, ?, ?, ?)",
+            (name, float(seconds), int(rows), db_hits, float(self._clock())),
         )
 
     def rows(self, name: str | None = None) -> list[QueryRecord]:
@@ -88,11 +83,11 @@ class QueryPerfLog:
         result: list[tuple[Any, ...]]
         if name is None:
             result = self._store.execute(
-                "SELECT name, scope, seconds, rows, db_hits, ts FROM graph_query_log ORDER BY id"
+                "SELECT name, seconds, rows, db_hits, ts FROM graph_query_log ORDER BY id"
             )
         else:
             result = self._store.execute(
-                "SELECT name, scope, seconds, rows, db_hits, ts FROM graph_query_log"
+                "SELECT name, seconds, rows, db_hits, ts FROM graph_query_log"
                 " WHERE name = ? ORDER BY id",
                 (name,),
             )

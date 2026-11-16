@@ -1,110 +1,75 @@
 # Memini graph schema — the schema as DATA (spec: SPEC-graph-schema).
-# Every node label, relationship type and property carries its proof of use:
+# The baseline holds only the ArchRAG mechanism (arXiv 2502.09891): ingestion -> extraction ->
+# embeddings + KNN -> hierarchical communities + C-HNSW -> query. Every node label, relationship
+# type and property carries its proof of use:
 #   layer   : infra | core | extensions
 #   writer  : the ingest step that writes it (module.function)
 #   readers : query/ingest steps that read it; [] only with `ingest_only: <what it builds>`
 #   rule    : the business rule it serves
+# Every write MERGEs on `id`; `id` is unique per label. A corpus is kept apart by using its own
+# local database, so no node carries a scope.
 # `same_fact_as: <entry>` + `migrating_to: <where, by which module>` declares a TEMPORARY duplicate during a
 # migration: validate() accepts it and the duplicate detector guards it; an undeclared duplicate is rejected.
-# Vocabulary VALUES (domain names, type names, labels) are never here — they are per-scope data.
+# Vocabulary VALUES (domain names, type names, labels) are never here — they are data.
+#
+# Removed from the baseline — later, owner 2026-11-16 ("for the graph remove overcomplication"):
+#   nodes:         Domain, Label, EntityType, RelationType, AuditEvent, Scope, Principal
+#   relationships: IN_DOMAIN, TAGGED, OF_TYPE, SUPERSEDES, REFERENCES, DERIVED_FROM, VERSION_OF,
+#                  CAN_ACCESS
+#   properties:    Document.definitive; scope, status, created_at/updated_at/updated_by,
+#                  deleted_at/deleted_by on every label
 
 nodes:
   Document:
-    rule: a source file of the corpus; the unit of lineage and authority
+    rule: a source file of the corpus; the unit of citation
     properties:
-      scope:        {layer: core, writer: ingest.register_document, readers: [query.*, ingest.*], rule: every node is scoped; a scope wipe must find every node}
-      id:           {layer: core, writer: ingest.register_document, readers: [query.cite, ingest.lineage], rule: identity (stable path-derived id)}
-      path:         {layer: core, writer: ingest.register_document, readers: [query.cite], rule: the citation shown to the user}
-      content_hash: {layer: core, writer: ingest.register_document, readers: [ingest.lineage, ingest.incremental], rule: exact-copy detection; skip unchanged files}
-      definitive:   {layer: core, writer: ingest.lineage, readers: [query.authority], rule: the final version wins over copies and drafts}
-      status:       {layer: core, writer: ingest.register_document, readers: [query.*], rule: active | superseded (never deleted)}
-      created_at:   {layer: core, writer: ingest.register_document, readers: [ingest.incremental], rule: ordering of versions}
-    indexes: [[scope, id], [scope, content_hash]]
+      id:           {layer: core, writer: ingest.split, readers: [query.cite, ingest.split], rule: identity (stable path-derived id)}
+      path:         {layer: core, writer: ingest.split, readers: [query.cite], rule: the citation shown to the user}
+      content_hash: {layer: core, writer: ingest.split, readers: [ingest.split], rule: exact-copy detection; skip unchanged files}
+    indexes: [[content_hash]]
 
   Unit:
     rule: a structural unit of a document (heading, table row, list item, code unit) with line range
     properties:
-      scope:      {layer: core, writer: ingest.split, readers: [query.*, ingest.*], rule: scoped}
       id:         {layer: core, writer: ingest.split, readers: [ingest.extract, query.cite], rule: identity}
       kind:       {layer: core, writer: ingest.split, readers: [ingest.extract], rule: what the parser recognised (data-driven kinds)}
       line_start: {layer: core, writer: ingest.split, readers: [query.cite], rule: grounding of every claim}
       line_end:   {layer: core, writer: ingest.split, readers: [query.cite], rule: grounding of every claim}
       content:    {layer: core, writer: ingest.split, readers: [ingest.extract, query.context], rule: the verbatim text the model reads}
-      status:     {layer: core, writer: ingest.split, readers: [query.*], rule: active | superseded}
-    indexes: [[scope, id]]
 
   Entity:
     rule: a knowledge-graph entity extracted from units; the bottom layer of the hierarchy
     properties:
-      scope:        {layer: core, writer: ingest.extract, readers: [query.*, ingest.*], rule: scoped}
-      id:           {layer: core, writer: ingest.extract, readers: [query.*, ingest.*], rule: identity}
-      name:         {layer: core, writer: ingest.extract, readers: [query.answer, ingest.consolidate], rule: display name; consolidation key}
+      id:           {layer: core, writer: ingest.extract, readers: [query.search, ingest.knn, ingest.cluster], rule: identity}
+      name:         {layer: core, writer: ingest.extract, readers: [query.context, ingest.extract], rule: display name; consolidation key}
       summary:      {layer: core, writer: ingest.extract, readers: [query.context, ingest.embed], rule: the entity description}
       reference_id: {layer: core, writer: ingest.extract, readers: [query.cite, ingest.embed], rule: the item's own reference id (how the source names it); part of the vector text (owner P4)}
-      embedding:    {layer: core, writer: ingest.embed, readers: [query.search, ingest.knn, ingest.cluster], rule: vector = summary|content + reference_id + labels (owner P4)}
-      status:       {layer: core, writer: ingest.extract, readers: [query.*], rule: active | superseded}
-    indexes: [[scope, id], [scope, name]]
+      embedding:    {layer: core, writer: ingest.embed, readers: [query.search, ingest.knn, ingest.cluster], rule: vector = summary|content + reference_id (owner P4)}
+    indexes: [[name]]
     vector_indexes: [embedding]
 
   Community:
     rule: an attributed community at one layer of the hierarchy, with its summary
     properties:
-      scope:     {layer: core, writer: ingest.cluster, readers: [query.*, ingest.*], rule: scoped}
       id:        {layer: core, writer: ingest.cluster, readers: [query.search, query.cite], rule: identity}
       level:     {layer: core, writer: ingest.cluster, readers: [query.search, ingest.index], rule: the layer in the hierarchy}
       summary:   {layer: core, writer: ingest.summarise, readers: [query.context, ingest.embed], rule: the text the model reads for this community}
       embedding: {layer: core, writer: ingest.embed, readers: [query.search, ingest.index], rule: vector of the summary text}
-    indexes: [[scope, id], [scope, level]]
+    indexes: [[level]]
     vector_indexes: [embedding]
 
-  Domain:
-    rule: a per-scope vocabulary value with concept ownership (owner 2026-11-12)
-    properties:
-      scope: {layer: core, writer: ingest.vocabulary, readers: [query.*, ingest.*], rule: scoped}
-      name:  {layer: core, writer: ingest.vocabulary, readers: [query.scope, ingest.classify], rule: the value (data, user-given or detected)}
-      owns:  {layer: core, writer: ingest.vocabulary, readers: [query.authority, ingest.ownership], rule: concept labels this domain is responsible for}
-    indexes: [[scope, name]]
-
-  Label:
-    rule: a per-scope label (user-given or auto-detected); used to build attributed communities
-    properties:
-      scope: {layer: core, writer: ingest.vocabulary, readers: [query.*, ingest.*], rule: scoped}
-      name:  {layer: core, writer: ingest.vocabulary, readers: [ingest.embed, ingest.cluster, query.filter], rule: the value}
-    indexes: [[scope, name]]
-
-  EntityType:
-    rule: the entity-type vocabulary (open, learned from the data; reviewed by status)
-    properties:
-      scope:      {layer: core, writer: ingest.vocabulary, readers: [ingest.extract, query.typed_list], rule: scoped}
-      name:       {layer: core, writer: ingest.vocabulary, readers: [ingest.extract, query.typed_list], rule: the value}
-      definition: {layer: core, writer: ingest.vocabulary, readers: [ingest.extract], rule: what the type means (prompt input)}
-      status:     {layer: core, writer: ingest.vocabulary, readers: [ingest.extract], rule: active | superseded}
-    indexes: [[scope, name]]
-
-  RelationType:
-    rule: the relation-type vocabulary (open, learned from the data)
-    properties:
-      scope:      {layer: core, writer: ingest.vocabulary, readers: [ingest.extract, query.relations], rule: scoped}
-      name:       {layer: core, writer: ingest.vocabulary, readers: [ingest.extract, query.relations], rule: the value}
-      definition: {layer: core, writer: ingest.vocabulary, readers: [ingest.extract], rule: prompt input}
-      status:     {layer: core, writer: ingest.vocabulary, readers: [ingest.extract], rule: active | superseded}
-    indexes: [[scope, name]]
-
 relationships:
-  HAS_UNIT:     {from: Document, to: Unit, layer: core, writer: ingest.split, readers: [query.cite, ingest.incremental], rule: a document is made of units}
-  HAS_ENTITY:   {from: Unit, to: Entity, layer: core, writer: ingest.extract, readers: [query.cite, query.authority], rule: provenance — where an entity was extracted}
-  IN_DOMAIN:    {from: Document, to: Domain, layer: core, writer: ingest.register_document, readers: [query.scope, query.authority], rule: the single place a document's domain is stored}
-  TAGGED:       {from: [Document, Entity], to: Label, layer: core, writer: ingest.label, readers: [ingest.embed, ingest.cluster, query.filter], rule: the single store of labels}
-  OF_TYPE:      {from: Entity, to: EntityType, layer: core, writer: ingest.extract, readers: [query.typed_list], rule: the single place an entity's type is stored}
+  HAS_UNIT:   {from: Document, to: Unit, layer: core, writer: ingest.split, readers: [query.cite], rule: a document is made of units}
+  HAS_ENTITY: {from: Unit, to: Entity, layer: core, writer: ingest.extract, readers: [query.cite], rule: provenance — where an entity was extracted}
   RELATES:
     from: Entity
     to: Entity
     layer: core
     writer: ingest.extract
-    readers: [ingest.cluster, query.relations]
+    readers: [ingest.cluster, query.context]
     rule: an extracted relation between two entities
     properties:
-      type_name:     {layer: core, writer: ingest.extract, readers: [query.relations], rule: the relation type (a RelationType value)}
+      type_name:     {layer: core, writer: ingest.extract, readers: [query.context], rule: the relation type (a data value)}
       weight:        {layer: core, writer: ingest.extract, readers: [ingest.cluster], rule: clustering weight}
       evidence_unit: {layer: core, writer: ingest.extract, readers: [query.cite], rule: the unit the relation was extracted from}
   SIMILAR:
@@ -116,7 +81,7 @@ relationships:
     rule: KNN augmentation edge
     properties:
       weight: {layer: core, writer: ingest.knn, readers: [ingest.cluster], rule: cosine similarity; the clustering weight}
-  MEMBER_OF:    {from: [Entity, Community], to: Community, layer: core, writer: ingest.cluster, readers: [query.search, query.cite, ingest.summarise], rule: membership in the next layer up}
+  MEMBER_OF:  {from: [Entity, Community], to: Community, layer: core, writer: ingest.cluster, readers: [query.search, query.cite, ingest.summarise], rule: membership in the next layer up}
   LINKED:
     from: Community
     to: Community
@@ -127,26 +92,4 @@ relationships:
     properties:
       layer:  {layer: core, writer: ingest.index, readers: [query.search], rule: the hierarchy layer of the link}
       weight: {layer: core, writer: ingest.index, readers: [query.search], rule: similarity of the two communities}
-  DOWN:         {from: Community, to: [Community, Entity], layer: core, writer: ingest.index, readers: [query.search], rule: inter-layer link to the nearest node one layer below}
-  SUPERSEDES:
-    from: [Document, Unit, Entity, EntityType, RelationType]
-    to: [Document, Unit, Entity, EntityType, RelationType]
-    layer: core
-    writer: ingest.incremental
-    readers: [query.*]
-    rule: lifecycle by status, never deletion
-    properties:
-      status: {layer: core, writer: ingest.incremental, readers: [query.*], rule: active | reverted — a reverted supersede must not hide its target}
-      reason: {layer: core, writer: ingest.incremental, readers: [query.audit], rule: why the item was superseded}
-      at:     {layer: core, writer: ingest.incremental, readers: [query.audit], rule: when}
-  REFERENCES:
-    from: Entity
-    to: Entity
-    layer: core
-    writer: ingest.ownership
-    readers: [query.authority]
-    rule: a copy of a concept outside its owning domain points to the owner's item
-    properties:
-      conflict: {layer: core, writer: ingest.ownership, readers: [query.authority], rule: true when the copy contradicts the owner's item; flagged, never merged}
-  DERIVED_FROM: {from: Document, to: Document, layer: core, writer: ingest.lineage, readers: [query.authority, ingest.incremental], rule: document lineage}
-  VERSION_OF:   {from: Document, to: Document, layer: core, writer: ingest.lineage, readers: [query.authority], rule: another version of the same document}
+  DOWN:       {from: Community, to: [Community, Entity], layer: core, writer: ingest.index, readers: [query.search], rule: inter-layer link to the nearest node one layer below}

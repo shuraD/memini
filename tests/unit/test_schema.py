@@ -211,7 +211,7 @@ def test_relationship_properties_carry_proof_and_typed_names() -> None:
     assert set(rel.properties) >= {"type_name", "weight", "evidence_unit"}
     assert rel.properties["weight"].writer and rel.properties["weight"].readers
     assert schema.names(s).rel_props["RELATES"]["weight"] == "weight"
-    for name in ("SIMILAR", "LINKED", "SUPERSEDES", "REFERENCES"):
+    for name in ("SIMILAR", "LINKED"):
         assert s.relationships[name].properties, name
 
 

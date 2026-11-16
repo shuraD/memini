@@ -14,10 +14,6 @@ R1_R2_QUERY = (
     "MATCH (a:Document)-[r:R1]->(b:Domain) WHERE EXISTS { (a)-[:R2]-(b) } "
     "RETURN count(r) AS duplicates"
 )
-R1_R2_SCOPED_QUERY = (
-    "MATCH (a:Document)-[r:R1]->(b:Domain) WHERE EXISTS { (a)-[:R2]-(b) } "
-    "AND a.scope = $scope AND b.scope = $scope RETURN count(r) AS duplicates"
-)
 
 
 def _prop(rule: str = "a rule", **extra: str) -> dict:
@@ -171,24 +167,6 @@ def test_relationship_twin_query_exact_without_scope() -> None:
     assert "$scope" not in queries[0]
 
 
-def test_relationship_twin_query_exact_with_scope() -> None:
-    s = schema.from_dict(_raw(same_fact_as="R2", migrating_to=MIGRATION))
-    queries = schema.duplicate_queries(s, scope="A")
-    assert queries == [R1_R2_SCOPED_QUERY]
-    assert "a.scope = $scope" in queries[0]
-    assert "b.scope = $scope" in queries[0]
-    assert "'A'" not in queries[0]
-    assert '"A"' not in queries[0]
-
-
-def test_scope_value_never_in_query_text() -> None:
-    s = schema.from_dict(_raw(same_fact_as="R2", migrating_to=MIGRATION))
-    value = "corpus-zeta-9"
-    queries = schema.duplicate_queries(s, scope=value)
-    assert queries
-    assert all(value not in q for q in queries)
-
-
 def test_one_query_per_source_label_in_declared_order() -> None:
     raw = _raw()
     raw["relationships"]["R1"] = _rel(
@@ -232,14 +210,6 @@ def test_property_twin_on_source_label() -> None:
     assert schema.duplicate_queries(s) == [
         "MATCH (a:Document)-[r:R1]->(b:Domain) WHERE a.domain IS NOT NULL "
         "RETURN count(r) AS duplicates"
-    ]
-
-
-def test_property_twin_on_source_label_with_scope() -> None:
-    s = schema.from_dict(_raw(same_fact_as="Document.domain", migrating_to=MIGRATION))
-    assert schema.duplicate_queries(s, scope="A") == [
-        "MATCH (a:Document)-[r:R1]->(b:Domain) WHERE a.domain IS NOT NULL "
-        "AND a.scope = $scope AND b.scope = $scope RETURN count(r) AS duplicates"
     ]
 
 
@@ -290,15 +260,12 @@ def _with_node_twin(raw: dict) -> dict:
 
 
 def test_node_property_queries_come_first_unchanged() -> None:
-    for scope in (None, "A"):
-        node_only = schema.duplicate_queries(schema.from_dict(_with_node_twin(_raw())), scope)
-        assert len(node_only) == 1
-        both = schema.duplicate_queries(
-            schema.from_dict(_with_node_twin(_raw(same_fact_as="R2", migrating_to=MIGRATION))),
-            scope,
-        )
-        expected_rel = R1_R2_QUERY if scope is None else R1_R2_SCOPED_QUERY
-        assert both == [*node_only, expected_rel]
+    node_only = schema.duplicate_queries(schema.from_dict(_with_node_twin(_raw())))
+    assert len(node_only) == 1
+    both = schema.duplicate_queries(
+        schema.from_dict(_with_node_twin(_raw(same_fact_as="R2", migrating_to=MIGRATION)))
+    )
+    assert both == [*node_only, R1_R2_QUERY]
 
 
 def test_relationships_follow_declaration_order() -> None:
@@ -322,8 +289,7 @@ def test_every_query_names_labels() -> None:
         same_fact_as="Document.domain",
         migrating_to=MIGRATION,
     )
-    for scope in (None, "A"):
-        queries = schema.duplicate_queries(schema.from_dict(raw), scope)
-        assert len(queries) >= 4
-        for q in queries:
-            assert schema.unlabeled_matches(q) == [], q
+    queries = schema.duplicate_queries(schema.from_dict(raw))
+    assert len(queries) >= 4
+    for q in queries:
+        assert schema.unlabeled_matches(q) == [], q

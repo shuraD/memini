@@ -8,9 +8,6 @@ from typing import Any
 import pytest
 
 from memini.core.graph import (
-    AccessContext,
-    AccessDenied,
-    AuditFieldError,
     RunResult,
     Statement,
     UnlabeledMatchError,
@@ -62,12 +59,10 @@ class FakeRecorder:
     """Collects every recorded sample."""
 
     def __init__(self) -> None:
-        self.records: list[tuple[str, str | None, float, int, int | None]] = []
+        self.records: list[tuple[str, float, int, int | None]] = []
 
-    def record(
-        self, name: str, scope: str | None, seconds: float, rows: int, db_hits: int | None
-    ) -> None:
-        self.records.append((name, scope, seconds, rows, db_hits))
+    def record(self, name: str, seconds: float, rows: int, db_hits: int | None) -> None:
+        self.records.append((name, seconds, rows, db_hits))
 
 
 class FakeTimer:
@@ -83,27 +78,16 @@ class FakeTimer:
         return value
 
 
-def _ctx() -> AccessContext:
-    return AccessContext(
-        principal="tester",
-        read_scopes=frozenset({"s1"}),
-        write_scopes=frozenset({"s1"}),
-        actor="job-1",
-    )
-
-
 def _stmt(
     name: str = "q.read",
     cypher: str = READ_CYPHER,
     kind: Any = "read",
-    scope: str | None = "s1",
     params: Mapping[str, Any] | None = None,
 ) -> Statement:
     return Statement(
         name=name,
         cypher=cypher,
         params={"scope": "s1"} if params is None else params,
-        scope=scope,
         kind=kind,
     )
 
@@ -111,15 +95,12 @@ def _stmt(
 def _session(
     runner: FakeRunner | None = None,
     *,
-    ctx: AccessContext | None = None,
-    no_ctx: bool = False,
     recorder: FakeRecorder | None = None,
     profile_every: int = 0,
     timer: FakeTimer | None = None,
 ) -> GraphSession:
     return GraphSession(
         runner if runner is not None else FakeRunner(),
-        None if no_ctx else (ctx if ctx is not None else _ctx()),
         recorder=recorder,
         profile_every=profile_every,
         timer=timer if timer is not None else FakeTimer(),
@@ -139,14 +120,6 @@ def test_raw_cypher_string_raises_type_error_and_runner_not_called() -> None:
     assert recorder.records == []
 
 
-def test_type_error_comes_before_access_check() -> None:
-    runner = FakeRunner()
-    session = _session(runner, no_ctx=True)
-    with pytest.raises(TypeError):
-        session.run("MATCH (n:Unit) RETURN n")  # type: ignore[arg-type]
-    assert runner.calls == []
-
-
 def test_non_statement_object_raises_type_error() -> None:
     runner = FakeRunner()
     session = _session(runner)
@@ -156,37 +129,7 @@ def test_non_statement_object_raises_type_error() -> None:
     assert runner.calls == []
 
 
-# ---------------------------------------------------------------- access context
-
-
-def test_ctx_none_run_raises_access_denied_and_runner_not_called() -> None:
-    runner = FakeRunner()
-    recorder = FakeRecorder()
-    session = _session(runner, no_ctx=True, recorder=recorder)
-    with pytest.raises(AccessDenied):
-        session.run(_stmt())
-    assert runner.calls == []
-    assert recorder.records == []
-
-
-def test_ctx_none_reading_ctx_raises_access_denied() -> None:
-    session = _session(no_ctx=True)
-    with pytest.raises(AccessDenied):
-        _ = session.ctx
-
-
-def test_access_denied_comes_before_label_check() -> None:
-    runner = FakeRunner()
-    session = _session(runner, no_ctx=True)
-    with pytest.raises(AccessDenied):
-        session.run(_stmt(cypher=UNLABELED_CYPHER))
-    assert runner.calls == []
-
-
-def test_ctx_property_returns_given_context() -> None:
-    ctx = _ctx()
-    session = _session(ctx=ctx)
-    assert session.ctx is ctx
+# ---------------------------------------------------------------- uri
 
 
 def test_uri_property_is_runner_uri() -> None:
@@ -196,19 +139,13 @@ def test_uri_property_is_runner_uri() -> None:
     assert session.uri == "bolt://127.0.0.1:7999"
 
 
-def test_ctx_property_is_read_only() -> None:
-    session = _session()
-    with pytest.raises(AttributeError):
-        session.ctx = _ctx()  # type: ignore[misc]
-
-
 def test_uri_property_is_read_only() -> None:
     session = _session()
     with pytest.raises(AttributeError):
         session.uri = "bolt://localhost:1"  # type: ignore[misc]
 
 
-# ---------------------------------------------------------------- labels and audit
+# ---------------------------------------------------------------- labels
 
 
 @pytest.mark.parametrize("kind", ["read", "write", "admin"])
@@ -222,22 +159,12 @@ def test_unlabeled_match_raises_and_neither_runner_nor_recorder_called(kind: str
     assert recorder.records == []
 
 
-def test_unlabeled_check_comes_before_audit_check() -> None:
+def test_write_without_audit_fields_runs() -> None:
     runner = FakeRunner()
     session = _session(runner)
-    with pytest.raises(UnlabeledMatchError):
-        session.run(_stmt(cypher="MATCH (n {id:$id}) SET n.title = $title", kind="write"))
-    assert runner.calls == []
-
-
-def test_write_without_audit_fields_raises_and_runner_not_called() -> None:
-    runner = FakeRunner()
-    recorder = FakeRecorder()
-    session = _session(runner, recorder=recorder)
-    with pytest.raises(AuditFieldError):
-        session.run(_stmt(name="q.write", cypher=UNAUDITED_WRITE, kind="write"))
-    assert runner.calls == []
-    assert recorder.records == []
+    rows = session.run(_stmt(name="q.write", cypher=UNAUDITED_WRITE, kind="write"))
+    assert rows == ROWS
+    assert len(runner.calls) == 1
 
 
 def test_same_unaudited_cypher_as_read_runs() -> None:
@@ -273,11 +200,11 @@ def test_run_returns_rows_and_records_once() -> None:
     recorder = FakeRecorder()
     timer = FakeTimer(step=0.25)
     session = _session(runner, recorder=recorder, timer=timer)
-    rows = session.run(_stmt(name="q.units", scope="s1"))
+    rows = session.run(_stmt(name="q.units"))
     assert rows == ROWS
     assert len(recorder.records) == 1
-    name, scope, seconds, count, db_hits = recorder.records[0]
-    assert (name, scope, count, db_hits) == ("q.units", "s1", 3, None)
+    name, seconds, count, db_hits = recorder.records[0]
+    assert (name, count, db_hits) == ("q.units", 3, None)
     assert seconds == pytest.approx(0.25)
 
 
@@ -302,22 +229,14 @@ def test_seconds_measured_with_custom_step() -> None:
     session = _session(recorder=recorder, timer=FakeTimer(step=1.5))
     session.run(_stmt())
     session.run(_stmt())
-    assert [r[2] for r in recorder.records] == [pytest.approx(1.5), pytest.approx(1.5)]
-
-
-def test_record_scope_none_is_passed_through() -> None:
-    recorder = FakeRecorder()
-    session = _session(recorder=recorder)
-    session.run(_stmt(name="q.global", scope=None))
-    assert recorder.records[0][0] == "q.global"
-    assert recorder.records[0][1] is None
+    assert [r[1] for r in recorder.records] == [pytest.approx(1.5), pytest.approx(1.5)]
 
 
 def test_empty_result_records_zero_rows() -> None:
     recorder = FakeRecorder()
     session = _session(FakeRunner(rows=[]), recorder=recorder)
     assert session.run(_stmt()) == []
-    assert recorder.records[0][3] == 0
+    assert recorder.records[0][2] == 0
 
 
 def test_runner_receives_cypher_and_params_as_given() -> None:
@@ -340,7 +259,7 @@ def test_profile_every_two_profiles_runs_two_and_four() -> None:
     for _ in range(4):
         session.run(_stmt(name="q.same"))
     assert [c["profile"] for c in runner.calls] == [False, True, False, True]
-    assert [r[4] for r in recorder.records] == [None, 42, None, 42]
+    assert [r[3] for r in recorder.records] == [None, 42, None, 42]
 
 
 def test_profile_counted_separately_per_name() -> None:
@@ -350,7 +269,7 @@ def test_profile_counted_separately_per_name() -> None:
     for name in ["q.a", "q.b", "q.a", "q.b", "q.a", "q.b"]:
         session.run(_stmt(name=name))
     assert [c["profile"] for c in runner.calls] == [False, False, True, True, False, False]
-    assert [(r[0], r[4]) for r in recorder.records] == [
+    assert [(r[0], r[3]) for r in recorder.records] == [
         ("q.a", None),
         ("q.b", None),
         ("q.a", 7),
@@ -371,12 +290,12 @@ def test_profile_every_one_profiles_every_run() -> None:
 def test_profile_every_zero_default_never_profiles() -> None:
     runner = FakeRunner(db_hits=99)
     recorder = FakeRecorder()
-    session = GraphSession(runner, _ctx(), recorder=recorder, timer=FakeTimer())
+    session = GraphSession(runner, recorder=recorder, timer=FakeTimer())
     for _ in range(5):
         session.run(_stmt(name="q.same"))
     assert len(runner.calls) == 5
     assert all(c["profile"] is False for c in runner.calls)
-    assert all(r[4] is None for r in recorder.records)
+    assert all(r[3] is None for r in recorder.records)
 
 
 def test_refused_runs_do_not_count_toward_profiling() -> None:
@@ -418,12 +337,12 @@ def test_runner_error_records_once_and_propagates_same_exception() -> None:
     timer = FakeTimer(step=0.25)
     session = _session(runner, recorder=recorder, timer=timer, profile_every=1)
     with pytest.raises(RuntimeError) as excinfo:
-        session.run(_stmt(name="q.fail", scope="s1"))
+        session.run(_stmt(name="q.fail"))
     assert excinfo.value is error
     assert timer.calls == 2
     assert len(recorder.records) == 1
-    name, scope, seconds, count, db_hits = recorder.records[0]
-    assert (name, scope, count, db_hits) == ("q.fail", "s1", 0, None)
+    name, seconds, count, db_hits = recorder.records[0]
+    assert (name, count, db_hits) == ("q.fail", 0, None)
     assert seconds == pytest.approx(0.25)
 
 
@@ -458,7 +377,7 @@ def test_autocommit_only_for_admin(kind: str, cypher: str, expected: bool) -> No
 
 def test_recorder_none_still_returns_rows() -> None:
     runner = FakeRunner(rows=list(ROWS), db_hits=4)
-    session = GraphSession(runner, _ctx(), profile_every=1, timer=FakeTimer())
+    session = GraphSession(runner, profile_every=1, timer=FakeTimer())
     assert session.run(_stmt()) == ROWS
     assert len(runner.calls) == 1
 

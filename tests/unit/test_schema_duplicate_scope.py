@@ -1,16 +1,13 @@
-"""GS-03: duplicate-detector queries restricted to one scope through the bound $scope parameter.
+"""GS-03: duplicate-detector queries for node-property pairs.
 
-Spec: SPEC-graph-schema, decisions "A duplicate detector test" and isolation by scope (every
-schema query filters by scope); BL-11 triple-storage regression. No database in these tests.
+Spec: SPEC-graph-schema, decision "A duplicate detector test"; BL-11 triple-storage
+regression. The scope filter was removed (owner 2026-11-16: a corpus is kept apart by its own
+database). No database in these tests.
 """
 
 import pytest
 
 from memini.core import schema
-
-SCOPE = "corpus-alpha-7"
-SCOPE_FILTER = "n.scope = $scope"
-HOSTILE_SCOPES = ("x' OR 1=1 //", "a}) DETACH DELETE n //", 'q" RETURN 1 //', "$scope")
 
 
 def _prop(rule: str = "a rule", **extra: str) -> dict:
@@ -89,36 +86,28 @@ def _where_part(query: str) -> str:
     return query.split("WHERE", 1)[1]
 
 
-def test_relationship_pair_scoped_query_keeps_everything_and_adds_the_scope_filter() -> None:
+def test_relationship_pair_query_keeps_everything() -> None:
     s = schema.from_dict(_rel_pair_raw())
-    queries = schema.duplicate_queries(s, scope=SCOPE)
+    queries = schema.duplicate_queries(s)
     assert len(queries) == 1
     q = queries[0]
-    assert SCOPE_FILTER in q
-    assert SCOPE_FILTER in _where_part(q)
     for part in ("Document", "n.domain IS NOT NULL", "IN_DOMAIN", "count(n)"):
         assert part in q
-    assert SCOPE not in q
 
 
-def test_property_pair_scoped_query_names_both_properties_and_not_the_value() -> None:
+def test_property_pair_query_names_both_properties() -> None:
     s = schema.from_dict(_prop_pair_raw())
-    queries = schema.duplicate_queries(s, scope=SCOPE)
+    queries = schema.duplicate_queries(s)
     assert len(queries) == 1
     q = queries[0]
-    assert SCOPE_FILTER in _where_part(q)
-    assert "n.domain" in q and "n.name" in q
+    assert "n.domain" in _where_part(q) and "n.name" in q
     assert "IS NOT NULL" in q and "count(n)" in q and "Document" in q
-    assert SCOPE not in q
 
 
 @pytest.mark.parametrize("raw_factory", [_rel_pair_raw, _prop_pair_raw, _many_pairs_raw])
-def test_explicit_none_scope_equals_todays_queries(raw_factory) -> None:
+def test_no_query_carries_a_scope_parameter(raw_factory) -> None:
     s = schema.from_dict(raw_factory())
-    unscoped = schema.duplicate_queries(s)
-    assert schema.duplicate_queries(s, scope=None) == unscoped
-    assert schema.duplicate_queries(s, None) == unscoped
-    assert all("$scope" not in q for q in unscoped)
+    assert all("$scope" not in q for q in schema.duplicate_queries(s))
 
 
 def test_unscoped_queries_keep_todays_exact_text() -> None:
@@ -130,57 +119,36 @@ def test_unscoped_queries_keep_todays_exact_text() -> None:
     ]
 
 
-@pytest.mark.parametrize("raw_factory", [_rel_pair_raw, _prop_pair_raw, _many_pairs_raw])
-def test_hostile_scope_values_never_reach_the_query_text(raw_factory) -> None:
-    s = schema.from_dict(raw_factory())
-    reference = schema.duplicate_queries(s, scope=SCOPE)
-    assert reference
-    for hostile in HOSTILE_SCOPES:
-        queries = schema.duplicate_queries(s, scope=hostile)
-        assert queries == reference
-        if hostile != "$scope":
-            assert all(hostile not in q for q in queries)
-
-
-def test_several_pairs_keep_count_and_order_and_all_are_scoped() -> None:
+def test_several_pairs_keep_count_and_order() -> None:
     s = schema.from_dict(_many_pairs_raw())
-    unscoped = schema.duplicate_queries(s)
-    scoped = schema.duplicate_queries(s, scope=SCOPE)
-    assert len(unscoped) == 3
-    assert len(scoped) == len(unscoped)
-    for plain, q in zip(unscoped, scoped, strict=True):
-        assert SCOPE_FILTER in _where_part(q)
-        assert SCOPE not in q
-        # same pair, same order: the label and the property of each unscoped query are kept
-        assert plain.split(" WHERE", 1)[0] == q.split(" WHERE", 1)[0]
-        assert "IS NOT NULL" in q and "count(n)" in q
-    assert "n.domain " in scoped[0] and "IN_DOMAIN" in scoped[0]
-    assert "n.domain_name" in scoped[1] and "n.name" in scoped[1]
-    assert "MATCH (n:Domain)" in scoped[2] and "n.label" in scoped[2] and "n.name" in scoped[2]
+    queries = schema.duplicate_queries(s)
+    assert len(queries) == 3
+    for q in queries:
+        assert "IS NOT NULL" in _where_part(q) and "count(n)" in q
+    assert "n.domain " in queries[0] and "IN_DOMAIN" in queries[0]
+    assert "n.domain_name" in queries[1] and "n.name" in queries[1]
+    assert "MATCH (n:Domain)" in queries[2] and "n.label" in queries[2] and "n.name" in queries[2]
 
 
-def test_no_same_fact_pair_gives_no_scoped_query() -> None:
+def test_no_same_fact_pair_gives_no_query() -> None:
     s = schema.from_dict(_raw())
-    assert schema.duplicate_queries(s, scope=SCOPE) == []
     assert schema.duplicate_queries(s) == []
 
 
 @pytest.mark.parametrize("raw_factory", [_rel_pair_raw, _prop_pair_raw, _many_pairs_raw])
-def test_every_scoped_query_still_names_a_label_in_each_match(raw_factory) -> None:
+def test_every_query_names_a_label_in_each_match(raw_factory) -> None:
     s = schema.from_dict(raw_factory())
-    queries = schema.duplicate_queries(s, scope=SCOPE)
+    queries = schema.duplicate_queries(s)
     assert queries
     for q in queries:
         assert schema.unlabeled_matches(q) == []
 
 
-def test_bl11_triple_storage_migration_is_guarded_per_scope() -> None:
+def test_bl11_triple_storage_migration_is_guarded() -> None:
     s = schema.from_dict(_rel_pair_raw())
     assert schema.validate(s) == []
-    queries = schema.duplicate_queries(s, scope=SCOPE)
+    queries = schema.duplicate_queries(s)
     assert len(queries) == 1
     q = queries[0]
     for part in ("MATCH (n:Document)", "n.domain IS NOT NULL", "IN_DOMAIN", "count(n)"):
         assert part in q
-    assert SCOPE_FILTER in _where_part(q)
-    assert SCOPE not in q
