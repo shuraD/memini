@@ -7,6 +7,7 @@ license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 dependencies = [
   "neo4j==6.4.1",
+  "neo4j-graphrag==1.24.0",
   "pyyaml>=6",
 ]
 
@@ -95,7 +96,7 @@ layers = ["memini.extensions", "memini.core", "memini.infra"]
 known_first_party = ["memini"]
 # neo4j is declared before its first import (the graph-schema driver, first used by GS-22);
 # remove this ignore when GS-22 merges (owner 2026-11-15)
-per_rule_ignores = { DEP002 = ["neo4j"] }
+per_rule_ignores = { DEP002 = ["neo4j", "neo4j-graphrag"] }  # first imported by GR-02 / GR-03 (dev4 graph slices)
 
 [tool.uv]
 # uv refuses to run below the version patched for every uv advisory to date
