@@ -29,14 +29,18 @@ class Statement:
         name: Stable identifier of the query, used for logging.
         cypher: Query text with parameter placeholders.
         params: Values bound to the placeholders.
-        kind: Whether the statement reads, writes, or administers the graph.
+        kind: Whether the statement reads, writes, administers the graph, or deletes
+            nodes for good (``delete``: checked by the database guard before it runs).
+        scope: The scope the statement works in, or None when it names none; it is
+            recorded with the statement's timing.
 
     """
 
     name: str
     cypher: str
     params: Mapping[str, Any]
-    kind: Literal["read", "write", "admin"]
+    kind: Literal["read", "write", "admin", "delete"]
+    scope: str | None = None
 
 
 class GraphError(Exception):
@@ -91,6 +95,14 @@ class Runner(Protocol):
 class PerfRecorder(Protocol):
     """Receives one performance sample per executed statement."""
 
-    def record(self, name: str, seconds: float, rows: int, db_hits: int | None) -> None:
-        """Record the duration, row count and database hits of a named statement."""
+    def record(
+        self,
+        name: str,
+        seconds: float,
+        rows: int,
+        db_hits: int | None,
+        *,
+        scope: str | None = None,
+    ) -> None:
+        """Record the duration, row count, database hits and scope of a named statement."""
         ...

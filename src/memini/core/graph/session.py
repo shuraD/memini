@@ -1,8 +1,9 @@
 """Graph session: runs builder statements through a runner and records their timing.
 
-Only ``Statement`` objects are accepted, so engine code cannot send raw Cypher. Each
+Only ``Statement`` objects are accepted, so engine code cannot send raw Cypher. A
+``delete`` statement first passes the database guard (a non-local host is refused). Each
 statement is re-checked for labeled ``MATCH`` patterns before it reaches the runner;
-every run that reaches the runner is recorded once.
+every run that reaches the runner is recorded once, with its scope.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from typing import Any
 
 from memini.core.graph.checks import require_labeled
 from memini.core.graph.types import PerfRecorder, Runner, RunResult, Statement
+from memini.infra.graph import guard
 
 
 class GraphSession:
@@ -53,11 +55,14 @@ class GraphSession:
 
         Raises:
             TypeError: When ``stmt`` is not a ``Statement``.
+            UnsafeDatabaseError: When ``stmt`` is a ``delete`` and the guard refuses the URI.
             UnlabeledMatchError: When a ``MATCH`` pattern names no label.
 
         """
         if not isinstance(stmt, Statement):
             raise TypeError(f"expected a Statement, got {type(stmt).__name__}")
+        if stmt.kind == "delete":
+            guard.guard_from_env(self.uri)
         require_labeled(stmt.cypher)
         n = self._counts.get(stmt.name, 0) + 1
         self._counts[stmt.name] = n
@@ -87,4 +92,4 @@ class GraphSession:
     def _record(self, stmt: Statement, seconds: float, rows: int, db_hits: int | None) -> None:
         """Send one sample to the recorder, if any."""
         if self._recorder is not None:
-            self._recorder.record(stmt.name, seconds, rows, db_hits)
+            self._recorder.record(stmt.name, seconds, rows, db_hits, scope=stmt.scope)

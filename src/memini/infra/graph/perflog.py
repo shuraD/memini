@@ -22,6 +22,7 @@ _DDL = """
 CREATE TABLE IF NOT EXISTS graph_query_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    scope TEXT,
     seconds REAL NOT NULL,
     rows INTEGER NOT NULL,
     db_hits INTEGER,
@@ -40,6 +41,7 @@ class QueryRecord:
     rows: int
     db_hits: int | None
     ts: float
+    scope: str | None = None
 
 
 @dataclass(frozen=True)
@@ -66,16 +68,31 @@ class QueryPerfLog:
     """Append-only log of graph query runs with per-name summaries."""
 
     def __init__(self, store: Store, clock: Callable[[], float] = time.time) -> None:
-        """Bind to ``store`` and create the log table once; ``clock`` stamps each row."""
+        """Bind to ``store`` and create the log table once; ``clock`` stamps each row.
+
+        A table created before the ``scope`` column existed gets it added once.
+        """
         self._store = store
         self._clock = clock
         store.ensure_schema(SCHEMA_NAME, _DDL)
+        columns = {row[1] for row in store.execute("PRAGMA table_info(graph_query_log)")}
+        if "scope" not in columns:
+            store.execute("ALTER TABLE graph_query_log ADD COLUMN scope TEXT")
 
-    def record(self, name: str, seconds: float, rows: int, db_hits: int | None) -> None:
-        """Insert one run, stamped with the clock value at call time."""
+    def record(
+        self,
+        name: str,
+        seconds: float,
+        rows: int,
+        db_hits: int | None,
+        *,
+        scope: str | None = None,
+    ) -> None:
+        """Insert one run with its scope, stamped with the clock value at call time."""
         self._store.execute(
-            "INSERT INTO graph_query_log (name, seconds, rows, db_hits, ts) VALUES (?, ?, ?, ?, ?)",
-            (name, float(seconds), int(rows), db_hits, float(self._clock())),
+            "INSERT INTO graph_query_log (name, scope, seconds, rows, db_hits, ts)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (name, scope, float(seconds), int(rows), db_hits, float(self._clock())),
         )
 
     def rows(self, name: str | None = None) -> list[QueryRecord]:
@@ -83,11 +100,11 @@ class QueryPerfLog:
         result: list[tuple[Any, ...]]
         if name is None:
             result = self._store.execute(
-                "SELECT name, seconds, rows, db_hits, ts FROM graph_query_log ORDER BY id"
+                "SELECT name, seconds, rows, db_hits, ts, scope FROM graph_query_log ORDER BY id"
             )
         else:
             result = self._store.execute(
-                "SELECT name, seconds, rows, db_hits, ts FROM graph_query_log"
+                "SELECT name, seconds, rows, db_hits, ts, scope FROM graph_query_log"
                 " WHERE name = ? ORDER BY id",
                 (name,),
             )
