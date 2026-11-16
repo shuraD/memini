@@ -10,6 +10,7 @@ the constraint, index and setup statements and the duplicate-detector queries, a
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,20 @@ class Property:
     ingest_only: str | None = None
     same_fact_as: str | None = None
     migrating_to: str | None = None  # a declared, temporary duplicate guarded by the detector
+    values: tuple[str, ...] = ()  # the allowed values; empty = any value
+    required: bool = False  # every write must carry it
+    required_when: Mapping[str, str] | None = None  # required when each named sibling has its value
+
+
+@dataclass(frozen=True)
+class EndpointOffset:
+    """A rule between the two ends of a relationship: ``b.<property> = a.<property> + offset``.
+
+    It applies to an endpoint pair only when both labels declare ``property``.
+    """
+
+    property: str
+    offset: int
 
 
 @dataclass(frozen=True)
@@ -61,6 +76,7 @@ class Relationship:
     properties: dict[str, Property] = field(default_factory=dict)
     same_fact_as: str | None = None
     migrating_to: str | None = None  # a declared, temporary duplicate guarded by the detector
+    endpoint_offset: EndpointOffset | None = None
 
 
 @dataclass(frozen=True)
@@ -98,9 +114,26 @@ def _properties(spec: dict[str, Any]) -> dict[str, Property]:
             ingest_only=p.get("ingest_only"),
             same_fact_as=p.get("same_fact_as"),
             migrating_to=p.get("migrating_to"),
+            values=_tuple(p.get("values")),
+            required=bool(p.get("required", False)),
+            required_when=_required_when(p.get("required_when")),
         )
         for name, p in (spec.get("properties") or {}).items()
     }
+
+
+def _required_when(value: Any) -> dict[str, str] | None:
+    """Return a ``required_when`` mapping as ``{sibling: value}``, or None when absent."""
+    if not value:
+        return None
+    return {str(k): str(v) for k, v in dict(value).items()}
+
+
+def _endpoint_offset(value: Any) -> EndpointOffset | None:
+    """Return an ``endpoint_offset: {property, offset}`` entry, or None when absent."""
+    if not value:
+        return None
+    return EndpointOffset(property=str(value["property"]), offset=int(value["offset"]))
 
 
 def from_dict(raw: dict[str, Any]) -> Schema:
@@ -125,6 +158,7 @@ def from_dict(raw: dict[str, Any]) -> Schema:
             properties=_properties(spec),
             same_fact_as=spec.get("same_fact_as"),
             migrating_to=spec.get("migrating_to"),
+            endpoint_offset=_endpoint_offset(spec.get("endpoint_offset")),
         )
         for name, spec in (raw.get("relationships") or {}).items()
     }
@@ -269,6 +303,12 @@ def names(schema: Schema) -> Names:
 
 
 _UNIQUE_KEY = ("id",)
+_KEYS = ("id", "name")
+
+
+def node_key(node: Node) -> str | None:
+    """Return the property a label is keyed by: ``id`` when declared, else ``name``, else None."""
+    return next((key for key in _KEYS if key in node.properties), None)
 
 
 def _has_id(node: Node) -> bool:
@@ -276,16 +316,20 @@ def _has_id(node: Node) -> bool:
 
 
 def constraint_statements(schema: Schema) -> list[str]:
-    """Return one idempotent ``id`` uniqueness constraint per label that has an ``id``.
+    """Return one idempotent ``(scope, key)`` uniqueness constraint per keyed label.
 
-    Labels follow ``schema.nodes`` order.
+    The key is ``id`` when the label declares it, else ``name``; labels follow
+    ``schema.nodes`` order.
     """
-    return [
-        f"CREATE CONSTRAINT {label.lower()}_id_unique IF NOT EXISTS "
-        f"FOR (n:{label}) REQUIRE n.id IS UNIQUE"
-        for label, node in schema.nodes.items()
-        if _has_id(node)
-    ]
+    out: list[str] = []
+    for label, node in schema.nodes.items():
+        key = node_key(node)
+        if key is not None:
+            out.append(
+                f"CREATE CONSTRAINT {label.lower()}_scope_{key}_unique IF NOT EXISTS "
+                f"FOR (n:{label}) REQUIRE (n.scope, n.{key}) IS UNIQUE"
+            )
+    return out
 
 
 def _indexes(

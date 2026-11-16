@@ -1,95 +1,204 @@
 # Memini graph schema — the schema as DATA (spec: SPEC-graph-schema).
-# The baseline holds only the ArchRAG mechanism (arXiv 2502.09891): ingestion -> extraction ->
-# embeddings + KNN -> hierarchical communities + C-HNSW -> query. Every node label, relationship
-# type and property carries its proof of use:
+# Graph schema v2, owner 2026-11-16 ("ok on schema and i want it to be implemented instead the
+# old one"; squads/graph-archrag/SCHEMA-TASK.md). The baseline is the ArchRAG mechanism
+# (arXiv 2502.09891) built simply: no session protection, no access control, no audit log.
+# Every node label, relationship type and property carries its proof of use:
 #   layer   : infra | core | extensions
-#   writer  : the ingest step that writes it (module.function)
-#   readers : query/ingest steps that read it; [] only with `ingest_only: <what it builds>`
+#   writer  : the step that writes it (module.function, with its card line id when planned)
+#   readers : the steps that read it; [] only with `ingest_only: <why nothing reads it>`
 #   rule    : the business rule it serves
-# Every write MERGEs on `id`; `id` is unique per label. A corpus is kept apart by using its own
-# local database, so no node carries a scope.
+# Optional per property: `values` (the allowed values), `required: true` (every write carries
+# it) and `required_when: {sibling: value}`. Optional per relationship: `endpoint_offset:
+# {property, offset}` (b.property = a.property + offset, for endpoint pairs that both declare
+# it). The write builder enforces all of them; src/ holds no list of values.
+# Every node carries scope (plain text, no access control), updated_by and updated_at; a write
+# MERGEs on (scope, id), or on (scope, name) for a label without id.
 # `same_fact_as: <entry>` + `migrating_to: <where, by which module>` declares a TEMPORARY duplicate during a
 # migration: validate() accepts it and the duplicate detector guards it; an undeclared duplicate is rejected.
 # Vocabulary VALUES (domain names, type names, labels) are never here — they are data.
 #
-# Removed from the baseline — later, owner 2026-11-16 ("for the graph remove overcomplication"):
-#   nodes:         Domain, Label, EntityType, RelationType, AuditEvent, Scope, Principal
-#   relationships: IN_DOMAIN, TAGGED, OF_TYPE, SUPERSEDES, REFERENCES, DERIVED_FROM, VERSION_OF,
-#                  CAN_ACCESS
-#   properties:    Document.definitive; scope, status, created_at/updated_at/updated_by,
-#                  deleted_at/deleted_by on every label
+# Later versions, not in this schema (owner 2026-11-16):
+#   PARENT_OF (artifact and entity derivation links), INDEXES, DERIVED_FROM,
+#   unifile entries, and the relation status lifecycle (status on relationships).
 
 nodes:
-  Document:
+  Project:
+    rule: the corpus project; the root of its domains
+    properties:
+      scope: &scope
+        layer: core
+        writer: graph.writes
+        readers: [graph.writes, "query.search (A33, A57)"]
+        rule: "which corpus a node belongs to (plain text, no access control); half of every key"
+      updated_by: &updated_by
+        layer: core
+        writer: graph.writes
+        readers: []
+        ingest_only: "provenance of the last write, for people inspecting the graph; no step reads it"
+        rule: who wrote the node last (given by the caller)
+      updated_at: &updated_at
+        layer: core
+        writer: graph.writes
+        readers: ["graph.health_staleness (A75)"]
+        rule: "when the node was written last (from the caller's clock)"
+      name: {layer: core, writer: ingest.register (A72), readers: ["query.search (A57)"], rule: identity of the project within its scope}
+
+  Domain:
+    rule: a domain of a project; the domain filter of search
+    properties:
+      scope: *scope
+      updated_by: *updated_by
+      updated_at: *updated_at
+      name: {layer: core, writer: ingest.register (A72), readers: ["query.search (A57)", "ingest.link_cross_domain (A20)"], rule: identity of the domain within its scope}
+
+  Artifact:
     rule: a source file of the corpus; the unit of citation
     properties:
-      id:           {layer: core, writer: ingest.split, readers: [query.cite, ingest.split], rule: identity (stable path-derived id)}
-      path:         {layer: core, writer: ingest.split, readers: [query.cite], rule: the citation shown to the user}
-      content_hash: {layer: core, writer: ingest.split, readers: [ingest.split], rule: exact-copy detection; skip unchanged files}
-    indexes: [[content_hash]]
+      scope: *scope
+      updated_by: *updated_by
+      updated_at: *updated_at
+      id:           {layer: core, writer: ingest.split, readers: [query.cite, ingest.split], rule: identity (= the corpus path)}
+      type:         {layer: core, writer: ingest.split, readers: [ingest.extract, "query.search (A57)"], rule: what kind of file it is (a data value)}
+      role:         {layer: core, writer: ingest.register (A62), readers: ["query.search (A57)"], rule: the part the file plays in its domain (a data value)}
+      content_hash: {layer: core, writer: ingest.split, readers: ["ingest.split (A72)"], rule: exact-copy detection; skip unchanged files}
+      summary:      {layer: core, writer: ingest.summarise, readers: [query.context], rule: what the file is about}
+      labels:       {layer: core, writer: ingest.register (A72), readers: ["ingest.link_labels (A19)"], rule: "the labels of the file (a list property, no Label node)"}
+      status: &status
+        layer: core
+        writer: graph.writes
+        readers: ["ingest.cluster (A47)", query.search]
+        rule: lifecycle; superseded and deleted items leave search and communities
+        values: [active, superseded, deleted]
 
-  Unit:
-    rule: a structural unit of a document (heading, table row, list item, code unit) with line range
+  Chunk:
+    rule: a passage of an artifact, in reading order, with its line range
     properties:
+      scope: *scope
+      updated_by: *updated_by
+      updated_at: *updated_at
       id:         {layer: core, writer: ingest.split, readers: [ingest.extract, query.cite], rule: identity}
-      kind:       {layer: core, writer: ingest.split, readers: [ingest.extract], rule: what the parser recognised (data-driven kinds)}
+      order:      {layer: core, writer: ingest.split, readers: ["ingest.link_sequence (A17)"], rule: the position of the chunk in its artifact}
+      content:    {layer: core, writer: ingest.split, readers: [ingest.extract, query.context], rule: the verbatim text the model reads}
       line_start: {layer: core, writer: ingest.split, readers: [query.cite], rule: grounding of every claim}
       line_end:   {layer: core, writer: ingest.split, readers: [query.cite], rule: grounding of every claim}
-      content:    {layer: core, writer: ingest.split, readers: [ingest.extract, query.context], rule: the verbatim text the model reads}
+      embedding:  {layer: core, writer: ingest.embed (A1), readers: ["query.search (A56)"], rule: vector of the chunk content}
+    vector_indexes: [embedding]
 
   Entity:
-    rule: a knowledge-graph entity extracted from units; the bottom layer of the hierarchy
+    rule: a knowledge-graph entity extracted from chunks; the bottom layer of the hierarchy
     properties:
-      id:           {layer: core, writer: ingest.extract, readers: [query.search, ingest.knn, ingest.cluster], rule: identity}
-      name:         {layer: core, writer: ingest.extract, readers: [query.context, ingest.extract], rule: display name; consolidation key}
-      summary:      {layer: core, writer: ingest.extract, readers: [query.context, ingest.embed], rule: the entity description}
-      reference_id: {layer: core, writer: ingest.extract, readers: [query.cite, ingest.embed], rule: the item's own reference id (how the source names it); part of the vector text (owner P4)}
-      embedding:    {layer: core, writer: ingest.embed, readers: [query.search, ingest.knn, ingest.cluster], rule: vector = summary|content + reference_id (owner P4)}
-    indexes: [[name]]
-    vector_indexes: [embedding]
+      scope: *scope
+      updated_by: *updated_by
+      updated_at: *updated_at
+      id:             {layer: core, writer: ingest.extract, readers: [query.search, "ingest.knn (A24)", ingest.cluster], rule: identity}
+      name:           {layer: core, writer: ingest.extract, readers: [query.context, ingest.extract], rule: display name; consolidation key}
+      type:           {layer: core, writer: ingest.extract, readers: ["ingest.embed (A4)", query.context], rule: the entity type (a data value)}
+      summary:        {layer: core, writer: ingest.extract, readers: [query.context, "ingest.embed (A4)"], rule: the entity description}
+      canonical_id:   {layer: core, writer: ingest.extract, readers: ["ingest.resolve_id (A85)"], rule: the id the source itself gives the item}
+      references:     {layer: core, writer: ingest.extract, readers: ["ingest.link_references (A21)"], rule: the ids the entity cites (a list property)}
+      labels:         {layer: core, writer: ingest.extract, readers: ["ingest.link_labels (A19)"], rule: "the labels of the entity (a list property, no Label node)"}
+      embedding:      {layer: core, writer: ingest.embed (A5), readers: ["query.search (A57)", "ingest.knn (A24)", ingest.cluster], rule: vector of the entity attributes}
+      embedding_code: {layer: core, writer: ingest.embed (A5), readers: ["ingest.knn_code (A25)"], rule: vector of the raw code content}
+      status: *status
+    vector_indexes: [embedding, embedding_code]
 
   Community:
-    rule: an attributed community at one layer of the hierarchy, with its summary
+    rule: an attributed community at one level of the hierarchy, with its summary
     properties:
-      id:        {layer: core, writer: ingest.cluster, readers: [query.search, query.cite], rule: identity}
-      level:     {layer: core, writer: ingest.cluster, readers: [query.search, ingest.index], rule: the layer in the hierarchy}
-      summary:   {layer: core, writer: ingest.summarise, readers: [query.context, ingest.embed], rule: the text the model reads for this community}
-      embedding: {layer: core, writer: ingest.embed, readers: [query.search, ingest.index], rule: vector of the summary text}
-    indexes: [[level]]
+      scope: *scope
+      updated_by: *updated_by
+      updated_at: *updated_at
+      id:        {layer: core, writer: ingest.cluster (A34), readers: [query.search, query.cite], rule: identity}
+      level:     {layer: core, writer: ingest.cluster (A30), readers: [query.search, "ingest.index (A37, A38)"], rule: the level in the hierarchy}
+      summary:   {layer: core, writer: ingest.summarise (A39), readers: [query.context, ingest.embed], rule: the text the model reads for this community}
+      embedding: {layer: core, writer: ingest.cluster (A34), readers: ["query.search (A56)", "ingest.index (A37, A38)"], rule: centroid vector of the community}
     vector_indexes: [embedding]
 
-relationships:
-  HAS_UNIT:   {from: Document, to: Unit, layer: core, writer: ingest.split, readers: [query.cite], rule: a document is made of units}
-  HAS_ENTITY: {from: Unit, to: Entity, layer: core, writer: ingest.extract, readers: [query.cite], rule: provenance — where an entity was extracted}
-  RELATES:
-    from: Entity
-    to: Entity
-    layer: core
-    writer: ingest.extract
-    readers: [ingest.cluster, query.context]
-    rule: an extracted relation between two entities
+  RelationType:
+    rule: a relation name of the scope's vocabulary
     properties:
-      type_name:     {layer: core, writer: ingest.extract, readers: [query.context], rule: the relation type (a data value)}
-      weight:        {layer: core, writer: ingest.extract, readers: [ingest.cluster], rule: clustering weight}
-      evidence_unit: {layer: core, writer: ingest.extract, readers: [query.cite], rule: the unit the relation was extracted from}
+      scope: *scope
+      updated_by: *updated_by
+      updated_at: *updated_at
+      name: {layer: core, writer: ingest.relation_vocabulary (A88), readers: ["ingest.relation_vocabulary (A80, A88)"], rule: identity of the relation name within its scope}
+
+relationships:
+  HAS_DOMAIN: {from: Project, to: Domain, layer: core, writer: ingest.register (A72), readers: ["query.search (A57)"], rule: a project is made of domains}
+  CONTAINS:   {from: Domain, to: Artifact, layer: core, writer: ingest.register (A72), readers: ["query.search (A57)", "ingest.link_cross_domain (A20)"], rule: a domain holds artifacts}
+  HAS_CHUNK:
+    from: Artifact
+    to: Chunk
+    layer: core
+    writer: ingest.split
+    readers: [query.cite, "ingest.link_sequence (A17)"]
+    rule: an artifact is made of chunks
+    properties:
+      order: {layer: core, writer: ingest.split, readers: ["ingest.link_sequence (A17)"], rule: the position of the chunk in the artifact}
+  HAS_ENTITY: {from: Chunk, to: Entity, layer: core, writer: ingest.extract, readers: [query.cite, "ingest.link_sequence (A17)"], rule: provenance — where an entity was extracted}
+  RELATED_TO:
+    from: [Entity, Community]
+    to: [Entity, Community]
+    layer: core
+    writer: "ingest.link (A17, A19, A20, A36, A89)"
+    readers: ["ingest.cluster (A28)", query.context]
+    rule: a relation between two entities, or between two communities
+    properties:
+      kind:
+        layer: core
+        writer: "ingest.link (A17, A19, A20, A36, A89)"
+        readers: ["ingest.cluster (A28)", query.context]
+        rule: how the relation was found
+        values: [extracted, sequence, label, cross_domain, shared]
+        required: true
+      type:
+        layer: core
+        writer: ingest.extract (A89)
+        readers: [query.context, "ingest.relation_vocabulary (A88)"]
+        rule: the relation name of an extracted relation (a data value)
+        required_when: {kind: extracted}
+      description: {layer: core, writer: ingest.extract (A89), readers: [query.context], rule: the relation in words}
   SIMILAR:
     from: Entity
     to: Entity
     layer: core
-    writer: ingest.knn
-    readers: [ingest.cluster]
-    rule: KNN augmentation edge
+    writer: "ingest.knn (A24, A25)"
+    readers: ["ingest.cluster (A28)"]
+    rule: KNN augmentation edge between similar entities
     properties:
-      weight: {layer: core, writer: ingest.knn, readers: [ingest.cluster], rule: cosine similarity; the clustering weight}
-  MEMBER_OF:  {from: [Entity, Community], to: Community, layer: core, writer: ingest.cluster, readers: [query.search, query.cite, ingest.summarise], rule: membership in the next layer up}
-  LINKED:
+      score:      {layer: core, writer: ingest.knn (A24), readers: ["ingest.cluster (A28)"], rule: cosine similarity of the embeddings; the clustering weight}
+      code_score: {layer: core, writer: ingest.knn_code (A25), readers: ["ingest.cluster (A44)"], rule: cosine similarity of the code embeddings}
+  CODE_LINK:
+    from: Entity
+    to: Entity
+    layer: core
+    writer: ingest.code_links (A92)
+    readers: [query.context]
+    rule: code structure from the parser
+    properties:
+      kind:
+        layer: core
+        writer: ingest.code_links (A92)
+        readers: [query.context]
+        rule: the kind of code link
+        values: [define, call, import]
+      line: {layer: core, writer: ingest.code_links (A92), readers: [query.cite], rule: the source line of the link}
+  SUPERSEDES: {from: [Artifact, Entity], to: [Artifact, Entity], layer: core, writer: graph.writes (A64), readers: ["query.search (A47)", "ingest.cluster (A47)"], rule: the new version replaces the old one (same label)}
+  BELONGS_TO_COMMUNITY: {from: [Entity, Community], to: Community, layer: core, writer: ingest.cluster (A35), readers: [query.search, query.cite, "ingest.summarise (A39)"], rule: membership in the next level up}
+  HIERARCHICAL_LINK:
     from: Community
     to: Community
     layer: core
-    writer: ingest.index
+    writer: ingest.index (A37)
     readers: [query.search]
-    rule: intra-layer neighbour link (M per node)
+    rule: C-HNSW intra-layer link between communities of the same level
+    endpoint_offset: {property: level, offset: 0}
     properties:
-      layer:  {layer: core, writer: ingest.index, readers: [query.search], rule: the hierarchy layer of the link}
-      weight: {layer: core, writer: ingest.index, readers: [query.search], rule: similarity of the two communities}
-  DOWN:       {from: Community, to: [Community, Entity], layer: core, writer: ingest.index, readers: [query.search], rule: inter-layer link to the nearest node one layer below}
+      similarity: {layer: core, writer: ingest.index (A37), readers: [query.search], rule: similarity of the two communities}
+  INTER_LAYER_LINK:
+    from: Community
+    to: [Community, Entity]
+    layer: core
+    writer: ingest.index (A38)
+    readers: [query.search]
+    rule: C-HNSW inter-layer link to the nearest node one level down
+    endpoint_offset: {property: level, offset: -1}
