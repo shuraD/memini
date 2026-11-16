@@ -4,11 +4,11 @@ The builder is bound to a scope and a clock. It checks the schema and the row co
 building anything, then returns one statement per batch. Node writes MERGE on
 ``(scope, id)``, or on ``(scope, name)`` for a label without ``id``, and set ``updated_by``
 (from the row) and ``updated_at`` (from the clock). Relationship endpoints are matched inside
-the scope. Allowed values, required properties and endpoint rules are read from the schema;
-this module holds no list of them. Every value travels as a parameter, so only schema labels,
-relationship types, property names, parameter names and fixed keywords appear in the query
-text. Nothing is executed here; a hard-delete statement has kind ``delete``, which the
-session checks against the database guard before it runs.
+the scope. Allowed values, required properties, allowed pairs and endpoint rules are read
+from the schema; this module holds no list of them. Every value travels as a parameter, so
+only schema labels, relationship types, property names, parameter names and fixed keywords
+appear in the query text. Nothing is executed here; a hard-delete statement has kind
+``delete``, which the session checks against the database guard before it runs.
 """
 
 from __future__ import annotations
@@ -194,7 +194,8 @@ class WriteBuilder:
     ) -> list[Statement]:
         """Build statements that merge ``rel`` relationships between nodes of the scope.
 
-        When ``rel`` declares an ``endpoint_offset`` whose property both labels declare, only
+        When ``rel`` declares ``pairs``, only those (from, to) labels are accepted. When ``rel``
+        declares an ``endpoint_offset`` whose property both labels declare, only
         pairs with ``b.<property> = a.<property> + offset`` are linked, and the statement
         returns the count written, so a dropped row shows.
 
@@ -209,8 +210,8 @@ class WriteBuilder:
             One statement per batch of rows; ``[]`` when ``rows`` is empty.
 
         Raises:
-            ValueError: For an unknown type, an undeclared endpoint label, a row without
-                valid ids, an undeclared property, a value outside a property's values, or a
+            ValueError: For an unknown type, an undeclared endpoint label or pair, a row
+                without valid ids, an undeclared property, a value outside a property's values, or a
                 missing required property.
 
         """
@@ -221,6 +222,8 @@ class WriteBuilder:
             raise ValueError(f"{from_label!r} is not a declared source of {rel!r}")
         if to_label not in spec.targets:
             raise ValueError(f"{to_label!r} is not a declared target of {rel!r}")
+        if spec.pairs and (from_label, to_label) not in spec.pairs:
+            raise ValueError(f"{rel!r} does not link {from_label!r} to {to_label!r}")
         from_node, from_key = self._node(from_label)
         to_node, to_key = self._node(to_label)
         built = [

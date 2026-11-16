@@ -77,6 +77,7 @@ class Relationship:
     same_fact_as: str | None = None
     migrating_to: str | None = None  # a declared, temporary duplicate guarded by the detector
     endpoint_offset: EndpointOffset | None = None
+    pairs: tuple[tuple[str, str], ...] = ()  # allowed (from, to) labels; empty = every combination
 
 
 @dataclass(frozen=True)
@@ -159,6 +160,7 @@ def from_dict(raw: dict[str, Any]) -> Schema:
             same_fact_as=spec.get("same_fact_as"),
             migrating_to=spec.get("migrating_to"),
             endpoint_offset=_endpoint_offset(spec.get("endpoint_offset")),
+            pairs=tuple((str(a), str(b)) for a, b in spec.get("pairs") or ()),
         )
         for name, spec in (raw.get("relationships") or {}).items()
     }

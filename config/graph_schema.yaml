@@ -10,7 +10,8 @@
 # Optional per property: `values` (the allowed values), `required: true` (every write carries
 # it) and `required_when: {sibling: value}`. Optional per relationship: `endpoint_offset:
 # {property, offset}` (b.property = a.property + offset, for endpoint pairs that both declare
-# it). The write builder enforces all of them; src/ holds no list of values.
+# it) and `pairs: [[from, to], ...]` (the only label pairs it may link; absent = any declared
+# combination). The write builder enforces all of them; src/ holds no list of values.
 # Every node carries scope (plain text, no access control), updated_by and updated_at; a write
 # MERGEs on (scope, id), or on (scope, name) for a label without id.
 # `same_fact_as: <entry>` + `migrating_to: <where, by which module>` declares a TEMPORARY duplicate during a
@@ -77,7 +78,6 @@ nodes:
       updated_by: *updated_by
       updated_at: *updated_at
       id:         {layer: core, writer: ingest.split, readers: [ingest.extract, query.cite], rule: identity}
-      order:      {layer: core, writer: ingest.split, readers: ["ingest.link_sequence (A17)"], rule: the position of the chunk in its artifact}
       content:    {layer: core, writer: ingest.split, readers: [ingest.extract, query.context], rule: the verbatim text the model reads}
       line_start: {layer: core, writer: ingest.split, readers: [query.cite], rule: grounding of every claim}
       line_end:   {layer: core, writer: ingest.split, readers: [query.cite], rule: grounding of every claim}
@@ -142,6 +142,7 @@ relationships:
     writer: "ingest.link (A17, A19, A20, A36, A89)"
     readers: ["ingest.cluster (A28)", query.context]
     rule: a relation between two entities, or between two communities
+    pairs: [[Entity, Entity], [Community, Community]]
     properties:
       kind:
         layer: core
@@ -182,7 +183,14 @@ relationships:
         rule: the kind of code link
         values: [define, call, import]
       line: {layer: core, writer: ingest.code_links (A92), readers: [query.cite], rule: the source line of the link}
-  SUPERSEDES: {from: [Artifact, Entity], to: [Artifact, Entity], layer: core, writer: graph.writes (A64), readers: ["query.search (A47)", "ingest.cluster (A47)"], rule: the new version replaces the old one (same label)}
+  SUPERSEDES:
+    from: [Artifact, Entity]
+    to: [Artifact, Entity]
+    layer: core
+    writer: graph.writes (A64)
+    readers: ["query.search (A47)", "ingest.cluster (A47)"]
+    rule: the new version replaces the old one (same label)
+    pairs: [[Artifact, Artifact], [Entity, Entity]]
   BELONGS_TO_COMMUNITY: {from: [Entity, Community], to: Community, layer: core, writer: ingest.cluster (A35), readers: [query.search, query.cite, "ingest.summarise (A39)"], rule: membership in the next level up}
   HIERARCHICAL_LINK:
     from: Community
