@@ -42,7 +42,7 @@ sandbox_skip_markers = ["integration"]
 # internet, only that Neo4j on it) and the sandbox joins it with NEO4J_URI, NEO4J_USER and
 # NEO4J_PASSWORD (the password from the orchestrator's own environment). Tests isolate
 # themselves by their own `scope` value; there is no per-slice database.
-sandbox_network = ""
+sandbox_network = "memini-test-net"
 sandbox_neo4j_uri = "bolt://memini-neo4j:7687"
 sandbox_neo4j_user = "neo4j"
 # interpreter for the host-side hold-out run; empty = the orchestrator's own interpreter

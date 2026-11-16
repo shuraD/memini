@@ -124,7 +124,7 @@ def test_configured_run_without_a_password_starts_no_container(
 
 
 def test_integration_is_skipped_only_without_the_network() -> None:
-    plain = load_config(ROOT)
+    plain = load_config(ROOT, overrides={"sandbox_network": ""})
     joined = load_config(ROOT, overrides={"sandbox_network": NET})
     assert plain.sandbox_network == ""
     assert "integration" in plain.sandbox_skip_markers
