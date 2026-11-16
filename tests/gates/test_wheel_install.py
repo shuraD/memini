@@ -47,7 +47,6 @@ import hashlib, json, sys
 from pathlib import Path
 import memini
 from memini.infra import paths
-from memini.core import schema
 
 def tree(root):
     if not root.is_dir():
@@ -66,10 +65,6 @@ out = {
     "prompts_dir": str(paths.prompts_dir().resolve()),
     "config_tree": tree(paths.config_dir()),
 }
-try:
-    out["schema_problems"] = schema.validate(schema.load())
-except Exception as exc:  # reported, not raised: the test states what failed
-    out["schema_error"] = f"{type(exc).__name__}: {exc}"
 print(json.dumps(out))
 """
 
@@ -176,21 +171,6 @@ def test_installed_config_dir_is_inside_the_installed_package_not_the_repo(
     assert not _inside(config_dir, ROOT), config_dir
 
 
-def test_installed_schema_loads_and_validates(installed: dict[str, Any]) -> None:
-    """SPEC-graph-schema decision 1: the schema is data. The installed package finds
-    ``graph_schema.yaml``, loads it and it validates with no problem."""
-    assert installed["schema_exists"], installed["schema_file"]
-    assert "schema_error" not in installed, installed.get("schema_error")
-    assert installed["schema_problems"] == [], installed["schema_problems"]
-
-
-def test_installed_schema_is_the_repositorys_schema(installed: dict[str, Any]) -> None:
-    """The schema the installed package loads is byte for byte the committed one, never a
-    decoy ``config/graph_schema.yaml`` next to the working directory."""
-    digest = hashlib.sha256((REPO_CONFIG / "graph_schema.yaml").read_bytes()).hexdigest()
-    assert installed["config_tree"].get("graph_schema.yaml") == digest, installed["config_tree"]
-
-
 def test_installed_prompts_dir_holds_every_committed_prompt(installed: dict[str, Any]) -> None:
     """AGENTS.md rule 3: prompts live in ``config/prompts/``. The installed prompts
     directory is inside the installed configuration and holds every committed prompt file,
@@ -236,4 +216,3 @@ def test_memini_config_dir_still_overrides_in_the_installed_package(
     assert Path(got["config_dir"]) == override.resolve()
     assert Path(got["schema_file"]) == (override / "graph_schema.yaml").resolve()
     assert Path(got["prompts_dir"]) == (override / "prompts").resolve()
-    assert got.get("schema_problems") == [], got

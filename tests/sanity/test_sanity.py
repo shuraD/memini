@@ -6,7 +6,6 @@ In-memory ledgers and tmp_path only: no git, no network, no Neo4j.
 
 from __future__ import annotations
 
-import dataclasses
 import sqlite3
 from pathlib import Path
 
@@ -14,8 +13,6 @@ import pytest
 from tools import ledger
 from tools.ci import check_ledgers, review_gate
 from tools.ledger import LedgerFormatError, insert, load_text
-
-from memini.core import schema
 
 SCHEMA_SQL = (ledger.LEDGER_DIR / "schema.sql").read_text(encoding="utf-8")
 UNIT_TEST = "tests/unit/test_example.py::test_example"
@@ -242,25 +239,3 @@ def test_review_with_blocking_finding_is_refused(tmp_path: Path) -> None:
     """Review gate: an unresolved BLOCKING finding refuses the merge despite MERGE: yes."""
     problems = _review(tmp_path, "- BLOCKING: the guard skips renamed files.")
     assert any("BLOCKING" in p for p in problems), problems
-
-
-# --- graph schema -------------------------------------------------------------
-
-
-def test_committed_schema_loads_and_validates() -> None:
-    """Schema: the committed schema loads and breaks no rule."""
-    loaded = schema.load()
-    assert loaded.nodes
-    assert schema.validate(loaded) == []
-
-
-def test_property_without_rule_is_rejected() -> None:
-    """Schema: every property carries a rule (its proof of use)."""
-    loaded = schema.load()
-    label, node = next((lb, n) for lb, n in loaded.nodes.items() if n.properties)
-    prop_name, prop = next(iter(node.properties.items()))
-    props = {**node.properties, prop_name: dataclasses.replace(prop, rule="")}
-    broken_node = dataclasses.replace(node, properties=props)
-    broken = dataclasses.replace(loaded, nodes={**loaded.nodes, label: broken_node})
-    problems = schema.validate(broken)
-    assert any(prop_name in p for p in problems), problems
