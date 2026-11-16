@@ -79,6 +79,7 @@ import_allow = [
   "uuid", "warnings", "zlib", "memini",
   "sqlite3", "threading", "contextvars", "queue", "types", "concurrent.futures",
   "urllib.request", "urllib.error", "http.client", "email.utils",
+  "ast", "html.parser",  # owner 2026-11-16: the old memini parsed Python and HTML with them (card I35, I37)
 ]
 # dotted names (fnmatch) that stay forbidden inside allowed modules
 forbidden_names = [

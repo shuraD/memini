@@ -34,6 +34,11 @@ def document_authority() -> bool:
     return _env_bool("MEMINI_ENABLE_DOCUMENT_AUTHORITY")
 
 
+def ingestion() -> bool:
+    """Return whether module 3, ingestion (walk, categorize, chunk, parse, extract), is on."""
+    return _env_bool("MEMINI_ENABLE_INGESTION")
+
+
 def kg_extraction() -> bool:
     """Return whether module 5, kg-extraction (entities and relations), is on."""
     return _env_bool("MEMINI_ENABLE_KG_EXTRACTION")

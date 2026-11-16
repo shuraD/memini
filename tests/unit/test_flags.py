@@ -13,6 +13,7 @@ from memini.infra import flags
 
 FLAG_FUNCTIONS = {
     "document_authority": "MEMINI_ENABLE_DOCUMENT_AUTHORITY",
+    "ingestion": "MEMINI_ENABLE_INGESTION",
     "kg_extraction": "MEMINI_ENABLE_KG_EXTRACTION",
     "archrag_index": "MEMINI_ENABLE_ARCHRAG_INDEX",
     "archrag_retrieval": "MEMINI_ENABLE_ARCHRAG_RETRIEVAL",
