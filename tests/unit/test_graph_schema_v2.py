@@ -5,6 +5,23 @@ No database: statements are built and run through a recording runner.
 
 INTERFACE (dev4 implements exactly this; every other name used below already exists)
 --------------------------------------------------------------------------------------
+Owner rule: generic, nothing hard-coded in src/. Allowed values and conditional requirements
+are schema data; src/ holds no list of them.
+
+memini.core.schema.Property gains (read by from_dict on node and relationship properties):
+  values: tuple[str, ...] = ()            YAML  values: [a, b]     empty = any value
+  required: bool = False                  YAML  required: true     every write must carry it
+  required_when: Mapping[str, str] | None = None
+                                          YAML  required_when: {kind: extracted}
+      the property is required when every named sibling property has the given value.
+  config/graph_schema.yaml declares exactly these, and no other property declares
+  values, required or required_when:
+    Artifact.status, Entity.status   values [active, superseded, deleted]
+    RELATED_TO.kind                  values [extracted, sequence, label, cross_domain, shared],
+                                     required: true
+    RELATED_TO.type                  required_when {kind: extracted}
+    CODE_LINK.kind                   values [define, call, import]
+
 memini.core.graph.types
   Statement gains a last field   scope: str | None = None
       (existing constructions stay valid).
@@ -38,11 +55,13 @@ memini.core.graph.writes.WriteBuilder(schema, *, scope: str, clock: Callable[[],
       (a name for a name-keyed label). Both endpoints are matched inside the scope:
       scope in the pattern map, or WHERE v.scope = ....
       Relationship rows carry no updated_by (audit fields are node fields).
-      RELATED_TO: props["kind"] is required and must be one of RELATED_TO_KINDS;
-      props["type"] is required when kind == "extracted". Otherwise ValueError.
 
-  RELATED_TO_KINDS = ("extracted", "sequence", "label", "cross_domain", "shared")
-      (module constant of memini.core.graph.writes)
+  Both merge_nodes and merge_relationships check each row's props against the schema of any
+  label or type, with ValueError naming the property for:
+    - a value outside the property's non-empty values (an exact match, so case counts);
+    - a missing property that is required, or whose required_when holds.
+  An optional property that is absent is fine. The checks read only the schema: there is no
+  constant such as RELATED_TO_KINDS in src/.
 
   soft_delete(label, ids, *, updated_by) -> list[Statement]
       Sets status = 'deleted' (plus updated_by / updated_at) on the label's nodes with
@@ -131,7 +150,15 @@ RELS: dict[str, tuple[set[str] | None, set[str] | None, set[str]]] = {
     "HIERARCHICAL_LINK": ({"Community"}, {"Community"}, {"similarity"}),
     "INTER_LAYER_LINK": ({"Community"}, {"Community", "Entity"}, set()),
 }
-RELATED_TO_KINDS = ("extracted", "sequence", "label", "cross_domain", "shared")
+STATUS_VALUES = {"active", "superseded", "deleted"}
+# (owner, property) -> declared values, for every property that declares values
+DECLARED_VALUES: dict[tuple[str, str], set[str]] = {
+    ("Artifact", "status"): STATUS_VALUES,
+    ("Entity", "status"): STATUS_VALUES,
+    ("RELATED_TO", "kind"): {"extracted", "sequence", "label", "cross_domain", "shared"},
+    ("CODE_LINK", "kind"): {"define", "call", "import"},
+}
+BAD_VALUE = "not-a-value-qzx"
 GONE = (
     "AccessContext",
     "Principal",
@@ -239,6 +266,44 @@ def _node_row(label: str, key: str, **props: Any) -> dict[str, Any]:
     return {"id" if label in ID_LABELS else "name": key, "updated_by": WRITER, "props": props}
 
 
+def _properties(s: schema.Schema) -> Iterator[tuple[str, str, schema.Property]]:
+    """Yield ``(owner, name, property)`` for every node and relationship property."""
+    for owner, spec in (*s.nodes.items(), *s.relationships.items()):
+        for name, prop in spec.properties.items():
+            yield owner, name, prop
+
+
+def _filled(owned: Mapping[str, schema.Property], given: Mapping[str, Any]) -> dict[str, Any]:
+    """Return ``given`` plus a valid value for every property the schema then requires."""
+    props = dict(given)
+    for _ in range(len(owned) + 1):  # required_when may chain; settle in a few passes
+        for name, prop in owned.items():
+            if name in props:
+                continue
+            condition = prop.required_when or {}
+            needed = prop.required or (
+                bool(condition) and all(props.get(k) == v for k, v in condition.items())
+            )
+            if needed:
+                props[name] = prop.values[0] if prop.values else f"{name}-value"
+    return props
+
+
+def _write(
+    builder: writes.WriteBuilder, s: schema.Schema, owner: str, props: dict[str, Any]
+) -> list[Statement]:
+    """Write one node or relationship of ``owner`` with exactly ``props``."""
+    if owner in s.nodes:
+        key = "id" if "id" in s.nodes[owner].properties else "name"
+        row = {key: "k-1", "updated_by": WRITER, "props": props}
+        return builder.merge_nodes(owner, [row])
+    spec = s.relationships[owner]
+    row = {"from_id": "a", "to_id": "b", "props": props}
+    return builder.merge_relationships(
+        owner, [row], from_label=spec.sources[0], to_label=spec.targets[0]
+    )
+
+
 # 1. schema contents
 
 
@@ -289,9 +354,17 @@ def test_status_lives_on_artifact_and_entity_with_three_values(loaded: schema.Sc
     props = schema.names(loaded).props
     assert {label for label in NODES if "status" in props[label]} == {"Artifact", "Entity"}
     for label in ("Artifact", "Entity"):
-        rule = loaded.nodes[label].properties["status"].rule
-        for value in ("active", "superseded", "deleted"):
-            assert re.search(rf"\b{value}\b", rule), (label, rule)
+        assert set(loaded.nodes[label].properties["status"].values) == STATUS_VALUES
+
+
+def test_allowed_values_and_conditions_are_schema_data(loaded: schema.Schema) -> None:
+    declared = {(o, n): set(p.values) for o, n, p in _properties(loaded) if p.values}
+    assert declared == DECLARED_VALUES
+    assert [(o, n) for o, n, p in _properties(loaded) if p.required] == [("RELATED_TO", "kind")]
+    conditional = {
+        (o, n): dict(p.required_when) for o, n, p in _properties(loaded) if p.required_when
+    }
+    assert conditional == {("RELATED_TO", "type"): {"kind": "extracted"}}
 
 
 # 3. constraints and indexes
@@ -400,20 +473,16 @@ def _related(
     )
 
 
-def test_related_to_kinds_constant() -> None:
-    assert tuple(writes.RELATED_TO_KINDS) == RELATED_TO_KINDS
-
-
-@pytest.mark.parametrize("kind", RELATED_TO_KINDS)
-def test_related_to_accepts_each_kind(kind: str) -> None:
+def test_related_to_accepts_each_kind_the_schema_declares(loaded: schema.Schema) -> None:
     builder = _builder()
-    props: dict[str, Any] = {"kind": kind}
-    if kind == "extracted":
-        props["type"] = "uses"
-    (stmt,) = _related(builder, props)
-    assert _carried(stmt, kind)
-    assert _in_scope(stmt.cypher, "Entity")
-    require_labeled(stmt.cypher)
+    owned = loaded.relationships["RELATED_TO"].properties
+    kinds = owned["kind"].values
+    assert kinds
+    for kind in kinds:
+        (stmt,) = _related(builder, _filled(owned, {"kind": kind}))
+        assert _carried(stmt, kind)
+        assert _in_scope(stmt.cypher, "Entity")
+        require_labeled(stmt.cypher)
 
 
 def test_related_to_links_communities() -> None:
@@ -431,6 +500,91 @@ def test_related_to_refuses_bad_kind_or_missing_type(props: dict[str, Any]) -> N
     builder = _builder()
     with pytest.raises(ValueError):
         _related(builder, props)
+
+
+# 5b. allowed values and conditions, for any property (owner: generic, nothing hard-coded)
+
+
+def test_builder_refuses_a_value_outside_values_for_any_property(loaded: schema.Schema) -> None:
+    builder = _builder()
+    checked = []
+    for owner, name, prop in _properties(loaded):
+        if not prop.values:
+            continue
+        owned = (loaded.nodes.get(owner) or loaded.relationships[owner]).properties
+        for value in prop.values:
+            assert _write(builder, loaded, owner, _filled(owned, {name: value}))
+        with pytest.raises(ValueError, match=name):
+            _write(builder, loaded, owner, _filled(owned, {name: BAD_VALUE}))
+        checked.append((owner, name))
+    assert set(checked) == set(DECLARED_VALUES)
+
+
+def test_builder_enforces_required_and_required_when_for_any_property(
+    loaded: schema.Schema,
+) -> None:
+    builder = _builder()
+    for owner, name, prop in _properties(loaded):
+        if not (prop.required or prop.required_when):
+            continue
+        owned = (loaded.nodes.get(owner) or loaded.relationships[owner]).properties
+        complete = _filled(owned, dict(prop.required_when or {}))
+        assert name in complete
+        assert _write(builder, loaded, owner, complete)
+        missing = {k: v for k, v in complete.items() if k != name}
+        with pytest.raises(ValueError, match=name):
+            _write(builder, loaded, owner, missing)
+
+
+def _custom_schema() -> schema.Schema:
+    """A schema unrelated to the committed one, so only schema data can drive the checks."""
+
+    def prop(**extra: Any) -> dict[str, Any]:
+        return {"layer": "core", "writer": "w.x", "readers": ["r.x"], "rule": "r", **extra}
+
+    common = {name: prop() for name in COMMON}
+    return schema.from_dict(
+        {
+            "nodes": {
+                "Thing": {
+                    "rule": "a thing",
+                    "properties": {**common, "id": prop(), "mood": prop(values=["calm", "busy"])},
+                }
+            },
+            "relationships": {
+                "LINKS": {
+                    "from": "Thing",
+                    "to": "Thing",
+                    "layer": "core",
+                    "writer": "w.x",
+                    "readers": ["r.x"],
+                    "rule": "a link",
+                    "properties": {
+                        "flavour": prop(values=["x", "y"], required=True),
+                        "note": prop(required_when={"flavour": "x"}),
+                    },
+                }
+            },
+        }
+    )
+
+
+def test_values_and_conditions_come_from_the_schema_not_from_src() -> None:
+    assert not hasattr(writes, "RELATED_TO_KINDS")
+    s = _custom_schema()
+    builder = writes.WriteBuilder(s, scope=SCOPE, clock=lambda: NOW)
+    assert _write(builder, s, "Thing", {"mood": "busy"})
+    assert _write(builder, s, "Thing", {})
+    with pytest.raises(ValueError, match="mood"):
+        _write(builder, s, "Thing", {"mood": "angry"})
+    assert _write(builder, s, "LINKS", {"flavour": "y"})
+    assert _write(builder, s, "LINKS", {"flavour": "x", "note": "n"})
+    with pytest.raises(ValueError, match="flavour"):
+        _write(builder, s, "LINKS", {"flavour": "z"})
+    with pytest.raises(ValueError, match="flavour"):
+        _write(builder, s, "LINKS", {"note": "n"})
+    with pytest.raises(ValueError, match="note"):
+        _write(builder, s, "LINKS", {"flavour": "x"})
 
 
 # 6. delete
