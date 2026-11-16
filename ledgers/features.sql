@@ -1090,3 +1090,18 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/-012', 'tests/unit/test_graph_health_content.py::test_supersedes_and_stale_community_name_their_types');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/-012', 'tests/unit/test_graph_health_content.py::test_awaiting_purge_has_one_statement_per_label');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/core/graph/-012', 'tests/unit/test_graph_health_content.py::test_supersedes_and_community_checks_only_when_declared');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/infra/llm_providers/-019', 'Wrap an Embedder so vectors are cached per model, kind and text hash, an', 'infra', 'slice spec LP-16; acceptance tests sealed at c58fa3ef42', 'active', 'src/memini/infra/llm_providers/', 'C-20261116-0170');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_is_an_embedder');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_text_embedded_twice_reaches_inner_once');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_cache_lives_in_the_store_across_instances');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_kind_is_part_of_the_key');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_different_model_is_a_miss');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_misses_are_sent_in_batches_and_order_is_kept');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_only_missing_texts_reach_inner');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_eight_threads_same_text_one_inner_call');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_duplicates_inside_one_request_embedded_once');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_no_batch_size_means_one_batch');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_no_matching_provider_means_one_batch');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_provider_is_first_in_order_serving_the_model');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_empty_request_makes_no_inner_call');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/llm_providers/-019', 'tests/unit/test_llm_providers_embed_cache.py::test_batch_size_not_positive_int_raises_config_error');
