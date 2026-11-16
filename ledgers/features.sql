@@ -2255,3 +2255,9 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_env_example_lists_password_without_value');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_env_example_lists_every_compose_variable');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_env_example_has_no_secret_value');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-config/graph_schema.yaml-001', 'The graph schema file is plain data: labels, relationship types, property names, and fixed value sets only for status and the two kinds', 'infra', 'GR-02; tests/unit/test_graph_schema_plain.py', 'active', 'config/', 'C-20261116-0225');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-config/graph_schema.yaml-001', 'tests/unit/test_graph_schema_plain.py::test_no_proof_of_use_or_constraint_keys');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-config/graph_schema.yaml-001', 'tests/unit/test_graph_schema_plain.py::test_values_only_for_status_and_the_two_kinds');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-config/graph_schema.yaml-001', 'tests/unit/test_graph_schema_plain.py::test_every_property_is_a_plain_name');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-config/graph_schema.yaml-001', 'tests/unit/test_graph_schema_plain.py::test_every_value_names_a_declared_property');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-config/graph_schema.yaml-001', 'tests/unit/test_graph_schema_plain.py::test_relationship_endpoints_are_declared_labels');
