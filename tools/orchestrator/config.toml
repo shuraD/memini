@@ -331,7 +331,7 @@ modules = ["src/memini/infra/llm_providers/"]
 
 [code_queues.graph-schema]
 queue = "../.memini-orchestrator/queue-graph-schema.txt"
-modules = ["src/memini/core/schema.py", "src/memini/core/graph/", "src/memini/infra/graph/"]
+modules = ["src/memini/core/schema.py", "src/memini/core/graph/", "src/memini/infra/graph/", "src/memini/core/archrag/"]
 
 [code_queues.ingest-units]
 queue = "../.memini-orchestrator/queue-ingest-units.txt"
