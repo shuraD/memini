@@ -6,7 +6,7 @@ Your job: implement the specification below so that the sealed acceptance tests 
 Rules:
 - You may change files only under: $allowed_paths
 - Never change these, even under the paths above: $protected_paths
-- The acceptance tests are sealed and must not change: $test_files
+$test_rule
   Any change outside the allowed paths rejects the whole task.
 - Write the minimal, typed (mypy --strict), documented, generic code. No business names, no hardcoded vocabularies, no prompts in code. Follow AGENTS.md.
 - You may run exactly these commands, written as shown (no cd, no pipes, no other command):
@@ -20,9 +20,7 @@ Rules:
   - the security gate is bandit: a finding you made safe (e.g. a URL scheme checked before
     urlopen) is marked on the line bandit reports with "# nosec <id>" plus the reason; ruff's
     "# noqa" does not silence bandit.
-- If you are convinced a sealed test is wrong, do not work around it: print one line
-  TEST-DISPUTE: <the reason, with evidence from the specification>
-  and stop.
+$dispute_rule
 - If you see work that should follow this task, print one line per item
   FOLLOW-UP: <what and why>
   (a proposal for the owner; it never becomes a task by itself).

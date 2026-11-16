@@ -162,6 +162,7 @@ class Config:
     sandbox_network: str = ""
     sandbox_neo4j_uri: str = ""
     sandbox_neo4j_user: str = ""
+    test_review: bool = False
     # the plan stage refuses a module plan whose dependency chain needs more waves than this
     plan_max_waves: int = 4
 
@@ -455,6 +456,7 @@ def load_config(
         sandbox_network=str(raw.get("sandbox_network", "")),
         sandbox_neo4j_uri=str(raw.get("sandbox_neo4j_uri", "")),
         sandbox_neo4j_user=str(raw.get("sandbox_neo4j_user", "")),
+        test_review=bool(raw.get("test_review", False)),
         identity_name=ident_name,
         identity_email=ident_email,
         flags_file=str(flags.get("file", "")),

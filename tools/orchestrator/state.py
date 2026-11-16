@@ -251,3 +251,22 @@ def read_queue(path: Path) -> list[QueueEntry]:
             QueueEntry(parts[0], spec if spec.is_absolute() else path.parent / spec, engine, paths)
         )
     return entries
+
+
+OPS_LEDGER = "ops-ledger.jsonl"
+
+
+def ops_log(cfg: Config, task_id: str, action: str, reason: str, **details: object) -> None:
+    """Append one line to the ops ledger (``<state_dir>/ops-ledger.jsonl``): who, what, why."""
+    record = {
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "actor": "orchestrator",
+        "action": action,
+        "target": task_id,
+        "reason": _one_line(reason)[:500],
+        "details": details,
+    }
+    with locked(cfg.state_dir / "ops.lock"):
+        cfg.state_dir.mkdir(parents=True, exist_ok=True)
+        with (cfg.state_dir / OPS_LEDGER).open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")

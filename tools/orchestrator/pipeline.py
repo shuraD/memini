@@ -33,6 +33,7 @@ from tools.orchestrator.executor import Executor, Result, allowed_env, executor_
 MERGED, REJECTED, DISPUTED, FAILED = "merged", "rejected", "disputed", "failed"
 LEDGER_FILES = ("ledgers/changes.sql", "ledgers/features.sql")
 _DIFF_LIMIT = 200_000
+_REVIEW_REJECTS = 2  # the first reject goes back to the coder, the second to the owner
 _REFS = Path("<all refs>")  # a pseudo entry in the watched files: the for-each-ref listing
 
 
@@ -66,6 +67,39 @@ class _Stop(Exception):  # noqa: N818 — internal control flow, not an error ty
 
 
 _TASK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def _exclude(paths: Sequence[str]) -> list[str]:
+    """Return git pathspecs that leave ``paths`` out of a diff (empty list = whole diff)."""
+    return ["--", ".", *(f":(exclude){p}" for p in paths)] if paths else []
+
+
+def _test_rule(edits: bool, files: Sequence[str]) -> str:
+    """Return the coder prompt's rule about the tests."""
+    names = " ".join(files)
+    if not edits:
+        return f"- The acceptance tests are sealed and must not change: {names}"
+    return (
+        f"- The tests are shown in full and you may edit one only when it contradicts the "
+        f"specification or the gate rules: {names}\n"
+        "  The originals are kept and every change is reviewed by QA. A test changed only to make "
+        "it pass, or one that checks less than the specification says, is rejected. Do not "
+        "delete a test file."
+    )
+
+
+def _dispute_rule(edits: bool) -> str:
+    """Return the coder prompt's rule about a test you cannot satisfy."""
+    if edits:
+        return (
+            "- If you cannot satisfy the specification even with a justified test edit, print "
+            "one line\n  TEST-DISPUTE: <the reason, with evidence from the specification>\n"
+            "  and stop."
+        )
+    return (
+        "- If you are convinced a sealed test is wrong, do not work around it: print one line\n"
+        "  TEST-DISPUTE: <the reason, with evidence from the specification>\n  and stop."
+    )
 
 
 def precheck(
@@ -191,6 +225,7 @@ class _Run:
         self.ident = gitops.identity_env(cfg.identity_name, cfg.identity_email)
         self.created: set[Path] = set()
         self.calls = 0
+        self.test_rejects = 0
         self.gate_script = gates.PYTEST_GATE
         self.gate_env: dict[str, str] = {}
         # gate passes reused while their inputs stay the same (main unmoved: no second pass)
@@ -264,6 +299,8 @@ class _Run:
         self.created.add(self.wt)
         self._setup(self.wt)
         qa_sha, files = self._qa(base)
+        if cfg.test_review:
+            qa_sha, files = self._reveal_holdout(qa_sha, files)
         sealed = gates.seal(self.repo, qa_sha, files)
         snap = self._coder(base, qa_sha, files, sealed)
         return self._merge(snap, qa_sha, files, sealed)
@@ -304,7 +341,7 @@ class _Run:
         protected: Sequence[str],
     ) -> Result:
         cfg = self.cfg
-        name = self.engines[role]
+        name = self.engines["qa" if role == "review" else role]
         self.calls += 1
         settings_path = self.run_dir / f"{self.calls:02d}-{role}-settings.json"
         guard = self.run_dir / f"{self.calls:02d}-{role}-guard.json"
@@ -327,7 +364,7 @@ class _Run:
         argv = engine.command(
             cfg,
             name,
-            role,
+            "audit" if role == "review" else role,
             workdir=workdir,
             settings=settings_path,
             prompt=prompt,
@@ -439,6 +476,8 @@ class _Run:
         raise _Stop(REJECTED, f"{what} changed protected orchestrator or git files")
 
     def _holdout(self, commit: str) -> list[gates.Failure]:
+        if self.cfg.test_review:  # the hold-out tests are slice tests now: QA reviews their edits
+            return []
         before = self._watched_files()
         ok = gates.holdout_passes(
             self.cfg,
@@ -492,6 +531,34 @@ class _Run:
         if res.code == 0:
             raise _Stop(REJECTED, "the QA tests pass on the base without any implementation")
         return qa_sha, files
+
+    def _reveal_holdout(self, qa_sha: str, files: list[str]) -> tuple[str, list[str]]:
+        """Copy the hold-out tests into the slice as ordinary tests (owner 2026-11-17).
+
+        The coder sees them in full and may edit one that contradicts the spec; they are
+        sealed with the QA tests, so the originals stay in git and every change is reviewed.
+        """
+        source = gates.holdout_dir(self.cfg, self.task_id)
+        revealed: list[str] = []
+        for src in sorted(source.glob("test_*.py")):
+            name = src.name
+            if (self.wt / "tests" / "unit" / name).exists():
+                name = "test_hold_" + name.removeprefix("test_")
+            rel = f"tests/unit/{name}"
+            shutil.copyfile(src, self.wt / rel)
+            revealed.append(rel)
+        sha = gitops.snapshot(
+            self.wt, f"{self.task_id}: hold-out tests shown to the coder", self.ident
+        )
+        state.ops_log(
+            self.cfg,
+            self.task_id,
+            "holdout_revealed",
+            "the hold-out tests are part of the slice tests; the coder may edit them, QA reviews",
+            files=revealed,
+            commit=sha[:12],
+        )
+        return sha, [*files, *revealed]
 
     def _qa_files(self, base: str, qa_sha: str) -> list[str]:
         """Return the test files QA added; reject anything else it changed."""
@@ -547,13 +614,14 @@ class _Run:
         """Run the coder attempts; return the commit the audit passed (the one to merge)."""
         cfg = self.cfg
         protected = [*cfg.protected, *cfg.guard_protected]
-        reference = "none"
-        if self.sp.reference:
-            ref_repo, branch = spec.resolve_reference(cfg, self.sp.reference)
-            reference = engine.render(cfg, "coder_reference", repo=str(ref_repo), branch=branch)
+        reference = self._reference_text()
         failures: list[str] = []
         snap = qa_sha
-        for attempt in range(1, cfg.max_coder_attempts + 1):
+        edits = cfg.test_review
+        writable = (*self.paths, *files) if edits else self.paths
+        limit, attempt = cfg.max_coder_attempts, 0
+        while attempt < limit:
+            attempt += 1
             prompt = engine.render(
                 cfg,
                 "coder",
@@ -563,20 +631,22 @@ class _Run:
                 allowed_args=" ".join(self.paths),
                 protected_paths=", ".join(cfg.protected),
                 test_files=" ".join(files),
+                test_rule=_test_rule(edits, files),
+                dispute_rule=_dispute_rule(edits),
                 reference=reference,
                 failures="\n".join(f"- {f}" for f in failures) or "none (first attempt)",
                 deny_patterns="  ".join(cfg.deny_patterns),
             )
-            res = self._agent("coder", prompt, self.wt, self.paths, protected)  # watched
+            res = self._agent("coder", prompt, self.wt, writable, protected)  # watched
             for item in engine.follow_ups(res.stdout):
                 state.inbox_append(cfg, self.task_id, "follow-up proposal (not queued)", 1, item)
             # leftovers, snapshot and anti-cheat checks come before a dispute is accepted
-            left = self._leftovers(self.paths, self._path_protected())
+            left = self._leftovers(writable, self._path_protected())
             if left:
                 raise _Stop(REJECTED, "; ".join(left))
             self._autoformat()
             snap = gitops.snapshot(self.wt, f"{self.task_id}: coder attempt {attempt}", self.ident)
-            cheats = self._cheats(qa_sha, snap, sealed, extra=())
+            cheats = self._cheats(qa_sha, snap, sealed, extra=files if edits else ())
             if cheats:
                 raise _Stop(REJECTED, "; ".join(cheats))
             reason = engine.dispute(res.stdout)
@@ -586,13 +656,18 @@ class _Run:
             if snap == qa_sha:
                 failures = ["no change was made"]
                 continue
-            diff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap)
-            hits = [f"deny scan: {h}" for h in gates.deny_hits(diff, cfg.deny_patterns)]
-            hits += self._ast_problems(qa_sha, snap)
+            changed = gates.changed_tests(self.repo, snap, sealed) if edits else []
+            hits = self._scan_changes(attempt, qa_sha, snap, changed)
             if hits:
                 failures = hits[:20]
                 continue
             failures = [f.summary() for f in self._gate_slice(snap, base, files)]
+            if not failures and edits:
+                failure = self._review_failure(attempt, qa_sha, snap, changed)
+                if failure:
+                    limit = max(limit, attempt + 1)  # one reject always gets one more attempt
+                    failures = [failure]
+                    continue
             if not failures:
                 verdict = self._audit(qa_sha, snap, files)
                 if verdict.passed:
@@ -613,7 +688,7 @@ class _Run:
             f"not green after {cfg.max_coder_attempts} attempts: " + "; ".join(failures)[:1500],
         )
 
-    def _ast_problems(self, qa_sha: str, snap: str) -> list[str]:
+    def _ast_problems(self, qa_sha: str, snap: str, skip: Sequence[str] = ()) -> list[str]:
         """Return the AST check's problems for the Python files the coder changed.
 
         Only the owner can let a refused commit through, with an inbox line naming it.
@@ -625,7 +700,7 @@ class _Run:
         sources = [
             (path, gitops.out(self.repo, "show", f"{snap}:{path}"))
             for status, path in gitops.name_status(self.repo, qa_sha, snap)
-            if status != "D" and path.endswith(".py")
+            if status != "D" and path.endswith(".py") and path not in skip
         ]
         return [f"AST check: {p}" for p in astcheck.check_files(sources, rule_set)]
 
@@ -643,7 +718,7 @@ class _Run:
             if p not in extra and not any(gates.matches(a, p) for a in self.cfg.allow)
         ]
         out += [f"not a regular file: {p}" for p in gitops.bad_modes(self.repo, base, head)]
-        out += gates.sealed_problems(self.repo, head, sealed)
+        out += gates.sealed_problems(self.repo, head, sealed, allow_edits=self.cfg.test_review)
         return out
 
     def _path_protected(self) -> list[str]:
@@ -676,6 +751,97 @@ class _Run:
             cfg, self.ex, run, "slice", base, host=self.host, reuse=self.gate_reuse
         )
         return fails + self._holdout(snap)
+
+    def _reference_text(self) -> str:
+        """Return the coder prompt's reference section ("none" without a reference repo)."""
+        if not self.sp.reference:
+            return "none"
+        ref_repo, branch = spec.resolve_reference(self.cfg, self.sp.reference)
+        return engine.render(self.cfg, "coder_reference", repo=str(ref_repo), branch=branch)
+
+    def _scan_changes(self, attempt: int, qa_sha: str, snap: str, changed: list[str]) -> list[str]:
+        """Return the deny-scan and AST problems of the coder's change (tests scanned apart)."""
+        cfg = self.cfg
+        diff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap, *_exclude(changed))
+        hits = [f"deny scan: {h}" for h in gates.deny_hits(diff, cfg.deny_patterns)]
+        if changed:  # edited tests: the deny scan too, minus plain use of pytest itself
+            tdiff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap, "--", *changed)
+            relaxed = [p for p in cfg.deny_patterns if p != r"\bpytest\b"]
+            hits += [f"deny scan (tests): {h}" for h in gates.deny_hits(tdiff, relaxed)]
+            self._store_test_diff(attempt, qa_sha, snap, changed)
+        return hits + self._ast_problems(qa_sha, snap, skip=changed)
+
+    def _store_test_diff(self, attempt: int, qa_sha: str, snap: str, changed: list[str]) -> None:
+        """Keep the diff of the coder's test changes next to the run (the originals stay in git)."""
+        diff = gitops.out(self.repo, "diff", "--no-color", qa_sha, snap, "--", *changed)
+        path = self.run_dir / f"test-changes-{attempt}.diff"
+        path.write_text(diff, encoding="utf-8")
+        state.ops_log(
+            self.cfg,
+            self.task_id,
+            "test_changed",
+            "the coder edited sealed tests; the original is kept, the diff is stored",
+            attempt=attempt,
+            files=changed,
+            diff=str(path),
+        )
+
+    def _review_failure(
+        self, attempt: int, qa_sha: str, snap: str, changed: list[str]
+    ) -> str | None:
+        """Return the coder's next failure after a reject; a second reject stops the slice."""
+        reason = self._review_step(attempt, qa_sha, snap, changed)
+        if reason is None:
+            return None
+        self.test_rejects += 1
+        if self.test_rejects >= _REVIEW_REJECTS:
+            self._escalate(qa_sha, snap, changed, reason)
+        return f"the QA review rejected your test change: {reason}"
+
+    def _review_step(self, attempt: int, qa_sha: str, snap: str, changed: list[str]) -> str | None:
+        """Run the QA review of the test changes; return the reject reason, None when fine."""
+        cfg = self.cfg
+        if not changed:
+            state.ops_log(
+                cfg, self.task_id, "test_review_skipped", "no test was changed", attempt=attempt
+            )
+            return None
+        tests = gitops.out(self.repo, "diff", "--no-color", qa_sha, snap, "--", *changed)
+        code = gitops.out(self.repo, "diff", "--no-color", qa_sha, snap, *_exclude(changed))
+        if len(tests) + len(code) > _DIFF_LIMIT:  # never review half a change
+            review = audit.Review(False, "the change is too large for one review")
+        else:
+            prompt = engine.render(
+                cfg,
+                "test_review",
+                task_id=self.task_id,
+                spec=self.sp.text(),
+                test_diff=tests,
+                code_diff=code,
+            )
+            with tempfile.TemporaryDirectory(prefix="memini-review-") as tmp:
+                res = self._agent("review", prompt, Path(tmp), (), ())
+            review = audit.parse_review(res.stdout)
+        state.ops_log(
+            cfg,
+            self.task_id,
+            "test_review_approve" if review.approved else "test_review_reject",
+            review.reason,
+            attempt=attempt,
+            files=changed,
+        )
+        return None if review.approved else review.reason
+
+    def _escalate(self, qa_sha: str, snap: str, changed: list[str], reason: str) -> None:
+        """Stop the slice for the owner after the second reject; its worktree is kept."""
+        text = (
+            f"test review rejected twice; last reason: {reason} | the coder's test diff is in "
+            f"{self.run_dir}; the sealed originals are in {qa_sha[:12]}; "
+            f"the coder's version in {snap[:12]}"
+        )
+        state.inbox_append(self.cfg, self.task_id, "test review rejected twice", 1, text)
+        state.ops_log(self.cfg, self.task_id, "test_review_escalated", text, files=changed)
+        raise _Stop(DISPUTED, f"the QA review rejected the test change twice: {reason}")
 
     def _audit(self, qa_sha: str, snap: str, files: list[str]) -> audit.Verdict:
         diff = gitops.out(self.repo, "diff", qa_sha, snap)

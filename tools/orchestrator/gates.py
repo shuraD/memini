@@ -74,12 +74,28 @@ def normalize_paths(paths: Iterable[str]) -> tuple[str, ...]:
     return tuple(out)
 
 
-def sealed_problems(repo: Path, rev: str, sealed: Mapping[str, str]) -> list[str]:
-    """Return a problem per sealed test whose content at ``rev`` differs from its hash."""
+def sealed_problems(
+    repo: Path, rev: str, sealed: Mapping[str, str], *, allow_edits: bool = False
+) -> list[str]:
+    """Return a problem per sealed test whose content at ``rev`` differs from its hash.
+
+    With ``allow_edits`` (the coder may edit tests, reviewed by QA) only a missing test is a
+    problem; a changed one is found by :func:`changed_tests` and reviewed.
+    """
     return [
         f"sealed test changed or missing: {path}"
         for path, digest in sorted(sealed.items())
-        if gitops.blob_sha256(repo, rev, path) != digest
+        if (found := gitops.blob_sha256(repo, rev, path)) is None
+        or (not allow_edits and found != digest)
+    ]
+
+
+def changed_tests(repo: Path, rev: str, sealed: Mapping[str, str]) -> list[str]:
+    """Return the sealed tests whose content at ``rev`` differs from the sealed hash."""
+    return [
+        path
+        for path, digest in sorted(sealed.items())
+        if (found := gitops.blob_sha256(repo, rev, path)) is not None and found != digest
     ]
 
 
@@ -501,8 +517,12 @@ def holdout_passes(
     env: Mapping[str, str] | None = None,
     sandbox: Executor | None = None,
     markers: Sequence[str] = (),
+    use_slice_tests: bool = False,
 ) -> bool:
     """Run the hold-out tests on the host against an export of ``commit``.
+
+    With ``use_slice_tests`` the hold-out files are the ones in the commit itself
+    (``tests/holdout/``, shown to the coder and reviewed by QA), not the sealed originals.
 
     They run through the pytest gate (junit, never the exit code alone), once per env
     profile, with an allow-listed environment. With ``sandbox`` (the docker executor) the
@@ -532,7 +552,8 @@ def holdout_passes(
                 **prof.env,
             }
             # once per profile: the copy from the previous profile is replaced, not added to
-            shutil.copytree(tests, placed, dirs_exist_ok=True)
+            if not use_slice_tests:
+                shutil.copytree(tests, placed, dirs_exist_ok=True)
             if sandbox is None:
                 argv = pytest_gate_argv(
                     python,

@@ -65,3 +65,39 @@ def parse(text: str) -> Verdict:
     if rejects:
         return Verdict(False, tuple(dict.fromkeys(f for v in rejects for f in v.findings)))
     return Verdict(True, tuple(dict.fromkeys(f for v in verdicts for f in v.findings)))
+
+
+@dataclass(frozen=True)
+class Review:
+    """The QA review's decision on a test change and its reason."""
+
+    approved: bool
+    reason: str
+
+
+def parse_review(text: str) -> Review:
+    """Return the review's decision; it approves only if EVERY verdict object approves.
+
+    The answer is ``{"verdict": "approve" | "reject", "reason": str}``. Anything else (no
+    verdict, an unknown verdict, an empty reason, a quoted approve next to a reject) is a
+    reject: the review fails closed, like the audit.
+    """
+    seen: list[Review] = []
+    for value in _candidates(text):
+        if not isinstance(value, dict) or "verdict" not in value:
+            continue
+        verdict, reason = value.get("verdict"), value.get("reason")
+        if (
+            verdict not in ("approve", "reject")
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            seen.append(Review(False, "review verdict is not approve or reject with a reason"))
+        else:
+            seen.append(Review(verdict == "approve", reason.strip()))
+    if not seen:
+        return Review(False, "review output is not a JSON verdict (fail closed)")
+    rejects = [r for r in seen if not r.approved]
+    if rejects:
+        return Review(False, "; ".join(dict.fromkeys(r.reason for r in rejects)))
+    return Review(True, "; ".join(dict.fromkeys(r.reason for r in seen)))
