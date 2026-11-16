@@ -60,9 +60,20 @@ class FakeRecorder:
 
     def __init__(self) -> None:
         self.records: list[tuple[str, float, int, int | None]] = []
+        self.scopes: list[str | None] = []
 
-    def record(self, name: str, seconds: float, rows: int, db_hits: int | None) -> None:
+    def record(
+        self,
+        name: str,
+        seconds: float,
+        rows: int,
+        db_hits: int | None,
+        *,
+        scope: str | None = None,
+    ) -> None:
+        # graph schema v2 (owner 2026-11-16): the session also passes the statement's scope.
         self.records.append((name, seconds, rows, db_hits))
+        self.scopes.append(scope)
 
 
 class FakeTimer:

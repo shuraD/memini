@@ -1,9 +1,15 @@
-"""GS-08: batched node and relationship writes that MERGE on id.
+"""GS-08: batched node and relationship writes that MERGE on (scope, id).
 
 Spec: GS-08 (src/memini/core/graph/writes.py) and SPEC-graph-schema, decision "Scale: writes
-go in batches (UNWIND $rows)"; owner 2026-11-16: writes MERGE on id, a corpus is kept apart
-by its own database (no scope, no audit fields). No database in these tests.
+go in batches (UNWIND $rows)"; graph schema v2 (owner 2026-11-16): the builder is bound to a
+scope and a clock, node writes MERGE on (scope, id) and set updated_by / updated_at, and
+relationship endpoints are matched inside the scope (INTERFACE in test_graph_schema_v2.py).
+Kept: a built row is the input row with ``props`` defaulted to {}; RESERVED_NODE_FIELDS now
+holds the fields the builder sets itself: id, scope, updated_by and updated_at.
+No database in these tests.
 """
+
+import re
 
 import pytest
 
@@ -11,6 +17,11 @@ from memini.core import schema
 from memini.core.graph import checks
 from memini.core.graph.types import Statement
 from memini.core.graph.writes import RESERVED_NODE_FIELDS, WriteBuilder
+
+SCOPE = "scopevalqzx"
+NOW = "2026-11-16T09:00:00+00:00"
+WRITER = "writervalqzx"
+AUDIT = {"scope", "updated_by", "updated_at"}
 
 
 def _prop(rule: str = "a rule") -> dict:
@@ -37,9 +48,21 @@ def _schema() -> schema.Schema:
             "nodes": {
                 "Document": {
                     "rule": "a source file",
-                    "properties": {"id": _prop(), "title": _prop(), "pages": _prop()},
+                    "properties": {
+                        **{name: _prop() for name in AUDIT},
+                        "id": _prop(),
+                        "title": _prop(),
+                        "pages": _prop(),
+                    },
                 },
-                "Topic": {"rule": "a subject", "properties": {"id": _prop(), "name": _prop()}},
+                "Topic": {
+                    "rule": "a subject",
+                    "properties": {
+                        **{name: _prop() for name in AUDIT},
+                        "id": _prop(),
+                        "name": _prop(),
+                    },
+                },
             },
             "relationships": {
                 "ABOUT": _rel("Document", "Topic", {"weight": _prop()}),
@@ -50,11 +73,17 @@ def _schema() -> schema.Schema:
 
 
 def _builder(**kwargs):
-    return WriteBuilder(_schema(), **kwargs)
+    return WriteBuilder(_schema(), scope=SCOPE, clock=lambda: NOW, **kwargs)
 
 
 def _node_rows(n: int) -> list[dict]:
-    return [{"id": f"doc-{i}", "props": {"title": f"T{i}"}} for i in range(n)]
+    return [{"id": f"doc-{i}", "updated_by": WRITER, "props": {"title": f"T{i}"}} for i in range(n)]
+
+
+def _map_keys(cypher: str, clause: str, var: str, label: str) -> set[str] | None:
+    """Return the keys of the ``<clause> (<var>:<label> {...})`` pattern map, if present."""
+    m = re.search(rf"{clause} \({var}:{label} \{{([^}}]*)\}}\)", cypher)
+    return set(re.findall(r"(\w+)\s*:", m.group(1))) if m else None
 
 
 def _rel_rows(n: int) -> list[dict]:
@@ -66,7 +95,7 @@ def _rel_rows(n: int) -> list[dict]:
 
 def test_reserved_field_sets():
     assert isinstance(RESERVED_NODE_FIELDS, frozenset)
-    assert set(RESERVED_NODE_FIELDS) == {"id"}
+    assert set(RESERVED_NODE_FIELDS) == {"id", "scope", "updated_by", "updated_at"}
 
 
 # --- constructor -------------------------------------------------------------------------
@@ -75,7 +104,7 @@ def test_reserved_field_sets():
 @pytest.mark.parametrize("size", [0, -1])
 def test_batch_size_below_one_is_refused(size):
     with pytest.raises(ValueError):
-        WriteBuilder(_schema(), batch_size=size)
+        WriteBuilder(_schema(), scope=SCOPE, clock=lambda: NOW, batch_size=size)
 
 
 def test_batch_size_one_is_accepted():
@@ -114,11 +143,14 @@ def test_merge_nodes_empty_rows_gives_no_statement():
 
 
 def test_merge_nodes_rows_carry_id_and_props_and_default_props():
-    rows = [{"id": "d1", "props": {"title": "x", "pages": 3}}, {"id": "d2"}]
+    rows = [
+        {"id": "d1", "updated_by": WRITER, "props": {"title": "x", "pages": 3}},
+        {"id": "d2", "updated_by": WRITER},
+    ]
     (stmt,) = _builder().merge_nodes("Document", rows)
     assert stmt.params["rows"] == [
-        {"id": "d1", "props": {"title": "x", "pages": 3}},
-        {"id": "d2", "props": {}},
+        {"id": "d1", "updated_by": WRITER, "props": {"title": "x", "pages": 3}},
+        {"id": "d2", "updated_by": WRITER, "props": {}},
     ]
 
 
@@ -130,27 +162,47 @@ def test_merge_nodes_statement_fields():
     assert isinstance(stmt, Statement)
     assert stmt.name == "write:Document"
     assert stmt.kind == "write"
-    assert set(stmt.params) == {"rows"}
+    assert stmt.scope == SCOPE
+    assert "rows" in stmt.params
+    assert SCOPE in stmt.params.values()
     c = stmt.cypher
-    assert "MERGE (n:Document {id: row.id})" in c
+    assert _map_keys(c, "MERGE", "n", "Document") == {"scope", "id"}
     assert "SET n += row.props" in c
 
 
 def test_merge_nodes_exact_cypher():
-    (stmt,) = _builder().merge_nodes("Topic", [{"id": "t1"}])
-    assert stmt.cypher == ("UNWIND $rows AS row MERGE (n:Topic {id: row.id}) SET n += row.props")
+    (stmt,) = _builder().merge_nodes("Topic", [{"id": "t1", "updated_by": WRITER}])
+    c = stmt.cypher
+    assert c.startswith("UNWIND $rows AS row MERGE (n:Topic {")
+    assert _map_keys(c, "MERGE", "n", "Topic") == {"scope", "id"}
+    assert "SET n += row.props" in c
+    assert re.search(r"\bn\.updated_by\s*=", c)
+    assert re.search(r"\bn\.updated_at\s*=", c)
     assert stmt.name == "write:Topic"
 
 
 def test_merge_nodes_values_never_in_cypher():
     rows = [
-        {"id": "idvalqzx1", "props": {"title": "titlevalqzx", "pages": 987654}},
-        {"id": "idvalqzx2", "props": {"title": "Robert'); DROP"}},
+        {
+            "id": "idvalqzx1",
+            "updated_by": WRITER,
+            "props": {"title": "titlevalqzx", "pages": 987654},
+        },
+        {"id": "idvalqzx2", "updated_by": WRITER, "props": {"title": "Robert'); DROP"}},
     ]
     stmts = _builder(batch_size=1).merge_nodes("Document", rows)
     assert len(stmts) == 2
     for s in stmts:
-        for value in ("idvalqzx1", "idvalqzx2", "titlevalqzx", "987654", "DROP"):
+        for value in (
+            "idvalqzx1",
+            "idvalqzx2",
+            "titlevalqzx",
+            "987654",
+            "DROP",
+            SCOPE,
+            WRITER,
+            NOW,
+        ):
             assert value not in s.cypher
 
 
@@ -170,35 +222,41 @@ def test_merge_nodes_unknown_label_is_refused():
 @pytest.mark.parametrize(
     "row",
     [
-        {"props": {"title": "x"}},
-        {"id": ""},
-        {"id": 7},
-        {"id": None},
+        {"updated_by": WRITER, "props": {"title": "x"}},
+        {"id": "", "updated_by": WRITER},
+        {"id": 7, "updated_by": WRITER},
+        {"id": None, "updated_by": WRITER},
     ],
 )
 def test_merge_nodes_row_without_valid_id_is_refused(row):
     with pytest.raises(ValueError):
-        _builder().merge_nodes("Document", [{"id": "ok"}, row])
+        _builder().merge_nodes("Document", [{"id": "ok", "updated_by": WRITER}, row])
 
 
-@pytest.mark.parametrize("name", ["id"])
+@pytest.mark.parametrize("name", ["id", "scope", "updated_by", "updated_at"])
 def test_merge_nodes_reserved_prop_is_refused(name):
     with pytest.raises(ValueError, match=name):
-        _builder().merge_nodes("Document", [{"id": "d1", "props": {name: "x"}}])
+        _builder().merge_nodes(
+            "Document", [{"id": "d1", "updated_by": WRITER, "props": {name: "x"}}]
+        )
 
 
 def test_merge_nodes_undeclared_prop_is_refused():
     with pytest.raises(ValueError, match="colourqzx"):
-        _builder().merge_nodes("Document", [{"id": "d1", "props": {"colourqzx": "red"}}])
+        _builder().merge_nodes(
+            "Document", [{"id": "d1", "updated_by": WRITER, "props": {"colourqzx": "red"}}]
+        )
 
 
 def test_merge_nodes_prop_of_other_label_is_refused():
     with pytest.raises(ValueError, match="name"):
-        _builder().merge_nodes("Document", [{"id": "d1", "props": {"name": "x"}}])
+        _builder().merge_nodes(
+            "Document", [{"id": "d1", "updated_by": WRITER, "props": {"name": "x"}}]
+        )
 
 
 def test_merge_nodes_bad_prop_in_later_batch_refuses_whole_call():
-    rows = [*_node_rows(4), {"id": "d9", "props": {"bogusqzx": 1}}]
+    rows = [*_node_rows(4), {"id": "d9", "updated_by": WRITER, "props": {"bogusqzx": 1}}]
     with pytest.raises(ValueError, match="bogusqzx"):
         _builder(batch_size=2).merge_nodes("Document", rows)
 
@@ -230,14 +288,17 @@ def test_merge_relationships_statement_fields():
     (stmt,) = _builder().merge_relationships("ABOUT", rows, from_label="Document", to_label="Topic")
     assert stmt.name == "write:ABOUT"
     assert stmt.kind == "write"
-    assert set(stmt.params) == {"rows"}
+    assert stmt.scope == SCOPE
+    assert "rows" in stmt.params
+    assert SCOPE in stmt.params.values()
     assert stmt.params["rows"] == [
         {"from_id": "d1", "to_id": "t1", "props": {"weight": 2}},
         {"from_id": "d2", "to_id": "t2", "props": {}},
     ]
     c = stmt.cypher
-    assert "MATCH (a:Document {id: row.from_id})" in c
-    assert "MATCH (b:Topic {id: row.to_id})" in c
+    assert _map_keys(c, "MATCH", "a", "Document") == {"scope", "id"}
+    assert _map_keys(c, "MATCH", "b", "Topic") == {"scope", "id"}
+    assert "row.from_id" in c and "row.to_id" in c
     assert "MERGE (a)-[r:ABOUT]->(b)" in c
     assert "SET r += row.props" in c
 
@@ -246,18 +307,17 @@ def test_merge_relationships_exact_cypher():
     (stmt,) = _builder().merge_relationships(
         "CITES", [{"from_id": "d1", "to_id": "d2"}], from_label="Document", to_label="Document"
     )
-    assert stmt.cypher == (
-        "UNWIND $rows AS row "
-        "MATCH (a:Document {id: row.from_id}) "
-        "MATCH (b:Document {id: row.to_id}) "
-        "MERGE (a)-[r:CITES]->(b) SET r += row.props"
-    )
+    c = stmt.cypher
+    assert c.startswith("UNWIND $rows AS row MATCH (a:Document {")
+    assert _map_keys(c, "MATCH", "a", "Document") == {"scope", "id"}
+    assert _map_keys(c, "MATCH", "b", "Document") == {"scope", "id"}
+    assert c.endswith("MERGE (a)-[r:CITES]->(b) SET r += row.props")
 
 
 def test_merge_relationships_values_never_in_cypher():
     rows = [{"from_id": "fromqzx", "to_id": "toqzx", "props": {"weight": 4242}}]
     (stmt,) = _builder().merge_relationships("ABOUT", rows, from_label="Document", to_label="Topic")
-    for value in ("fromqzx", "toqzx", "4242"):
+    for value in ("fromqzx", "toqzx", "4242", SCOPE):
         assert value not in stmt.cypher
 
 

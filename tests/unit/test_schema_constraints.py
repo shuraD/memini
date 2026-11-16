@@ -1,10 +1,12 @@
-"""GS-02: an id uniqueness constraint per label with an id, and one ordered setup list that
+"""GS-02: a per-scope uniqueness constraint per keyed label, and one ordered setup list that
 never creates an index a constraint backs.
 
-Spec: SPEC-graph-schema, schema block ``constraints: [unique id on every label that has an id]``
-(owner 2026-11-16: uniqueness on id per label; no scope, no status). No database in these tests.
+Spec: SPEC-graph-schema, schema block ``constraints``; graph schema v2 (owner 2026-11-16):
+uniqueness on (scope, id) for a label with an id, on (scope, name) for a label keyed by name.
+No database in these tests.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -68,32 +70,44 @@ def _count(stmts: list[str], fragment: str) -> int:
     return sum(1 for st in stmts if fragment in st)
 
 
+def _unique(st: str) -> tuple[str, set[str]] | None:
+    """Return ``(label, columns)`` of a uniqueness constraint statement, else None."""
+    m = re.fullmatch(
+        r"CREATE CONSTRAINT \w+ IF NOT EXISTS FOR \((\w+):(\w+)\) REQUIRE \(([^)]*)\) IS UNIQUE", st
+    )
+    if m is None:
+        return None
+    var, label, cols = m.groups()
+    names = {c.strip().removeprefix(f"{var}.") for c in cols.split(",")}
+    return label, names
+
+
 # --- constraint_statements ---------------------------------------------------------------------
 
 
-def test_one_constraint_for_the_label_with_an_id_only() -> None:
+def test_one_scoped_constraint_per_keyed_label() -> None:
     stmts = schema.constraint_statements(schema.from_dict(_minimal()))
-    assert len(stmts) == 1
-    (st,) = stmts
-    assert "FOR (n:Document)" in st
-    assert "IF NOT EXISTS" in st
-    assert "CREATE CONSTRAINT document_id_unique" in st
-    assert st.endswith("REQUIRE n.id IS UNIQUE")
+    assert len(stmts) == 2
+    assert all("IF NOT EXISTS" in st for st in stmts)
+    assert [_unique(st) for st in stmts] == [
+        ("Document", {"scope", "id"}),
+        ("Domain", {"scope", "name"}),
+    ]
 
 
 def test_constraint_statement_has_the_exact_form() -> None:
     stmts = schema.constraint_statements(schema.from_dict(_minimal()))
-    assert stmts == [
-        "CREATE CONSTRAINT document_id_unique IF NOT EXISTS FOR (n:Document) REQUIRE n.id IS UNIQUE"
-    ]
+    assert all(_unique(st) is not None for st in stmts)
+    assert not any("REQUIRE n.id IS UNIQUE" in st for st in stmts)
 
 
 def test_constraints_follow_schema_nodes_order() -> None:
     stmts = schema.constraint_statements(schema.from_dict(_rich()))
-    assert len(stmts) == 2
-    assert "FOR (n:Document)" in stmts[0]
-    assert "FOR (n:Chunk)" in stmts[1]
-    assert "CREATE CONSTRAINT chunk_id_unique" in stmts[1]
+    assert [_unique(st) for st in stmts] == [
+        ("Document", {"scope", "id"}),
+        ("Domain", {"scope", "name"}),
+        ("Chunk", {"scope", "id"}),
+    ]
 
 
 # --- index_statements ----------------------------------------------------------------------
@@ -154,9 +168,7 @@ def test_setup_puts_constraints_first_and_drops_backed_indexes() -> None:
     index_positions = [i for i, st in enumerate(stmts) if _is_index(st)]
     assert constraint_positions and index_positions
     assert max(constraint_positions) < min(index_positions)
-    assert any(
-        "CREATE CONSTRAINT document_id_unique" in st and "FOR (n:Document)" in st for st in stmts
-    )
+    assert ("Document", {"scope", "id"}) in [_unique(st) for st in stmts]
     assert not any(_is_index(st) and "FOR (n:Document) ON (n.id)" in st for st in stmts)
 
 

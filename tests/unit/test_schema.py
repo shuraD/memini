@@ -72,7 +72,7 @@ def _minimal() -> dict:
 def test_the_committed_schema_loads_and_validates() -> None:
     s = schema.load(SCHEMA_FILE)
     assert "Entity" in s.nodes and "Community" in s.nodes
-    assert "MEMBER_OF" in s.relationships
+    assert "BELONGS_TO_COMMUNITY" in s.relationships
     assert schema.validate(s) == []
 
 
@@ -146,7 +146,10 @@ def test_typed_names_match_the_schema_exactly() -> None:
     names = schema.names(s)
     assert set(names.labels) == set(s.nodes)
     assert set(names.rels) == set(s.relationships)
-    assert names.labels["Entity"] == "Entity" and names.rels["MEMBER_OF"] == "MEMBER_OF"
+    assert (
+        names.labels["Entity"] == "Entity"
+        and names.rels["BELONGS_TO_COMMUNITY"] == "BELONGS_TO_COMMUNITY"
+    )
     assert names.props["Entity"]["embedding"] == "embedding"
 
 
@@ -207,11 +210,11 @@ def test_duplicate_detector_queries_cover_every_same_fact_pair() -> None:
 
 def test_relationship_properties_carry_proof_and_typed_names() -> None:
     s = schema.load(SCHEMA_FILE)
-    rel = s.relationships["RELATES"]
-    assert set(rel.properties) >= {"type_name", "weight", "evidence_unit"}
-    assert rel.properties["weight"].writer and rel.properties["weight"].readers
-    assert schema.names(s).rel_props["RELATES"]["weight"] == "weight"
-    for name in ("SIMILAR", "LINKED"):
+    rel = s.relationships["RELATED_TO"]
+    assert set(rel.properties) >= {"kind", "type", "description"}
+    assert rel.properties["kind"].writer and rel.properties["kind"].readers
+    assert schema.names(s).rel_props["RELATED_TO"]["kind"] == "kind"
+    for name in ("SIMILAR", "HIERARCHICAL_LINK"):
         assert s.relationships[name].properties, name
 
 
