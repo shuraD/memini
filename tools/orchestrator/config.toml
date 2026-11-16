@@ -97,17 +97,17 @@ forbidden_names = [
 ]
 
 # the coder may change only these paths (a trailing "/" is a directory) ...
-allow = ["src/memini/", "deploy/", "config/"]  # owner 2026-11-16 (option B): deploy/ and config/ go through QA to the devops queue
+allow = ["src/memini/"]
 # ... except these, which win over the allow list (and are blocked by the guard hook)
 protected = ["src/memini/infra/flags.py"]
 # the guard hook also blocks these for the coder (early warning; the path gate decides)
 guard_protected = [
-  "tests/", "tools/", "ledgers/", ".github/", ".githooks/", "docs/",
+  "tests/", "tools/", "ledgers/", ".github/", ".githooks/", "config/", "docs/",
   "pyproject.toml", "uv.lock", "**/conftest.py", "**/pytest.ini", "**/setup.cfg",
 ]
 # a module is <root><first path component>; a spec's paths must lie inside one module,
 # and the root names the ledger layer of the feature row written on merge
-module_roots = { "src/memini/core/" = "core", "src/memini/extensions/" = "extensions", "src/memini/infra/" = "infra", "deploy/" = "infra", "config/" = "infra" }
+module_roots = { "src/memini/core/" = "core", "src/memini/extensions/" = "extensions", "src/memini/infra/" = "infra" }
 # untracked or ignored files an agent may leave outside its paths (caches and its venv);
 # anything else rejects the step. Gates never run in an agent worktree anyway.
 ignored_ok = ["__pycache__/", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".venv/"]
@@ -331,12 +331,7 @@ modules = ["src/memini/infra/llm_providers/"]
 
 [code_queues.graph-schema]
 queue = "../.memini-orchestrator/queue-graph-schema.txt"
-modules = ["src/memini/infra/graph/", "src/memini/core/archrag/"]
-
-[code_queues.devops]
-# owner 2026-11-16: only the DevOps squad changes config/ and deploy/
-queue = "../.memini-orchestrator/queue-devops.txt"
-modules = ["deploy/", "config/"]
+modules = ["src/memini/infra/graph/", "src/memini/core/archrag/", "deploy/", "config/graph_schema.yaml"]
 
 [code_queues.query]
 queue = "../.memini-orchestrator/queue-query.txt"
