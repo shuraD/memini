@@ -140,10 +140,12 @@ class ProviderChain:
         temperature: float = 0.0,
         seed: int | None = None,
         stage: str | None = None,
+        model: str | None = None,
     ) -> Generation:
         """Generate one completion for ``prompt`` from the first provider that answers.
 
-        ``stage`` only labels the call-log row.
+        ``stage`` only labels the call-log row. ``model`` names a model for this call
+        and is passed to every provider attempted (None: each provider's role model).
 
         Raises:
             BudgetExceeded: before any send when a spending cap is reached.
@@ -174,6 +176,7 @@ class ProviderChain:
                         env=self._env,
                         transport=counting,
                         clock=self._clock,
+                        model=model,
                     )
             except ProviderFailure as failure:
                 attempts.append(failure.attempt)

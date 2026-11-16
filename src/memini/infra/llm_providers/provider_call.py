@@ -25,6 +25,12 @@ __all__ = ["ProviderFailure", "call_provider"]
 _MAX_SENDS = 2
 """One send plus one retry when the outcome says to retry."""
 
+_KEEP_ALIVE_KEY = "keep_alive"
+"""Limit key of how long the server keeps the sent model loaded."""
+
+_IDLE_KEEP_ALIVE_KEY = "idle_keep_alive"
+"""Limit key of the residency sent instead for a per-call model other than the role's."""
+
 _SUCCESS_MIN = 200
 _SUCCESS_MAX = 300
 
@@ -131,13 +137,18 @@ def call_provider(
     env: Mapping[str, str],
     transport: Transport,
     clock: Callable[[], float],
+    model: str | None = None,
 ) -> Generation:
     """Generate one completion for ``prompt`` from ``spec`` serving ``role``.
 
     The key is read from ``env`` under ``spec.key_env`` (a provider without
     ``key_env`` needs none). Limits are the provider's, overridden by the role's
-    model. ``seconds`` is the ``clock`` difference across the sends. ``config`` is
-    accepted for the caller's convenience; everything needed is on ``spec``.
+    model. ``model`` names the model to send; None or the role's own model name sends
+    the role's model. Any other name is sent with the same limits except that
+    ``keep_alive`` becomes the ``idle_keep_alive`` limit (dropped when that is not
+    configured), so only the role's model stays resident. ``seconds`` is the ``clock``
+    difference across the sends. ``config`` is accepted
+    for the caller's convenience; everything needed is on ``spec``.
 
     Raises:
         ProviderFailure: on every non-success. A missing key or model raises with
@@ -151,19 +162,25 @@ def call_provider(
         api_key = env.get(spec.key_env)
         if not api_key:
             raise _fail(spec, Reason.NO_KEY, f"environment variable {spec.key_env} is not set")
-    model = spec.models.get(role)
-    if model is None:
+    role_model = spec.models.get(role)
+    if role_model is None:
         raise _fail(spec, Reason.NO_MODEL, f"no model for role {role!r}")
+    limits: dict[str, Any] = {**spec.limits, **role_model.limits}
+    sent_name = role_model.name if model is None else model
+    if sent_name != role_model.name:
+        limits.pop(_KEEP_ALIVE_KEY, None)
+        if _IDLE_KEEP_ALIVE_KEY in limits:
+            limits[_KEEP_ALIVE_KEY] = limits[_IDLE_KEEP_ALIVE_KEY]
     kind = _KINDS[spec.kind]
     request = kind.build(
         base_url=spec.base_url,
-        model=model.name,
+        model=sent_name,
         prompt=prompt,
         system=system,
         json_mode=json_mode,
         temperature=temperature,
         seed=seed,
-        limits={**spec.limits, **model.limits},
+        limits=limits,
         api_key=api_key,
     )
     started = clock()
@@ -174,7 +191,7 @@ def call_provider(
             return Generation(
                 text=result.text,
                 provider=spec.name,
-                model=model.name,
+                model=sent_name,
                 role=role,
                 prompt_tokens=result.prompt_tokens,
                 completion_tokens=result.completion_tokens,

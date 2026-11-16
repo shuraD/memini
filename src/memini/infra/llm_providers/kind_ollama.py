@@ -37,8 +37,10 @@ def build_request(
 
     Messages are ``[system, user]`` when ``system`` is given, else ``[user]``.
     ``json_mode=True`` sets ``format`` to ``"json"``; a mapping is sent as the schema.
-    Temperature, seed and the ``max_tokens`` limit (as ``num_predict``) go in
-    ``options``; ``timeout_s`` is the request timeout. ``api_key`` is accepted for a
+    Temperature, seed and the ``num_ctx``, ``repeat_penalty`` and ``max_tokens`` (as
+    ``num_predict``) limits go in ``options``; the ``keep_alive`` limit is sent as
+    given at the top level. An absent limit is not sent; ``stream`` is always false.
+    ``timeout_s`` is the request timeout. ``api_key`` is accepted for a
     uniform signature but never sent: the server is local and keyless.
     """
     del api_key
@@ -49,6 +51,12 @@ def build_request(
     options: dict[str, Any] = {"temperature": temperature}
     if seed is not None:
         options["seed"] = seed
+    num_ctx = limits.get("num_ctx")
+    if num_ctx is not None:
+        options["num_ctx"] = int(num_ctx)
+    repeat_penalty = limits.get("repeat_penalty")
+    if repeat_penalty is not None:
+        options["repeat_penalty"] = float(repeat_penalty)
     max_tokens = limits.get("max_tokens")
     if max_tokens is not None:
         options["num_predict"] = int(max_tokens)
@@ -58,6 +66,9 @@ def build_request(
         "stream": False,
         "options": options,
     }
+    keep_alive = limits.get("keep_alive")
+    if keep_alive is not None:
+        payload["keep_alive"] = keep_alive
     if isinstance(json_mode, dict):
         payload["format"] = json_mode
     elif json_mode:
