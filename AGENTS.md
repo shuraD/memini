@@ -48,7 +48,7 @@ Every team session (dev1-dev4, QA, DevOps) and every orchestrator agent:
 6. **Fix your own mistakes and keep going.** Report them only if they change the result.
 7. **Count your own time; don't blame others for it.**
 8. **One short report at the end:** the commits, the files with +/- lines, the tests run with pass and fail counts, the start and end time, the cost, and only real open decisions, one line each.
-9. **Log every state change** (worktrees, containers, queues, commits) as one line in `/Users/natasha/work/.memini-orchestrator/ops-ledger.jsonl`. Never push, never merge, never use `--no-verify`. vp-rnd moves main forward and the owner pushes.
+9. **Log every state change** (worktrees, containers, queues, commits) as one line in `ops-ledger.jsonl`, in the orchestrator's state folder. Never push, never merge, never use `--no-verify`. vp-rnd moves main forward and the owner pushes.
 
 **Who owns what** (nobody changes another team's files):
 - **dev1:** `src/memini/infra/llm_providers/`
