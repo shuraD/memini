@@ -1,7 +1,16 @@
-"""LLM provider layer: public types re-exported from :mod:`.types`."""
+"""LLM provider layer: public types from :mod:`.types` and the role registry."""
 
 from __future__ import annotations
 
+from memini.infra.llm_providers.registry import (
+    configure_for_tests,
+    embedder,
+    export_jsonl,
+    llm_for,
+    question,
+    reset_for_tests,
+    summary,
+)
 from memini.infra.llm_providers.types import (
     LLM,
     ROLES,
@@ -22,4 +31,11 @@ __all__ = [
     "Generation",
     "LLMError",
     "Reason",
+    "configure_for_tests",
+    "embedder",
+    "export_jsonl",
+    "llm_for",
+    "question",
+    "reset_for_tests",
+    "summary",
 ]
