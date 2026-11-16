@@ -335,4 +335,4 @@ modules = ["src/memini/core/schema.py", "src/memini/core/graph/", "src/memini/in
 
 [code_queues.ingest-units]
 queue = "../.memini-orchestrator/queue-ingest-units.txt"
-modules = ["src/memini/core/units/", "src/memini/infra/ingest/"]
+modules = ["src/memini/core/units/", "src/memini/infra/ingest/", "src/memini/core/ingest/"]
