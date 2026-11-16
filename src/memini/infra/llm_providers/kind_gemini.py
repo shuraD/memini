@@ -91,9 +91,10 @@ def _token_count(usage: Mapping[str, Any], name: str) -> int:
 def parse_response(status: int, body: bytes) -> ParsedReply:
     """Parse a ``generateContent`` reply body into text and token counts.
 
-    The text is the concatenation of ``candidates[0].content.parts[*].text``; a missing
-    text raises ``ResponseParseError`` naming the field. Missing ``usageMetadata`` gives
-    zero counts. ``status`` is included in error messages.
+    The text is the concatenation of ``candidates[0].content.parts[*].text``, skipping
+    parts whose ``thought`` is truthy; no remaining text raises ``ResponseParseError``
+    naming the field. Missing ``usageMetadata`` gives zero counts. ``status`` is
+    included in error messages.
     """
     try:
         data = json.loads(body.decode("utf-8"))
@@ -107,7 +108,11 @@ def parse_response(status: int, body: bytes) -> ParsedReply:
     content = candidates[0].get("content")
     parts = content.get("parts") if isinstance(content, dict) else None
     texts = (
-        [p["text"] for p in parts if isinstance(p, dict) and isinstance(p.get("text"), str)]
+        [
+            p["text"]
+            for p in parts
+            if isinstance(p, dict) and isinstance(p.get("text"), str) and not p.get("thought")
+        ]
         if isinstance(parts, list)
         else []
     )

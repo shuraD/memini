@@ -1,9 +1,9 @@
 """HTTP transport over the standard library, with the request's own timeout.
 
 A transport sends one :class:`HttpRequest` and returns the status, headers and
-body as they came back. HTTP error statuses are answers, not failures: they are
-returned like any other status. Only a timeout or a connection failure raises.
-No retries, no fallbacks; the module opens nothing at import time.
+body as they came back, never through a proxy. HTTP error statuses are answers,
+not failures: they are returned like any other status. Only a timeout or a
+connection failure raises. No retries, no fallbacks; the module opens nothing at import time.
 """
 
 from __future__ import annotations
@@ -25,6 +25,9 @@ __all__ = [
 ]
 
 _ALLOWED_SCHEMES = ("http://", "https://")
+
+# An empty proxy table: environment and operating-system proxy settings are ignored.
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 class TransportError(Exception):
@@ -75,7 +78,7 @@ class UrllibTransport:
         # The scheme is checked as http(s) above, so urllib opens no file: or custom URL.
         native = urllib.request.Request(request.url, data, headers, method=request.method)  # noqa: S310  # nosec B310
         try:
-            with urllib.request.urlopen(native, timeout=request.timeout_s) as answer:  # noqa: S310  # nosec B310
+            with _NO_PROXY_OPENER.open(native, timeout=request.timeout_s) as answer:
                 return HttpResponse(
                     status=int(answer.status),
                     headers=_headers(answer.headers.items()),
