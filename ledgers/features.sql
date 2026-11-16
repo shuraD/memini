@@ -2244,3 +2244,14 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/neo4j_runner.py-001', 'tests/unit/test_graph_neo4j_runner_from_env.py::test_remote_host_allow_listed_in_env_is_accepted');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/neo4j_runner.py-001', 'tests/unit/test_graph_neo4j_runner_from_env.py::test_error_type_and_export');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/neo4j_runner.py-001', 'tests/unit/test_graph_neo4j_runner_from_env.py::test_no_config_file_carries_a_password_value');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-deploy/docker-compose.yml-001', 'Local Neo4j 2026.09 with GDS and APOC for dev and tests: password from NEO4J_PASSWORD with no default, ports on 127.0.0.1 only, data in a named volume', 'infra', 'GR-01 (T55); static tests in tests/unit/test_deploy_compose.py; container started once, GDS and APOC 2026.09.0 loaded', 'active', 'deploy/', 'C-20261116-0224');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_compose_has_exactly_one_service');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_image_is_official_neo4j_2026_09');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_plugins_are_gds_and_apoc');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_password_comes_from_environment_without_default');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_bolt_and_http_ports_are_published');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_every_port_is_bound_to_localhost_only');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_data_lives_in_a_declared_named_volume');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_env_example_lists_password_without_value');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_env_example_lists_every_compose_variable');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-deploy/docker-compose.yml-001', 'tests/unit/test_deploy_compose.py::test_env_example_has_no_secret_value');
