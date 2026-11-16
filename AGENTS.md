@@ -34,7 +34,7 @@ No code is copied from earlier projects. Earlier work is at most a *reference* f
     - Build only what your card line asks for. A card line is a capability of the old memini, in the baseline or the version being built.
     - No protection or "enterprise" layers unless a card line names them: no access control, audit log, health score, confirmation strings or session guards.
     - No new abstraction, wrapper or option without a second real caller.
-    - **Use a library instead of re-implementing it (owner 2026-11-16).** Neo4j and its GDS library first (KNN, Leiden, vector indexes, Cypher), then any maintained package. Never hand-write what Neo4j, GDS or a library already does. Keep the old memini's file layout: a few files per job, not one file per function.
+    - **Use a library instead of re-implementing it (owner 2026-11-16).** Neo4j and its GDS library first (KNN, Leiden, vector indexes, Cypher), then any maintained package. Before adding any capability (a cache, retries, JSON repair, HTTP calls, file parsing, ...), check which library already does it: less code, fewer bugs ("less code less bugs"). The spec names the library. Never hand-write what Neo4j, GDS or a library already does. Keep the old memini's file layout: a few files per job, not one file per function.
     - The old memini's logic may guide the design where it is correct; its code is never copied.
     - A slice that passes merges to `main` behind its module's flag (`src/memini/infra/flags.py`), with its ledger rows in the same commit.
 
