@@ -38,6 +38,27 @@ No code is copied from earlier projects. Earlier work is at most a *reference* f
     - The old memini's logic may guide the design where it is correct; its code is never copied.
     - A slice that passes merges to `main` behind its module's flag (`src/memini/infra/flags.py`), with its ledger rows in the same commit.
 
+## How every session works (owner 2026-11-16)
+Every team session (dev1-dev4, QA, DevOps) and every orchestrator agent:
+1. **Start the moment a task arrives.** Drop older work unless the owner says to keep it.
+2. **Do the whole task list, then test once, then report once.** Don't stop between tasks and don't wait for confirmation of a step that is already in your list.
+3. **Run only the affected tests:** the files you changed and their tests. The full suite runs only at the end, when everything is merged.
+4. **No live checks unless the task asks for one,** such as starting containers or databases. The tests are the check.
+5. **Read only what you need:** the files the task names, then the code you change.
+6. **Fix your own mistakes and keep going.** Report them only if they change the result.
+7. **Count your own time; don't blame others for it.**
+8. **One short report at the end:** the commits, the files with +/- lines, the tests run with pass and fail counts, the start and end time, the cost, and only real open decisions, one line each.
+9. **Log every state change** (worktrees, containers, queues, commits) as one line in `/Users/natasha/work/.memini-orchestrator/ops-ledger.jsonl`. Never push, never merge, never use `--no-verify`. vp-rnd moves main forward and the owner pushes.
+
+**Who owns what** (nobody changes another team's files):
+- **dev1:** `src/memini/infra/llm_providers/`
+- **dev2:** `src/memini/core/ingest/`
+- **dev3:** `src/memini/core/query/`
+- **dev4:** `src/memini/infra/graph/`, `src/memini/core/archrag/`
+- **DevOps:** `deploy/`, `config/`, `tools/orchestrator/`, CI and hooks
+- **QA:** specs and tests
+- **vp-rnd:** task lists and specs only
+
 ## How to work (TDD, small commits)
 1. Read the module spec in the capability map and the relevant ledger rows.
 2. **Tests first. New tests may be written by the implementer; existing tests are frozen** (owner 2026-11-14, replacing the 2026-11-12 rule).
