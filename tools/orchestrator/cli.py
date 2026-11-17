@@ -345,7 +345,10 @@ def _batch_done(cfg: config.Config, entries: Sequence[state.QueueEntry], code: i
     """After a finished batch, write its metrics into STATUS.md (D10); keep the exit code."""
     if code == 0 and entries:
         stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
-        metrics.write(cfg, [e.task_id for e in entries], stamp)
+        try:
+            metrics.write(cfg, [e.task_id for e in entries], stamp)
+        except OSError as exc:  # a missing STATUS.md folder never fails a finished batch
+            print(f"metrics not written: {exc}")
     return code
 
 
