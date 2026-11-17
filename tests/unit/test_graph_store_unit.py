@@ -1,24 +1,39 @@
-"""GR-03 acceptance (no database): GraphStore settings, host guard, connect and batching.
+"""GR-03 acceptance (no database): GraphStore settings, connect and batching.
 
 The neo4j driver is replaced, only around each test, by a fake that records every statement
-(``driver.execute_query``, ``session.run``, ``tx.run``) and every session's database.
+(``driver.execute_query``, ``session.run``, ``tx.run``) and every session's database. The
+settings come only from NEO4J_* (GR-05: no host check, no default address, no constructor
+arguments); the shared driver is reset with ``close_driver()`` around each test.
 """
 
 from __future__ import annotations
 
+import os
 import re
-import socket
+from collections.abc import Iterator
 from typing import Any
 
 import neo4j
 import pytest
 
-from memini.infra.graph.store import GraphStore, UnsafeHostError, is_local_uri
+from memini.infra.graph.store import GraphStore, close_driver
 
 ENV_VARS = ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD", "NEO4J_DATABASE")
 ID_LABELS = {"Artifact", "Chunk", "Entity", "Community"}
 _MISSING = "<missing>"
+USER = "test-user"
+PASSWORD = "test-password"  # noqa: S105 — obvious fake
 _CONSTRAINT_LABEL = re.compile(r"FOR\s*\(\s*\w*\s*:\s*`?(\w+)`?\s*\)", re.IGNORECASE)
+
+
+# The address is never written here: it is NEO4J_URI from the environment (.env), read once
+# at import, before any fixture clears the variables.
+ENV_URI = os.environ.get("NEO4J_URI", "")
+
+
+def _env_uri() -> str:
+    assert ENV_URI, "NEO4J_URI must be set: the address comes from the environment"
+    return ENV_URI
 
 
 def _text(query: Any) -> str:
@@ -156,12 +171,19 @@ class DriverFactory:
 
 
 @pytest.fixture(autouse=True)
-def _no_neo4j_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _neo4j_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     for name in ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("NEO4J_URI", _env_uri())
+    monkeypatch.setenv("NEO4J_USER", USER)
+    monkeypatch.setenv("NEO4J_PASSWORD", PASSWORD)
+    close_driver()
+    yield
+    close_driver()
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, driver: FakeDriver | None = None) -> DriverFactory:
+    close_driver()  # the next get_driver() builds a new driver from this factory
     factory = DriverFactory(driver if driver is not None else FakeDriver())
     monkeypatch.setattr(neo4j.GraphDatabase, "driver", factory)
     return factory
@@ -175,47 +197,16 @@ def _items(n: int) -> list[dict[str, Any]]:
 
 
 def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NEO4J_URI", "bolt://localhost:7999")
+    factory = _install(monkeypatch)
+    monkeypatch.setenv("NEO4J_URI", _env_uri())
     monkeypatch.setenv("NEO4J_USER", "env-user")
     monkeypatch.setenv("NEO4J_PASSWORD", "test-password")
     monkeypatch.setenv("NEO4J_DATABASE", "envdb")
-    store = GraphStore()
-    assert store.uri == "bolt://localhost:7999"
-    assert store.user == "env-user"
-    assert store.password == "test-password"  # noqa: S105 — obvious fake
+    store = GraphStore().connect()
+    args, kwargs = factory.calls[0]
+    assert args == (_env_uri(),)
+    assert kwargs.get("auth") == ("env-user", "test-password")
     assert store.database == "envdb"
-
-
-def test_constructor_args_win_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NEO4J_URI", "bolt://localhost:7999")
-    monkeypatch.setenv("NEO4J_USER", "env-user")
-    monkeypatch.setenv("NEO4J_PASSWORD", "test-password")
-    monkeypatch.setenv("NEO4J_DATABASE", "envdb")
-    store = GraphStore("neo4j://localhost:7111", "arg-user", "test-other-password", "argdb")
-    assert store.uri == "neo4j://localhost:7111"
-    assert store.user == "arg-user"
-    assert store.password == "test-other-password"  # noqa: S105 — obvious fake
-    assert store.database == "argdb"
-
-
-def test_constructor_keywords_win_over_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NEO4J_URI", "bolt://localhost:7999")
-    monkeypatch.setenv("NEO4J_USER", "env-user")
-    monkeypatch.setenv("NEO4J_PASSWORD", "test-password")
-    monkeypatch.setenv("NEO4J_DATABASE", "envdb")
-    store = GraphStore(uri="bolt://localhost:7222", user="kw-user", password="", database="kwdb")
-    assert store.uri == "bolt://localhost:7222"
-    assert store.user == "kw-user"
-    assert store.password == ""
-    assert store.database == "kwdb"
-
-
-def test_defaults_without_env() -> None:
-    store = GraphStore()
-    assert store.uri == "bolt://localhost:7687"
-    assert store.user == "neo4j"
-    assert store.password == ""
-    assert store.database is None
 
 
 def test_empty_database_env_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -225,93 +216,9 @@ def test_empty_database_env_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_constructor_does_no_io(monkeypatch: pytest.MonkeyPatch) -> None:
     factory = _install(monkeypatch)
-    GraphStore("bolt://localhost:7687", "neo4j", "test-password", "somedb")
+    monkeypatch.setenv("NEO4J_DATABASE", "somedb")
+    GraphStore()
     assert factory.calls == []
-
-
-# --- host guard ---------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "uri",
-    [
-        "bolt://localhost:7687",
-        "neo4j://localhost:7687",
-        "bolt://LOCALHOST:7687",
-        "bolt://LocalHost",
-        "bolt://127.0.0.1:7687",
-        "neo4j://127.0.0.1",
-        "bolt://[::1]:7687",
-        "neo4j+s://localhost:7687",
-    ],
-)
-def test_local_uris_are_local(uri: str) -> None:
-    assert is_local_uri(uri) is True
-
-
-@pytest.mark.parametrize(
-    "uri",
-    [
-        "bolt://db.example.com:7687",
-        "neo4j+s://db.example.com",
-        "bolt://localhost.example.com:7687",
-        "bolt://mylocalhost:7687",
-        "bolt://memini-neo4j:7687",
-    ],
-)
-def test_other_hosts_are_not_local(uri: str) -> None:
-    assert is_local_uri(uri) is False
-
-
-def test_allowed_host_is_accepted() -> None:
-    assert is_local_uri("bolt://db.example.com:7687", ["db.example.com"]) is True
-    assert is_local_uri("bolt://db.example.com:7687", ("other.example.com",)) is False
-    assert is_local_uri("bolt://db.example.com:7687", ()) is False
-
-
-def test_is_local_uri_does_no_dns_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[Any] = []
-
-    def _refuse(*args: Any, **kwargs: Any) -> Any:
-        calls.append(args)
-        raise AssertionError("DNS lookup")
-
-    with monkeypatch.context() as patch:
-        for name in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr"):
-            patch.setattr(socket, name, _refuse)
-        results = [
-            is_local_uri("bolt://db.example.com:7687"),
-            is_local_uri("bolt://localhost:7687"),
-            is_local_uri("bolt://db.example.com:7687", ["db.example.com"]),
-        ]
-    assert results == [False, True, True]
-    assert calls == []
-
-
-def test_unsafe_host_error_is_value_error() -> None:
-    assert issubclass(UnsafeHostError, ValueError)
-
-
-def test_non_local_uri_argument_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    factory = _install(monkeypatch)
-    with pytest.raises(UnsafeHostError):
-        GraphStore("bolt://db.example.com:7687")
-    assert factory.calls == []
-
-
-def test_non_local_uri_env_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    factory = _install(monkeypatch)
-    monkeypatch.setenv("NEO4J_URI", "bolt://localhost.example.com:7687")
-    with pytest.raises(UnsafeHostError):
-        GraphStore()
-    assert factory.calls == []
-
-
-def test_allow_listed_host_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
-    store = GraphStore("bolt://db.example.com:7687", allowed_hosts=["db.example.com"])
-    assert store.uri == "bolt://db.example.com:7687"
-    monkeypatch.setenv("NEO4J_URI", "bolt://db.example.com:7687")
-    assert GraphStore(allowed_hosts=("db.example.com",)).uri == "bolt://db.example.com:7687"
 
 
 # --- connect ------------------------------------------------------------------------
@@ -319,13 +226,13 @@ def test_allow_listed_host_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_connect_opens_driver_and_verifies(monkeypatch: pytest.MonkeyPatch) -> None:
     factory = _install(monkeypatch)
-    store = GraphStore("bolt://localhost:7687", "qa-user", "test-password")
+    store = GraphStore()
     result = store.connect()
     assert result is store
     assert len(factory.calls) == 1
     args, kwargs = factory.calls[0]
-    assert args == ("bolt://localhost:7687",)
-    assert kwargs.get("auth") == ("qa-user", "test-password")
+    assert args == (_env_uri(),)
+    assert kwargs.get("auth") == (USER, PASSWORD)
     assert factory.driver.verified == 1
 
 
@@ -376,19 +283,13 @@ def test_driver_factory_error_propagates(monkeypatch: pytest.MonkeyPatch) -> Non
     assert caught.value is error
 
 
-def test_close_closes_driver(monkeypatch: pytest.MonkeyPatch) -> None:
-    factory = _install(monkeypatch)
-    store = GraphStore().connect()
-    store.close()
-    assert factory.driver.closed is True
-
-
 # --- database routing ---------------------------------------------------------------
 
 
 def test_every_call_uses_the_database(monkeypatch: pytest.MonkeyPatch) -> None:
     factory = _install(monkeypatch)
-    store = GraphStore(database="qa-db").connect()
+    monkeypatch.setenv("NEO4J_DATABASE", "qa-db")
+    store = GraphStore().connect()
     store.write("Entity", "qa-scope", _items(3), updated_by="qa")
     driver = factory.driver
     assert driver.statements

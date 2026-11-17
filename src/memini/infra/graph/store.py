@@ -1,10 +1,11 @@
-"""The Neo4j graph store: guarded connection settings and append-only node writes.
+"""The Neo4j graph store: one shared driver from the environment, append-only node writes.
 
-:class:`GraphStore` takes its settings from the constructor or the environment, refuses any
-host that is neither local nor allow-listed (:func:`is_local_uri`), connects fail-fast, ensures
-the ``(scope, id)`` uniqueness constraints, writes nodes in one ``UNWIND`` batch per call
-(``MERGE`` on ``(scope, id)``, skipping an already-stored ``content_hash``) and supersedes an
-old node by a new one without deleting it.
+:func:`get_driver` builds the process-wide :class:`neo4j.Driver` once, only from the
+``NEO4J_URI``, ``NEO4J_USER`` and ``NEO4J_PASSWORD`` environment variables (no default, no
+host refusal); :func:`close_driver` is the only way it is closed. :class:`GraphStore` uses that
+driver: it connects fail-fast, ensures the ``(scope, id)`` uniqueness constraints, writes nodes
+in one ``UNWIND`` batch per call (``MERGE`` on ``(scope, id)``, skipping an already-stored
+``content_hash``) and supersedes an old node by a new one without deleting it.
 
 The module-level functions work on a plain :class:`neo4j.Driver`: :func:`write_vectors`
 (through ``neo4j_graphrag``'s ``upsert_vectors``), soft or hard :func:`delete`, vector search
@@ -17,9 +18,9 @@ The design follows the old memini's ``connect``/``remember``; the code is new.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable, Mapping, Sequence
+import threading
+from collections.abc import Mapping, Sequence
 from typing import Any
-from urllib.parse import urlsplit
 
 import neo4j
 from neo4j_graphrag.indexes import upsert_vectors
@@ -27,17 +28,13 @@ from neo4j_graphrag.retrievers import VectorRetriever
 
 from memini.infra.graph.schema import GraphSchema, load_schema
 
-# Environment variables and defaults of the connection settings (spec GR-03).
+# Environment variables of the connection settings (spec GR-05); none has a default.
 _ENV_URI, _ENV_USER, _ENV_PASSWORD, _ENV_DATABASE = (
     "NEO4J_URI",
     "NEO4J_USER",
     "NEO4J_PASSWORD",
     "NEO4J_DATABASE",
 )
-_DEFAULT_URI = "bolt://localhost:7687"
-_DEFAULT_USER = "neo4j"
-# Hosts that are always this machine (compared case-insensitively, no DNS lookup).
-_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 # Graph names the store relies on (spec GR-03); the schema file declares each of them.
 _SCOPE = "scope"
@@ -61,50 +58,50 @@ _MEMBER_OF = "BELONGS_TO_COMMUNITY"
 _TOMBSTONE_CHARS = 200  # characters of summary a soft-deleted node keeps
 
 
-class UnsafeHostError(ValueError):
-    """Raised when a URI's host is neither local nor allow-listed."""
+class _Shared:
+    """The process-wide shared driver and the lock that guards its creation and closing."""
+
+    driver: neo4j.Driver | None = None
+    lock = threading.Lock()
 
 
-def is_local_uri(uri: str, allowed_hosts: Iterable[str] = ()) -> bool:
-    """Return True when ``uri``'s host is local or one of ``allowed_hosts`` (case-insensitive)."""
-    host = (urlsplit(uri).hostname or "").lower()
-    if not host:
-        return False
-    return host in _LOCAL_HOSTS or host in {h.lower() for h in allowed_hosts}
+def _required(env: str) -> str:
+    """Return the env var ``env``; RuntimeError naming it when it is unset or empty."""
+    value = os.environ.get(env, "")
+    if not value:
+        raise RuntimeError(f"environment variable {env} is unset or empty")
+    return value
 
 
-def _setting(value: str | None, env: str, default: str) -> str:
-    """Return ``value`` when it is not None, else the env var ``env``, else ``default``."""
-    if value is not None:
-        return value
-    return os.environ.get(env, default)
+def get_driver() -> neo4j.Driver:
+    """Return the shared driver, creating it from the ``NEO4J_*`` variables on first use."""
+    with _Shared.lock:
+        if _Shared.driver is None:
+            uri, user, password = (_required(e) for e in (_ENV_URI, _ENV_USER, _ENV_PASSWORD))
+            _Shared.driver = neo4j.GraphDatabase.driver(uri, auth=(user, password))
+        return _Shared.driver
+
+
+def close_driver() -> None:
+    """Close the shared driver once and forget it; a no-op when none is open."""
+    with _Shared.lock:
+        driver, _Shared.driver = _Shared.driver, None
+    if driver is not None:
+        driver.close()
 
 
 class GraphStore:
-    """A Neo4j store of scoped nodes, written append-only."""
+    """A Neo4j store of scoped nodes, written append-only, on the shared driver."""
 
-    def __init__(
-        self,
-        uri: str | None = None,
-        user: str | None = None,
-        password: str | None = None,
-        database: str | None = None,
-        *,
-        allowed_hosts: Iterable[str] = (),
-    ) -> None:
-        """Resolve the settings and refuse an unsafe host; no I/O."""
-        self.uri: str = _setting(uri, _ENV_URI, _DEFAULT_URI)
-        self.user: str = _setting(user, _ENV_USER, _DEFAULT_USER)
-        self.password: str = _setting(password, _ENV_PASSWORD, "")
-        self.database: str | None = _setting(database, _ENV_DATABASE, "") or None
-        if not is_local_uri(self.uri, allowed_hosts):
-            raise UnsafeHostError(f"refusing non-local Neo4j host in {self.uri!r}")
+    def __init__(self) -> None:
+        """Read the database name (``NEO4J_DATABASE``, None when unset or empty); no I/O."""
+        self.database: str | None = os.environ.get(_ENV_DATABASE) or None
         self._driver: neo4j.Driver | None = None
         self._schema: GraphSchema | None = None
 
     def connect(self) -> GraphStore:
-        """Open the driver, verify connectivity, ensure the (scope, id) constraints."""
-        driver = neo4j.GraphDatabase.driver(self.uri, auth=(self.user, self.password))
+        """Use the shared driver, verify connectivity, ensure the (scope, id) constraints."""
+        driver = get_driver()
         self._driver = driver
         driver.verify_connectivity()
         schema = load_schema()
@@ -119,10 +116,9 @@ class GraphStore:
         return self
 
     def close(self) -> None:
-        """Close the driver, if open."""
-        if self._driver is not None:
-            self._driver.close()
-            self._driver = None
+        """Drop this store's use of the shared driver; the shared driver stays open."""
+        self._driver = None
+        self._schema = None
 
     def _checked(self, label: str) -> tuple[neo4j.Driver, tuple[str, ...]]:
         """Return the open driver and ``label``'s properties; ValueError for an unknown label."""

@@ -1,9 +1,10 @@
 """GR-03 acceptance against the test Neo4j: constraints, append-only writes, supersede.
 
-The Neo4j settings come from NEO4J_URI / NEO4J_USER / NEO4J_PASSWORD / NEO4J_DATABASE (localhost
-locally, the sandbox's test host elsewhere); no host is written here. The test host is passed as
-``allowed_hosts`` so the guard accepts it. Each test isolates itself with its own ``scope``
-values (prefix ``qa-gr03-``), removed before and after the test.
+The Neo4j settings come only from NEO4J_URI / NEO4J_USER / NEO4J_PASSWORD / NEO4J_DATABASE
+(the local Neo4j here, the sandbox's test host elsewhere); no host and no default is written here.
+The store uses the shared driver (GR-05), reset with ``close_driver()`` around each test. Each
+test isolates itself with its own ``scope`` values (prefix ``qa-gr03-``), removed before and
+after the test.
 """
 
 from __future__ import annotations
@@ -11,28 +12,21 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from typing import Any
-from urllib.parse import urlsplit
 
 import neo4j
 import pytest
 
-from memini.infra.graph.store import GraphStore
+from memini.infra.graph.store import GraphStore, close_driver
 
 PREFIX = "qa-gr03-"
-DEFAULT_URI = "bolt://localhost:7687"
 
 
 def _uri() -> str:
-    return os.environ.get("NEO4J_URI") or DEFAULT_URI
+    return os.environ["NEO4J_URI"]
 
 
 def _database() -> str | None:
     return os.environ.get("NEO4J_DATABASE") or None
-
-
-def _allowed() -> list[str]:
-    host = urlsplit(_uri()).hostname
-    return [host] if host else []
 
 
 class Probe:
@@ -41,7 +35,7 @@ class Probe:
     def __init__(self) -> None:
         self.driver = neo4j.GraphDatabase.driver(
             _uri(),
-            auth=(os.environ.get("NEO4J_USER") or "neo4j", os.environ.get("NEO4J_PASSWORD", "")),
+            auth=(os.environ["NEO4J_USER"], os.environ["NEO4J_PASSWORD"]),
         )
 
     def rows(self, query: str, **params: Any) -> list[dict[str, Any]]:
@@ -79,13 +73,15 @@ def probe() -> Iterator[Probe]:
 
 @pytest.fixture
 def store(probe: Probe) -> Iterator[GraphStore]:
-    s = GraphStore(allowed_hosts=_allowed())
+    close_driver()
+    s = GraphStore()
     result = s.connect()
     assert result is s
     try:
         yield s
     finally:
         s.close()
+        close_driver()
 
 
 def test_connect_creates_entity_scope_id_uniqueness(store: GraphStore, probe: Probe) -> None:
@@ -105,7 +101,7 @@ def test_connect_creates_entity_scope_id_uniqueness(store: GraphStore, probe: Pr
 
 
 def test_connect_is_idempotent(store: GraphStore, probe: Probe) -> None:
-    again = GraphStore(allowed_hosts=_allowed())
+    again = GraphStore()
     assert again.connect() is again
     again.close()
     rows = probe.rows(

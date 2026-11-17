@@ -1,9 +1,10 @@
 """GR-04 acceptance against the test Neo4j: vector writes, soft/hard delete, vector search, stats.
 
-The Neo4j settings come from NEO4J_URI / NEO4J_USER / NEO4J_PASSWORD / NEO4J_DATABASE (localhost
-locally, the sandbox's test host elsewhere); no host is written here. Each test isolates itself
-with its own ``scope`` values (prefix ``qa-gr04-``), removed before and after the test. The
-vector indexes are reused when present (their dimension is read back), else created.
+The Neo4j settings come only from NEO4J_URI / NEO4J_USER / NEO4J_PASSWORD / NEO4J_DATABASE
+(the local Neo4j here, the sandbox's test host elsewhere); no host and no default is written here.
+Each test isolates itself with its own ``scope`` values (prefix ``qa-gr04-``), removed before
+and after the test. The vector indexes are reused when present (their dimension is read back),
+else created.
 """
 
 from __future__ import annotations
@@ -28,13 +29,12 @@ from memini.infra.graph.store import (
 )
 
 PREFIX = "qa-gr04-"
-DEFAULT_URI = "bolt://localhost:7687"
 DEFAULT_DIMENSION = 4
 LONG_SUMMARY = "".join(f"word{i:03d} " for i in range(60))  # 480 characters
 
 
 def _uri() -> str:
-    return os.environ.get("NEO4J_URI") or DEFAULT_URI
+    return os.environ["NEO4J_URI"]
 
 
 def _database() -> str | None:
@@ -47,7 +47,7 @@ class Probe:
     def __init__(self) -> None:
         self.driver = neo4j.GraphDatabase.driver(
             _uri(),
-            auth=(os.environ.get("NEO4J_USER") or "neo4j", os.environ.get("NEO4J_PASSWORD", "")),
+            auth=(os.environ["NEO4J_USER"], os.environ["NEO4J_PASSWORD"]),
         )
 
     def rows(self, query: str, **params: Any) -> list[dict[str, Any]]:
