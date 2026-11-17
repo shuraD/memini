@@ -2610,3 +2610,6 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-021', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-021', 'tests/gates/test_orchestrator_moves.py::test_wait_gives_up_when_nobody_resolves');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-021', 'tests/gates/test_orchestrator_moves.py::test_serve_leaves_kinds_it_has_no_handler_for');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-021', 'tests/gates/test_orchestrator_moves.py::test_run_queue_role_names_come_from_config');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-022', 'A slice with changed tests moves to QA''s queue and waits there alone; a second reject reports both test diffs and QA''s proposed fixes in OWNER_INBOX.md', 'infra', 'tests/gates/test_orchestrator_test_review.py', 'active', 'tools/orchestrator/', 'C-20261117-0029');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-022', 'tests/gates/test_orchestrator_test_review.py::test_the_review_is_a_move_to_qa_and_back_with_a_ledger_row_each');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-022', 'tests/gates/test_orchestrator_test_review.py::test_a_second_reject_reports_both_diffs_and_qas_proposed_fixes_to_the_owner');

@@ -29,7 +29,7 @@ from tests.gates.test_orchestrator import (  # noqa: F401  (env is a fixture)
     _task,
     env,
 )
-from tools.orchestrator import audit, engine, gates, pipeline, state
+from tools.orchestrator import audit, engine, gates, moves, pipeline, state
 
 APPROVE = '{"verdict": "approve", "reason": "the edit matches the spec"}'
 REJECT = '{"verdict": "reject", "reason": "the test was changed only to make it pass"}'
@@ -228,3 +228,50 @@ def test_every_step_is_logged_in_order(
     assert [a for a in actions if a in order] == order
     assert all(r["actor"] == "orchestrator" and r["target"] == TASK for r in _ops(cfg))
     assert _git(env["repo"], "log", "-1", "--format=%s", "main")
+
+
+def test_the_review_is_a_move_to_qa_and_back_with_a_ledger_row_each(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(
+        env,
+        monkeypatch,
+        coder=_coder({IMPL: GOOD, TEST: EDITED}),
+        audit=[{"stdout": APPROVE}, {"stdout": AUDIT_PASS}],
+    )
+    cfg = _cfg(env, test_review=True)
+    assert pipeline.run_task(cfg, _task(env)).status == "merged"
+    rows = [r for r in _ops(cfg) if r["action"] in ("move", "move_done")]
+    assert [r["action"] for r in rows] == ["move", "move_done"]
+    assert "-> qa: test_review" in rows[0]["reason"]
+    assert "qa -> " in rows[1]["reason"]
+
+
+def test_a_second_reject_reports_both_diffs_and_qas_proposed_fixes_to_the_owner(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(
+        env,
+        monkeypatch,
+        coder=[{"write": {IMPL: GOOD, TEST: EDITED}}, {"write": {TEST: EDITED + "\n# again\n"}}],
+        audit=[{"stdout": REJECT}, {"stdout": REJECT}],
+    )
+    cfg = _cfg(env, test_review=True)
+    assert pipeline.run_task(cfg, _task(env)).status == "disputed"
+    inbox = cfg.inbox.read_text()
+    assert inbox.count("QA's proposed fix") == 2
+    assert "test diff test-changes-1.diff" in inbox
+    assert "test diff test-changes-2.diff" in inbox
+    assert "add(2, 1)" in inbox
+
+
+@pytest.fixture(autouse=True)
+def _qa_runner_answers_moves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand in for the QA role's runner: serve its open test reviews before a slice waits."""
+    wait = moves.wait
+
+    def served(cfg: Any, move_id: str, timeout_s: float, poll_s: float = 5.0) -> Any:
+        moves.serve(cfg, "qa", {"test_review": pipeline.review_move}, once=True)
+        return wait(cfg, move_id, timeout_s, poll_s)
+
+    monkeypatch.setattr(moves, "wait", served)

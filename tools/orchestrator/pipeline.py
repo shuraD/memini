@@ -16,6 +16,7 @@ under test with its own environment, built by ``setup`` from the lock file.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import re
 import shutil
@@ -35,6 +36,7 @@ from tools.orchestrator import (
     enqueue,
     gates,
     gitops,
+    moves,
     spec,
     stages,
     state,
@@ -46,6 +48,7 @@ MERGED, REJECTED, DISPUTED, FAILED = "merged", "rejected", "disputed", "failed"
 LEDGER_FILES = ("ledgers/changes.sql", "ledgers/features.sql")
 _DIFF_LIMIT = 200_000
 _REVIEW_REJECTS = 2  # the first reject goes back to the coder, the second to the owner
+_MOVE_WAIT_S = 6 * 3600  # how long a slice waits for QA's answer to its test review
 _REFS = Path("<all refs>")  # a pseudo entry in the watched files: the for-each-ref listing
 
 
@@ -238,6 +241,7 @@ class _Run:
         self.created: set[Path] = set()
         self.calls = 0
         self.test_rejects = 0
+        self.reject_reasons: list[str] = []
         self.gate_script = gates.PYTEST_GATE
         self.gate_env: dict[str, str] = {}
         # gate passes reused while their inputs stay the same (main unmoved: no second pass)
@@ -819,13 +823,42 @@ class _Run:
         self, attempt: int, qa_sha: str, snap: str, changed: list[str]
     ) -> str | None:
         """Return the coder's next failure after a reject; a second reject stops the slice."""
-        reason = self._review_step(attempt, qa_sha, snap, changed)
+        reason = self._ask_qa(attempt, qa_sha, snap, changed)
         if reason is None:
             return None
         self.test_rejects += 1
+        self.reject_reasons.append(reason)
         if self.test_rejects >= _REVIEW_REJECTS:
             self._escalate(qa_sha, snap, changed, reason)
         return f"the QA review rejected your test change: {reason}"
+
+    def _ask_qa(self, attempt: int, qa_sha: str, snap: str, changed: list[str]) -> str | None:
+        """Move the slice to QA's queue with its test changes; wait for the answer.
+
+        Only this slice waits (its worker); the squad's other slices keep running. Returns the
+        reject reason (with QA's proposed fix), None when QA approved or nothing was changed.
+        """
+        if not changed:
+            return self._review_step(attempt, qa_sha, snap, changed)
+        move = moves.post(
+            self.cfg,
+            self.task_id,
+            sender=self.cfg.worker or "squad",
+            to="qa",
+            kind="test_review",
+            text=f"{len(changed)} test file(s) changed by the coder, attempt {attempt}",
+            spec=str(self.sp.path),
+            paths=list(self.paths),
+            attempt=attempt,
+            qa_sha=qa_sha,
+            snap=snap,
+            changed=changed,
+        )
+        answer = moves.wait(self.cfg, move, _MOVE_WAIT_S)
+        if answer is None:
+            raise _Stop(FAILED, f"QA did not answer the test review ({move}) in time")
+        verdict = json.loads(answer["result"])
+        return None if verdict["approved"] else str(verdict["reason"])
 
     def _review_step(self, attempt: int, qa_sha: str, snap: str, changed: list[str]) -> str | None:
         """Run the QA review of the test changes; return the reject reason, None when fine."""
@@ -863,12 +896,20 @@ class _Run:
 
     def _escalate(self, qa_sha: str, snap: str, changed: list[str], reason: str) -> None:
         """Stop the slice for the owner after the second reject; its worktree is kept."""
-        text = (
-            f"test review rejected twice; last reason: {reason} | the coder's test diff is in "
-            f"{self.run_dir}; the sealed originals are in {qa_sha[:12]}; "
-            f"the coder's version in {snap[:12]}"
+        diffs = " | ".join(
+            f"test diff {p.name}: {p.read_text(encoding='utf-8')}"
+            for p in sorted(self.run_dir.glob("test-changes-*.diff"))
         )
-        state.inbox_append(self.cfg, self.task_id, "test review rejected twice", 1, text)
+        fixes = " | ".join(
+            f"QA's proposed fix {i}: {r}" for i, r in enumerate(self.reject_reasons, 1)
+        )
+        text = (
+            f"test review rejected twice | {fixes} | {diffs} | the sealed originals are in "
+            f"{qa_sha[:12]}; the coder's version in {snap[:12]}; run folder {self.run_dir}"
+        )
+        state.inbox_append(
+            self.cfg, self.task_id, "test review rejected twice", 1, text, limit=40_000
+        )
         agent_inbox.notify(self.cfg, "qa", f"{self.task_id}: {text}")
         state.ops_log(self.cfg, self.task_id, "test_review_escalated", text, files=changed)
         raise _Stop(DISPUTED, f"the QA review rejected the test change twice: {reason}")
@@ -1209,3 +1250,14 @@ class _Watched:
         )
         self.task_run.watch(f"running {Path(argv[0]).name}", before)
         return res
+
+
+def review_move(cfg: Config, move: moves.Move) -> str:
+    """QA's side of a ``test_review`` move (served by the qa role): return the verdict as JSON."""
+    p = move["payload"]
+    run = _Run(cfg, move["task"], spec.load(Path(p["spec"])), tuple(p["paths"]), {})
+    run.engines = engine.pick_engines(cfg, None)
+    run.run_dir = cfg.state_dir / "runs" / move["task"] / f"qa-review-{move['id']}"
+    run.run_dir.mkdir(parents=True, exist_ok=True)
+    reason = run._review_step(p["attempt"], p["qa_sha"], p["snap"], p["changed"])
+    return json.dumps({"approved": reason is None, "reason": reason or ""})

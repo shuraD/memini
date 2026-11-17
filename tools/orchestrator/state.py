@@ -215,12 +215,16 @@ def _one_line(text: str, limit: int = 2000) -> str:
     return flat if len(flat) <= limit else flat[:limit] + "…"
 
 
-def inbox_append(cfg: Config, task_id: str, kind: str, tier: int, text: str) -> None:
+def inbox_append(
+    cfg: Config, task_id: str, kind: str, tier: int, text: str, *, limit: int = 2000
+) -> None:
     """Append an entry for the owner channel (Markdown) to the inbox file."""
     with locked(cfg.state_dir / "inbox.lock"):
         cfg.inbox.parent.mkdir(parents=True, exist_ok=True)
         with cfg.inbox.open("a", encoding="utf-8") as fh:
-            fh.write(f"\n## {_now()} {task_id}: {kind} (tier {tier})\n\n- {_one_line(text)}\n")
+            fh.write(
+                f"\n## {_now()} {task_id}: {kind} (tier {tier})\n\n- {_one_line(text, limit)}\n"
+            )
 
 
 # ------------------------------------------------------------------ queue
