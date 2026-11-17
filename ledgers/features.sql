@@ -2581,3 +2581,5 @@ INSERT INTO feature (id, description, layer, proof, status, owner_module, added_
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-014', 'tests/gates/test_orchestrator_flow_hard.py::test_the_same_failing_assertion_twice_is_not_a_dispute');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-014', 'tests/gates/test_orchestrator_flow_hard.py::test_a_coder_dispute_goes_to_the_planner_only');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-014', 'tests/gates/test_orchestrator_flow_hard.py::test_the_batch_gate_runs_only_with_the_last_slice_of_the_queue');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-015', 'The ticket that adds the typed name fields is exempt from the typed-field check; the names: check still applies', 'infra', 'tests/gates/test_orchestrator_enqueue.py', 'active', 'tools/orchestrator/', 'C-20261117-0020');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-015', 'tests/gates/test_orchestrator_enqueue.py::test_the_ticket_that_edits_the_typed_classes_is_exempt_from_the_typed_check');

@@ -204,3 +204,14 @@ def test_a_role_without_a_typed_field_is_refused(cfg: config.Config) -> None:
     found = enqueue.problems(cfg, _t("A1 reads (:Domain) and `names.properties.score`"))
     assert "role labels.domain is in names: but has no field in " in " ".join(found)
     assert "role properties.score is in names: but has no field in " in " ".join(found)
+
+
+def test_the_ticket_that_edits_the_typed_classes_is_exempt_from_the_typed_check(
+    cfg: config.Config,
+) -> None:
+    typed = "src/memini/infra/graph/schema.py"
+    text = "reads (:Domain) and `names.properties.score`"
+    assert enqueue._names_problems(cfg, _t(text, module=typed), ()) == []
+    assert enqueue._names_problems(cfg, _t(text), ())  # any other module is checked
+    found = enqueue._names_problems(cfg, _t("matches (n:Invented)", module=typed), ())
+    assert found == ["graph name Invented has no role in names: of config/graph_schema.yaml"]

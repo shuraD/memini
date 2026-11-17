@@ -145,8 +145,12 @@ def _typed_fields(cfg: Config) -> dict[str, set[str]]:
     }
 
 
-def _names_problems(cfg: Config, text: str, needs: Sequence[str]) -> list[str]:
-    """Return graph names a ticket needs with no role in ``names:`` or no typed field (D4)."""
+def _names_problems(cfg: Config, ticket: Ticket, needs: Sequence[str]) -> list[str]:
+    """Return graph names a ticket needs with no role in ``names:`` or no typed field (D4).
+
+    The ticket that edits the typed classes adds the fields, so it skips the typed-field check.
+    """
+    text = ticket.text
     names = {g: dict(r or {}) for g, r in (_schema(cfg).get("names") or {}).items()}
     by_name = {str(v): (g, k) for g, r in names.items() for k, v in r.items()}
     named = set(_CYPHER.findall(text)) | set(needs)  # (:Label) and [:TYPE]; prose is not scanned
@@ -159,6 +163,8 @@ def _names_problems(cfg: Config, text: str, needs: Sequence[str]) -> list[str]:
         group, _, role = t.removeprefix("names.").partition(".")
         if t.startswith("names.") and role in names.get(group, {}):
             wanted.add((group, role))
+    if ticket.module == _TYPED:
+        return out
     typed = _typed_fields(cfg)
     out += [
         f"role {g}.{k} is in names: but has no field in {_TYPED}"
@@ -250,7 +256,7 @@ def problems(
                 f"card {cid} belongs to {card.squad}, whose spec does not list {ticket.module}"
             )
     out += inputs_problems(cfg, ticket)
-    out += _names_problems(cfg, ticket.text, needs)
+    out += _names_problems(cfg, ticket, needs)
     cycle = _cycle([*earlier, ticket])
     if cycle:
         out.append("dependencies are not acyclic: " + " -> ".join(cycle))
