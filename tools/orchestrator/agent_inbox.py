@@ -98,6 +98,11 @@ def post(cfg: config.Config, sender: str, to: str, text: str) -> str:
     return _append(cfg, to, sender, to, text)
 
 
+def notify(cfg: config.Config, to: str, text: str, sender: str = "orchestrator") -> str:
+    """Post a message from the orchestrator itself (the ready gate, a stopped slice)."""
+    return _append(cfg, to, sender, to, text)
+
+
 def reply(cfg: config.Config, sender: str, msg_id: str, text: str) -> str:
     """Answer a request in the same file, addressed to its sender."""
     request = next((m for m in _messages(cfg) if m.id == msg_id and not m.re), None)

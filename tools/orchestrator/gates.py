@@ -312,7 +312,8 @@ def text_problems(text: str, deny: Sequence[str]) -> list[str]:
 
     One check for the ready gate (tickets) and for the QA tests, hidden and visible (D1, D11).
     """
-    out = [f"deny word {p}" for p in deny if re.search(p, text)]
+    plain = text.replace("re.compile(", "re_pattern(")  # a regex, not the builtin compile
+    out = [f"deny word {p}" for p in deny if re.search(p, plain)]
     for label, rx in (("IP address", _IP), ("host name", _HOST), ("home path", _HOME)):
         out += [f"{label}: {m.group(0)}" for m in rx.finditer(text)]
     return out

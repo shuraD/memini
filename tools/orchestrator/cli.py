@@ -17,6 +17,7 @@ from typing import Any
 from tools.orchestrator import (
     config,
     dockerexec,
+    enqueue,
     gates,
     pipeline,
     planstage,
@@ -206,6 +207,46 @@ def _run_all(cfg: config.Config, args: argparse.Namespace) -> int:
             time.sleep(1)  # the stage loop takes its active lock before code looks for it
     codes = [p.wait() for p in procs]
     return 1 if 1 in codes else max(codes)
+
+
+def _cmd_enqueue(cfg: config.Config, args: argparse.Namespace) -> int:
+    _, found = enqueue.enqueue(
+        cfg,
+        task_id=args.task_id,
+        module=args.file,
+        card_list=args.cards.split(","),
+        deps=[d for d in args.deps.split(",") if d],
+        sources=[s for s in args.sources.split(",") if s],
+        needs=[n for n in args.needs.split(",") if n],
+    )
+    for problem in found:
+        print(f"{args.task_id}: refused: {problem}")
+    if not found:
+        queued = enqueue.read_tickets(cfg.stages[0].queue)
+        print(f"{args.task_id}: queued; workers for the batch: {enqueue.workers(queued)}")
+    return 1 if found else 0
+
+
+def _cmd_ready(cfg: config.Config, args: argparse.Namespace) -> int:
+    """Run the ready gate over the tickets of a stage queue (default: the first stage)."""
+    queue = Path(args.queue) if args.queue else cfg.stages[0].queue
+    tickets = enqueue.read_tickets(queue)
+    wanted = set(args.ids)
+    bad = 0
+    for i, ticket in enumerate(tickets):
+        if wanted and ticket.id not in wanted:
+            continue
+        found = enqueue.problems(cfg, ticket, tickets[:i])
+        print(f"{ticket.id}: " + ("ready" if not found else "refused"))
+        for problem in found:
+            print(f"  - {problem}")
+        bad += bool(found)
+        enqueue.tell_devops(cfg, ticket, found)
+        state.ops_log(
+            cfg, ticket.id, "ready_gate", "refused: " + "; ".join(found) if found else "ready"
+        )
+    print(f"workers for the batch: {enqueue.workers(tickets)}")
+    return 1 if bad else 0
 
 
 def _cmd_stage_run(cfg: config.Config, args: argparse.Namespace) -> int:
@@ -474,6 +515,16 @@ def parser() -> argparse.ArgumentParser:
     rel.add_argument("task_id")
     rel.add_argument("--reason", default="released by the owner")
     rel.add_argument("--stage", default=config.CODE_STAGE, help="the task's stage (default code)")
+    eq = add("enqueue", "add a ticket from cards; the ready gate decides (the only way to queue)")
+    eq.add_argument("task_id")
+    eq.add_argument("--file", required=True, help="the module the ticket writes")
+    eq.add_argument("--cards", required=True, help="card IDs, comma separated")
+    eq.add_argument("--deps", default="")
+    eq.add_argument("--sources", default="")
+    eq.add_argument("--needs", default="", help="graph names the ticket needs (must have roles)")
+    rd = add("ready", "run the ready gate over a stage queue's tickets")
+    rd.add_argument("ids", nargs="*")
+    rd.add_argument("--queue")
     sr = add("stage-run", "run one stage task (started by run-queue --stage)")
     sr.add_argument("stage")
     sr.add_argument("task_id")
@@ -488,6 +539,8 @@ _COMMANDS = {
     "status": _cmd_status,
     "release": _cmd_release,
     "stage-run": _cmd_stage_run,
+    "enqueue": _cmd_enqueue,
+    "ready": _cmd_ready,
 }
 
 

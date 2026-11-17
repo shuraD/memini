@@ -137,3 +137,9 @@ def test_a_slice_with_a_graph_name_literal_is_rejected_by_the_gate(
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "rejected"
     assert "graph name literal 'scope'" in out.reason
+
+
+def test_a_regular_expression_is_not_the_builtin_compile() -> None:
+    deny = [r"\bcompile\s*\("]
+    assert gates.text_problems("PAT = re.compile('x')\n", deny) == []
+    assert gates.text_problems("code = compile(src, 'f', 'exec')\n", deny) != []
