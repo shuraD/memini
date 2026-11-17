@@ -88,4 +88,12 @@ def test_names_match_the_schema() -> None:
     assert set(names["relationships"].values()) == set(data["relationships"])
     assert set(names["statuses"].values()) == set(data["nodes"]["Artifact"]["values"]["status"])
     every = {p for n in data["nodes"].values() for p in n["properties"]}
+    every |= {p for r in data["relationships"].values() for p in r.get("properties", [])}
     assert set(names["properties"].values()) <= every
+
+
+def test_roles_the_graph_slices_need() -> None:
+    props = _schema()["names"]["properties"]
+    for role in ("dirty", "name", "embedding_code", "score", "code_score"):
+        assert props[role] == role
+    assert "dirty" in _schema()["nodes"]["Community"]["properties"]

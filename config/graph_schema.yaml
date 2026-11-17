@@ -19,7 +19,7 @@ nodes:
     values:
       status: [active, superseded, deleted]
   Community:
-    properties: [scope, updated_by, updated_at, id, level, summary, embedding]
+    properties: [scope, updated_by, updated_at, id, level, summary, embedding, dirty]
   RelationType:
     properties: [scope, updated_by, updated_at, name]
 
@@ -80,6 +80,11 @@ names:
     embedding: embedding
     type: type
     level: level
+    name: name
+    dirty: dirty
+    embedding_code: embedding_code
+    score: score
+    code_score: code_score
   statuses:
     active: active
     superseded: superseded
