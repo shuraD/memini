@@ -163,6 +163,7 @@ class Config:
     sandbox_neo4j_uri: str = ""
     sandbox_neo4j_user: str = ""
     test_review: bool = False
+    graph_name_paths: tuple[str, ...] = ()
     # the plan stage refuses a module plan whose dependency chain needs more waves than this
     plan_max_waves: int = 4
 
@@ -457,6 +458,7 @@ def load_config(
         sandbox_neo4j_uri=str(raw.get("sandbox_neo4j_uri", "")),
         sandbox_neo4j_user=str(raw.get("sandbox_neo4j_user", "")),
         test_review=bool(raw.get("test_review", False)),
+        graph_name_paths=_strs(raw, "graph_name_paths"),
         identity_name=ident_name,
         identity_email=ident_email,
         flags_file=str(flags.get("file", "")),

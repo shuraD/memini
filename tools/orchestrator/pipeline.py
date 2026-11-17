@@ -515,6 +515,7 @@ class _Run:
                 self.wt, f"{self.task_id}: QA acceptance tests (sealed)", self.ident
             )
             files = self._qa_files(base, qa_sha)
+            self._qa_text_check(qa_sha, files)
             if not gates.defines_tests(self.wt, files):  # before lint: the plainer reason
                 raise _Stop(REJECTED, "the QA files define no test function")
             lint = self._qa_lint(files)
@@ -559,6 +560,18 @@ class _Run:
             commit=sha[:12],
         )
         return sha, [*files, *revealed]
+
+    def _qa_text_check(self, qa_sha: str, files: Sequence[str]) -> None:
+        """Run the ticket text checks on the visible and hidden tests before sealing (D11)."""
+        deny = [p for p in self.cfg.deny_patterns if p != r"\bpytest\b"]
+        hidden = sorted(gates.holdout_dir(self.cfg, self.task_id).glob("test_*.py"))
+        texts = {f: gitops.out(self.repo, "show", f"{qa_sha}:{f}") for f in files}
+        texts |= {f"hold-out/{h.name}": h.read_text(encoding="utf-8") for h in hidden}
+        found = [
+            f"{name}: {p}" for name, text in texts.items() for p in gates.text_problems(text, deny)
+        ]
+        if found:
+            raise _Stop(REJECTED, "QA tests refused before sealing: " + "; ".join(found[:5]))
 
     def _qa_files(self, base: str, qa_sha: str) -> list[str]:
         """Return the test files QA added; reject anything else it changed."""
@@ -719,6 +732,7 @@ class _Run:
         ]
         out += [f"not a regular file: {p}" for p in gitops.bad_modes(self.repo, base, head)]
         out += gates.sealed_problems(self.repo, head, sealed, allow_edits=self.cfg.test_review)
+        out += gates.graph_literal_problems(self.repo, head, changed, self.cfg.graph_name_paths)
         return out
 
     def _path_protected(self) -> list[str]:

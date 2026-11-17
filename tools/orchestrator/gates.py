@@ -300,6 +300,65 @@ def deny_hits(diff: str, patterns: Sequence[str]) -> list[str]:
     return hits
 
 
+_IP = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_HOST = re.compile(
+    r"\blocalhost\b|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|dev|app|local|internal)\b"
+)
+_HOME = re.compile(r"/(?:Users|home)/[\w.-]+")
+
+
+def text_problems(text: str, deny: Sequence[str]) -> list[str]:
+    """Return what a ticket or a test text may not contain: a deny word, an IP, a host, a home path.
+
+    One check for the ready gate (tickets) and for the QA tests, hidden and visible (D1, D11).
+    """
+    out = [f"deny word {p}" for p in deny if re.search(p, text)]
+    for label, rx in (("IP address", _IP), ("host name", _HOST), ("home path", _HOME)):
+        out += [f"{label}: {m.group(0)}" for m in rx.finditer(text)]
+    return out
+
+
+def graph_names(schema_text: str) -> set[str]:
+    """Return the graph names of the schema: labels, relationship types, properties, values."""
+    data = yaml.safe_load(schema_text) or {}
+    out: set[str] = set()
+    for section in ("nodes", "relationships"):
+        for label, entry in (data.get(section) or {}).items():
+            out.add(str(label))
+            out |= {str(p) for p in (entry or {}).get("properties") or ()}
+            for allowed in ((entry or {}).get("values") or {}).values():
+                out |= {str(v) for v in allowed or ()}
+    for group in (data.get("names") or {}).values():
+        out |= {str(v) for v in (group or {}).values()}
+    return out
+
+
+def graph_literal_problems(
+    repo: Path, rev: str, files: Iterable[str], roots: Sequence[str]
+) -> list[str]:
+    """Refuse a string literal equal to a graph name in the changed graph modules (D12).
+
+    Owner rule 2: code takes graph names from the typed names of ``config/graph_schema.yaml``.
+    A Cypher parameter name is a literal too. Only ``.py`` files under ``roots`` are scanned.
+    """
+    paths = [f for f in files if f.endswith(".py") and any(matches(r, f) for r in roots)]
+    if not paths:
+        return []
+    names = graph_names(gitops.out(repo, "show", f"{rev}:config/graph_schema.yaml"))
+    out: list[str] = []
+    for path in paths:
+        try:
+            tree = ast.parse(gitops.out(repo, "show", f"{rev}:{path}"))
+        except (SyntaxError, ValueError):
+            continue  # the lint gates report broken syntax
+        out += [
+            f"graph name literal {n.value!r} at {path}:{n.lineno}: use the typed name"
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in names
+        ]
+    return out
+
+
 def log_line(log: Path, label: str) -> None:
     """Append one ``== label`` line to a gate log (timings the owner reads)."""
     _log(log, label, "")

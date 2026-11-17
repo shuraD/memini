@@ -53,6 +53,9 @@ sandbox_neo4j_user = "neo4j"
 # false = the old flow (tests sealed, hold-out hidden); the old-flow tests pin it explicitly.
 # Default on since the owner's approval of 2026-11-17.
 test_review = true
+# D12 (FLOW-HARD): in these paths a string literal equal to a graph name of config/graph_schema.yaml
+# is refused; use the typed names. Only the files a slice changes are scanned.
+graph_name_paths = ["src/memini/infra/graph/", "src/memini/core/archrag/"]
 # interpreter for the host-side hold-out run; empty = the orchestrator's own interpreter
 holdout_python = ""
 
