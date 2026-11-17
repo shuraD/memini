@@ -1,0 +1,106 @@
+"""A role session starts its own runner when it opens (FLOW-HARD.md D-10).
+
+A SessionStart hook runs ``python -m tools.orchestrator.role_start`` in a session started with
+``MEMINI_ROLE=<role>`` (dev1..dev4, qa, planner, devops). It starts one detached supervisor for
+the role, once: the supervisor runs the role's queue (``run-queue --role``) again and again, and
+serves the moves sent to the role, so work that arrives later is picked up without anyone typing
+a command. A role that is not in ``[roles]`` (vp-rnd, say) starts nothing.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import threading
+import time
+from collections.abc import Sequence
+from pathlib import Path
+
+from tools.orchestrator import moves
+from tools.orchestrator.config import Config, load_config
+
+_POLL_S = 30.0
+
+
+def _pid_file(cfg: Config, role: str) -> Path:
+    return cfg.state_dir / "locks" / f"runner-{role}.pid"
+
+
+def _alive(pid_file: Path) -> bool:
+    try:
+        os.kill(int(pid_file.read_text()), 0)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _python(cfg: Config) -> list[str]:
+    env_file = cfg.repo / "deploy" / ".env"  # only passed to uv, never read here
+    if env_file.exists():
+        return ["uv", "run", "--env-file", str(env_file), "python"]
+    return [sys.executable]
+
+
+def start(cfg: Config, role: str) -> str:
+    """Start the role's supervisor unless it runs; return what happened."""
+    if role not in cfg.roles:
+        return f"{role}: not a runner role"
+    pid_file = _pid_file(cfg, role)
+    if _alive(pid_file):
+        return f"{role}: runner already running (pid {pid_file.read_text().strip()})"
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    log = cfg.state_dir / f"runner-{role}.log"
+    with log.open("a", encoding="utf-8") as out:
+        proc = subprocess.Popen(  # noqa: S603 — our own module, no shell
+            [*_python(cfg), "-m", "tools.orchestrator.role_start", "--supervise", role],
+            cwd=cfg.repo,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    pid_file.write_text(str(proc.pid), encoding="utf-8")
+    from tools.orchestrator import state  # noqa: PLC0415
+
+    state.ops_log(
+        cfg, role, "runner_started", f"session open: run-queue --role {role}", pid=proc.pid
+    )
+    return f"{role}: runner started (pid {proc.pid}, log {log})"
+
+
+def supervise(
+    cfg: Config, role: str, handlers: dict[str, moves.Handler], poll_s: float = _POLL_S
+) -> None:
+    """Serve the role's moves and run its queue until the process is stopped."""
+    if handlers:
+        threading.Thread(target=moves.serve, args=(cfg, role, handlers), daemon=True).start()
+    if not cfg.roles[role].queue:
+        while True:
+            time.sleep(3600)
+    while True:
+        subprocess.run(  # noqa: S603 — our own CLI, no shell
+            [*_python(cfg), "-m", "tools.orchestrator", "run-queue", "--role", role],
+            cwd=cfg.repo,
+            check=False,
+        )
+        time.sleep(poll_s)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Start the runner of ``$MEMINI_ROLE``; ``--supervise <role>`` is the detached process."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    cfg = load_config(Path(__file__).resolve().parents[2])
+    if args[:1] == ["--supervise"]:
+        from tools.orchestrator import cli  # noqa: PLC0415
+
+        role = args[1]
+        supervise(cfg, role, cli.HANDLERS.get(role, {}))
+        return 0
+    role = os.environ.get("MEMINI_ROLE", "")
+    if role:
+        sys.stdout.write(start(cfg, role) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

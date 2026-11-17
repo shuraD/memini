@@ -9,7 +9,6 @@ import re
 import shutil
 import subprocess
 import sys
-import threading
 import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -115,7 +114,7 @@ def _deps(entry: state.QueueEntry) -> tuple[str, ...]:
         return ()  # run_task refuses the spec and reports it
 
 
-_HANDLERS: dict[str, dict[str, moves.Handler]] = {
+HANDLERS: dict[str, dict[str, moves.Handler]] = {
     "qa": {"test_review": pipeline.review_move},
     "planner": {"dispute": planner.reissue},
 }  # role -> move kind -> handler
@@ -132,13 +131,9 @@ def _apply_role(cfg: config.Config, args: argparse.Namespace) -> int | None:
         print(f"unknown role {args.role!r} (configured: {', '.join(cfg.roles)})")
         return 2
     if not role.queue:
-        moves.serve(cfg, role.name, _HANDLERS.get(role.name, {}))
+        moves.serve(cfg, role.name, HANDLERS.get(role.name, {}))
         return 0
     args.workers = role.workers
-    if role.name in _HANDLERS:  # the role's queue runs here; moves sent to it are served beside it
-        threading.Thread(
-            target=moves.serve, args=(cfg, role.name, _HANDLERS[role.name]), daemon=True
-        ).start()
     if role.queue in cfg.code_queues:
         args.queue, args.wait_upstream = role.queue, True
     elif role.queue:

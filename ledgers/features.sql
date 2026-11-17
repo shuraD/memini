@@ -2623,3 +2623,8 @@ INSERT INTO feature (id, description, layer, proof, status, owner_module, added_
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-024', 'tests/gates/test_orchestrator_tool_move.py::test_a_crashed_tool_or_gate_moves_the_task_to_devops');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-024', 'tests/gates/test_orchestrator_tool_move.py::test_a_gate_failing_on_the_slices_code_stays_with_the_coder');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-024', 'tests/gates/test_orchestrator_tool_move.py::test_fixing_the_tool_closes_the_move_and_releases_the_task');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-025', 'A role session starts one detached supervisor from MEMINI_ROLE that runs the role''s queue repeatedly and serves the moves sent to it; no start command is typed', 'infra', 'tests/gates/test_orchestrator_role_start.py', 'active', 'tools/orchestrator/', 'C-20261117-0032');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'tests/gates/test_orchestrator_role_start.py::test_a_role_session_starts_its_supervisor_once');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'tests/gates/test_orchestrator_role_start.py::test_a_role_outside_the_table_starts_nothing');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'tests/gates/test_orchestrator_role_start.py::test_the_supervisor_runs_the_roles_queue_again_and_again');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'tests/gates/test_orchestrator_role_start.py::test_the_supervisor_serves_the_moves_sent_to_its_role');
