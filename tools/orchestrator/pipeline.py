@@ -680,8 +680,13 @@ class _Run:
                 raise _Stop(REJECTED, "; ".join(cheats))
             reason = engine.dispute(res.stdout)
             if reason:
-                agent_inbox.notify(
-                    cfg, "planner", f"{self.task_id}: the coder disputes the ticket: {reason}"
+                moves.post(
+                    cfg,
+                    self.task_id,
+                    sender=cfg.worker or "squad",
+                    to="planner",
+                    kind="dispute",
+                    text=f"the coder disputes the ticket: {reason}",
                 )
                 raise _Stop(DISPUTED, f"the coder disputes the tests: {reason}")
             if snap == qa_sha:

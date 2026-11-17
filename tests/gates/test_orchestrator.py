@@ -25,6 +25,7 @@ from tools.orchestrator import (
     engine,
     executor,
     gates,
+    moves,
     pipeline,
     spec,
     state,
@@ -410,9 +411,9 @@ def test_test_dispute_goes_to_the_inbox_and_stops_retrying(
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "disputed"
     assert len(_prompts(env, "coder")) == 1
-    inbox = (cfg.state_dir / "agent-inbox" / "planner.md").read_text()  # D-8: to the planner only
-    assert TASK in inbox
-    assert "add must be commutative only" in inbox
+    (move,) = moves.open_for(cfg, "planner")  # D-10: a task move to the planner queue
+    assert move["task"] == TASK
+    assert "add must be commutative only" in move["text"]
     assert not cfg.inbox.exists()
     assert state.State(cfg).task(TASK)["status"] == "disputed"
     assert out.worktree is not None

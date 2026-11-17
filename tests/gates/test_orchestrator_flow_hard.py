@@ -24,7 +24,7 @@ from tests.gates.test_orchestrator import (  # noqa: F401  (env is a fixture)
     _task,
     env,
 )
-from tools.orchestrator import config, gates, pipeline
+from tools.orchestrator import config, gates, moves, pipeline
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = (ROOT / "config" / "graph_schema.yaml").read_text()
@@ -305,10 +305,7 @@ def test_a_coder_dispute_goes_to_the_planner_only(
     cfg = _cfg(env)
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "disputed"
-    assert (
-        "the coder disputes the ticket"
-        in (cfg.state_dir / "agent-inbox" / "planner.md").read_text()
-    )
+    assert "the coder disputes the ticket" in moves.open_for(cfg, "planner")[0]["text"]
     assert not cfg.inbox.exists()
 
 

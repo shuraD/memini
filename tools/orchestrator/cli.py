@@ -117,6 +117,7 @@ def _deps(entry: state.QueueEntry) -> tuple[str, ...]:
 
 _HANDLERS: dict[str, dict[str, moves.Handler]] = {
     "qa": {"test_review": pipeline.review_move},
+    "planner": {"dispute": planner.reissue},
 }  # role -> move kind -> handler
 
 
@@ -331,6 +332,20 @@ def _cmd_ready(cfg: config.Config, args: argparse.Namespace) -> int:
         )
     print(f"workers for the batch: {enqueue.workers(tickets)}")
     return 1 if bad else 0
+
+
+def _cmd_move(cfg: config.Config, args: argparse.Namespace) -> int:
+    move_id = moves.post(
+        cfg,
+        args.task_id,
+        sender=args.sender,
+        to=args.to,
+        kind=args.kind,
+        text=args.text,
+        owner_words=args.owner_words or "",
+    )
+    print(f"{args.task_id}: moved to {args.to} as {move_id}")
+    return 0
 
 
 def _cmd_land(cfg: config.Config, args: argparse.Namespace) -> int:
@@ -655,6 +670,13 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     ld = add("land", "record a merge made outside the stage: state, queues and main agree")
     ld.add_argument("task_id")
     ld.add_argument("commit", help="the commit on main that merged the task")
+    mv = add("move", "send a task to another role's queue (a ledger row is written)")
+    mv.add_argument("task_id")
+    mv.add_argument("--to", required=True, help="the receiving role")
+    mv.add_argument("--kind", required=True, help="dispute, test_review or tool")
+    mv.add_argument("--text", required=True, help="why it moves")
+    mv.add_argument("--from", dest="sender", default="devops")
+    mv.add_argument("--owner-words", help="the owner's words, dated (a dispute needs them)")
     sr = add("stage-run", "run one stage task (started by run-queue --stage)")
     sr.add_argument("stage")
     sr.add_argument("task_id")
@@ -674,6 +696,7 @@ _COMMANDS = {
     "plan": _cmd_plan,
     "ready": _cmd_ready,
     "land": _cmd_land,
+    "move": _cmd_move,
 }
 
 

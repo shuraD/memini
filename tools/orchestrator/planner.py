@@ -17,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.orchestrator import agent_inbox, engine, enqueue, state
+from tools.orchestrator import agent_inbox, engine, enqueue, moves, reconcile, stages, state
 from tools.orchestrator.config import Config
 from tools.orchestrator.executor import executor_for
 
@@ -170,3 +170,80 @@ def plan(cfg: Config, brief_path: Path, ask: Callable[[str], str] | None = None)
         cfg, "vp-rnd", "batch plan for approval (D-4):\n" + "\n".join(lines), "planner"
     )
     return lines
+
+
+def _supersede(cfg: Config, task_id: str, reason: str) -> None:
+    """Comment out the task's lines in every queue (history stays) and release its records."""
+    for path in reconcile.queue_files(cfg):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if not any(x.split(" ", 1)[0] == task_id for x in lines):
+            continue
+        marked = [
+            f"# SUPERSEDED ({reason}) {x}" if x.split(" ", 1)[0] == task_id else x for x in lines
+        ]
+        with state.locked(cfg.state_dir / "locks" / f"queue-{path.name}.lock"):
+            path.write_text("\n".join(marked) + "\n", encoding="utf-8")
+    for stage in cfg.stages:  # a stage that already passed the ticket must take the new one
+        rec = stages.StageState(cfg, stage.name)
+        if rec.status(task_id) is not None:
+            rec.set(task_id, stages.RELEASED, reason)
+    st = state.State(cfg)
+    if st.task(task_id) is not None:
+        st.update(task_id, "released", reason=reason)
+
+
+def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = None) -> str:
+    """Serve a ``dispute`` move: write the D3 change ticket and send it to QA's ready review.
+
+    The owner's words come with the move; without them nothing is written and vp-rnd is asked.
+    Returns the move's result line.
+    """
+    task, p = move["task"], move["payload"]
+    words = str(p.get("owner_words", "")).strip()
+    if not words:
+        agent_inbox.notify(
+            cfg,
+            "vp-rnd",
+            f"{task}: cannot be built as written ({move['text']}); "
+            "a ticket needs the owner's words",
+            "planner",
+        )
+        return "no owner words: asked vp-rnd"
+    queue = cfg.stages[0].queue
+    old = next((t for t in enqueue.read_tickets(queue) if t.id == task), None)
+    if old is None:
+        return f"{task} has no ticket in {queue.name}"
+    prompt = engine.render(
+        cfg, "planner_fix", ticket=old.text, reason=move["text"], owner_words=words
+    )
+    try:
+        fix = json.loads(
+            re.findall(r"\{.*\}", (ask or (lambda q: _ask(cfg, q)))(prompt), re.DOTALL)[0]
+        )
+        text = enqueue.fix_text(
+            cfg,
+            str(fix["change"]),
+            list(fix.get("remove_names", [])),
+            list(fix.get("renames", [])),
+            words,
+        )
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        return f"the Planner answer is not a usable fix: {exc}"
+    ticket = enqueue.Ticket(task, old.module, old.deps, old.sources, text)
+    others = [t for t in enqueue.read_tickets(queue) if t.id != task]
+    found = enqueue.problems(cfg, ticket, others)
+    if found:
+        return "refused by the ready gate: " + "; ".join(found)
+    _supersede(cfg, task, f"cannot be built as written, move {move['id']}")
+    _, found = enqueue.enqueue(
+        cfg,
+        task_id=task,
+        module=old.module,
+        deps=old.deps,
+        sources=old.sources.split(",") if old.sources else (),
+        text=text,
+    )
+    state.ops_log(
+        cfg, task, "reissued", f"D3 change ticket for QA's ready review, move {move['id']}"
+    )
+    return "reissued: " + ("; ".join(found) if found else "queued for QA's ready review")
