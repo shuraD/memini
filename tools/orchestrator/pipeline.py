@@ -970,21 +970,44 @@ class _Run:
                     raise _Stop(REJECTED, "squash commit: " + "; ".join(cheats))
                 run = self._gate_run(self.merge_wt, squash, files)
                 fails = gates.qa_test_failures(cfg, self.ex, run, files)
-                for stage in ("merge", *(("batch",) if self._last_of_batch() else ())):
-                    fails += gates.run_gates(
-                        cfg, self.ex, run, stage, main_sha, host=self.host, reuse=self.gate_reuse
-                    )
+                fails += gates.run_gates(
+                    cfg, self.ex, run, "merge", main_sha, host=self.host, reuse=self.gate_reuse
+                )
                 fails += self._holdout(squash)
                 if fails:
                     reason = "; ".join(f.summary() for f in fails)
                     raise _Stop(FAILED, "merge gates failed: " + reason[:1500])
                 if self._advance(squash, main_sha):
                     kept = self._cleanup(squash)
-                    note = self._sandbox_note()
+                    note = self._sandbox_note() + self._batch_suite(squash, main_sha, files)
                     return Outcome(
                         self.task_id, MERGED, f"merged as {squash[:10]}{kept}{note}", None, squash
                     )
             raise _Stop(FAILED, f"main moved {cfg.merge_retries} times during the merge")
+
+    def _batch_suite(self, squash: str, main_sha: str, files: list[str]) -> str:
+        """Run the unit suite once the last slice of the queue has merged (D-9).
+
+        A failure is not the last coder's to fix: the failing tests go to the planner, who writes
+        a fix ticket (owner 2026-11-17). Returns a note for the outcome.
+        """
+        if not self._last_of_batch():
+            return ""
+        self._fresh(self.gate_wt, squash)
+        run = self._gate_run(self.gate_wt, squash, files)
+        fails = gates.run_gates(self.cfg, self.ex, run, "batch", main_sha, host=self.host)
+        if not fails:
+            state.ops_log(self.cfg, self.task_id, "batch_suite_passed", "the unit suite is green")
+            return "; batch suite green"
+        text = "; ".join(f.summary() for f in fails)[:1500]
+        agent_inbox.notify(
+            self.cfg,
+            "planner",
+            f"{self.task_id}: the unit suite failed after the last slice merged ({squash[:10]}); "
+            f"write a fix ticket for: {text}",
+        )
+        state.ops_log(self.cfg, self.task_id, "batch_suite_failed", text)
+        return "; batch suite FAILED (fix ticket requested from the planner)"
 
     def _last_of_batch(self) -> bool:
         """Return True when every other task of this queue is merged (D-9: the unit suite runs)."""

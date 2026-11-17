@@ -17,6 +17,7 @@ from tests.gates.test_orchestrator import (  # noqa: F401  (env is a fixture)
     _cfg,
     _coder,
     _gate,
+    _gate_plan,
     _git,
     _plan,
     _prompts,
@@ -400,3 +401,18 @@ def test_the_batch_gate_runs_only_with_the_last_slice_of_the_queue(
     assert out.status == "merged", out.reason
     log = (cfg.state_dir / "runs" / TASK / "gates.log").read_text()
     assert ("gate tests" in log) is runs
+
+
+def test_a_failing_batch_suite_goes_to_the_planner_and_the_slice_stays_merged(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    _gate_plan(env, monkeypatch, tests={"fail": True})
+    cfg = _cfg(env, gates=[_gate("tests", ["batch"])])
+    cfg.queue.parent.mkdir(parents=True, exist_ok=True)
+    cfg.queue.write_text(f"{TASK} spec fake\n")
+    out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "merged"  # the last coder is not sent back
+    assert "batch suite FAILED" in out.reason
+    assert "write a fix ticket" in (cfg.state_dir / "agent-inbox" / "planner.md").read_text()
+    assert len(_prompts(env, "coder")) == 1
