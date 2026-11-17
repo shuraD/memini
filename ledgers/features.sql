@@ -2595,3 +2595,7 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-018', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-018', 'tests/gates/test_orchestrator_planner.py::test_a_bad_answer_is_refused');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-018', 'tests/gates/test_orchestrator_planner.py::test_ids_continue_after_the_ones_already_queued');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-018', 'tests/gates/test_orchestrator_planner.py::test_the_brief_needs_every_key');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-019', 'After every batch the orchestrator writes the D10 metrics table into STATUS.md from its own records', 'infra', 'tests/gates/test_orchestrator_metrics.py', 'active', 'tools/orchestrator/', 'C-20261117-0024');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-019', 'tests/gates/test_orchestrator_metrics.py::test_first_run_rule_and_ticket_metrics');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-019', 'tests/gates/test_orchestrator_metrics.py::test_people_in_the_ledger_count_as_relay_hops_and_money_on_failed_runs');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-019', 'tests/gates/test_orchestrator_metrics.py::test_status_md_gets_one_section_that_is_replaced_not_appended');

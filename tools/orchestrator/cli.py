@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from tools.orchestrator import (
     enqueue,
     gates,
     gitops,
+    metrics,
     pipeline,
     planner,
     planstage,
@@ -195,7 +197,7 @@ def run_queue_parallel(
         if not running and not _upstream_busy(cfg, wait_upstream, started):
             break
         time.sleep(pause)
-    return _queue_exit(st, entries, failed)
+    return _batch_done(cfg, entries, _queue_exit(st, entries, failed))
 
 
 def _stage_launcher(args: argparse.Namespace, stage_name: str) -> Callable[[stages.StageItem], Any]:
@@ -260,6 +262,13 @@ def _cmd_enqueue(cfg: config.Config, args: argparse.Namespace) -> int:
         queued = enqueue.read_tickets(cfg.stages[0].queue)
         print(f"{args.task_id}: queued; workers for the batch: {enqueue.workers(queued)}")
     return 1 if found else 0
+
+
+def _cmd_metrics(cfg: config.Config, args: argparse.Namespace) -> int:
+    ids = [i for i in args.ids.split(",") if i] or [e.task_id for e in _queue_entries(cfg)]
+    when = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
+    print(metrics.write(cfg, ids, when))
+    return 0
 
 
 def _cmd_plan(cfg: config.Config, args: argparse.Namespace) -> int:
@@ -330,6 +339,14 @@ def _reap(st: state.State, running: dict[str, Any], failed: set[str]) -> None:
         else:
             failed.add(task_id)
             print(f"{task_id}: run ended with exit {code}; its dependents wait")
+
+
+def _batch_done(cfg: config.Config, entries: Sequence[state.QueueEntry], code: int) -> int:
+    """After a finished batch, write its metrics into STATUS.md (D10); keep the exit code."""
+    if code == 0 and entries:
+        stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
+        metrics.write(cfg, [e.task_id for e in entries], stamp)
+    return code
 
 
 def _queue_exit(st: state.State, entries: Sequence[state.QueueEntry], failed: set[str]) -> int:
@@ -407,7 +424,7 @@ def _run_queue_serial(cfg: config.Config, args: argparse.Namespace) -> int:
         print("waiting on depends_on: " + "; ".join(waiting))
         return _EXIT_WAITING
     print("queue done")
-    return 0
+    return _batch_done(cfg, _queue_entries(cfg), 0)
 
 
 def _cmd_check_spec(cfg: config.Config, args: argparse.Namespace) -> int:
@@ -590,6 +607,8 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     eq.add_argument("--deps", default="")
     eq.add_argument("--sources", default="")
     eq.add_argument("--needs", default="", help="graph names the ticket needs (must have roles)")
+    mt = add("metrics", "write the batch metrics into STATUS.md (default: the code queue's tasks)")
+    mt.add_argument("--ids", default="", help="task ids, comma separated")
     pl = add("plan", "the Planner: a batch brief file in, ready-gated tickets out (D2)")
     pl.add_argument("--brief", required=True, help="the batch brief file vp-rnd saved")
     rd = add("ready", "run the ready gate over a stage queue's tickets")
@@ -613,6 +632,7 @@ _COMMANDS = {
     "release": _cmd_release,
     "stage-run": _cmd_stage_run,
     "enqueue": _cmd_enqueue,
+    "metrics": _cmd_metrics,
     "plan": _cmd_plan,
     "ready": _cmd_ready,
     "land": _cmd_land,
