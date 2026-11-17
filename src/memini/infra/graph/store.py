@@ -17,6 +17,7 @@ The design follows the old memini's ``connect``/``remember``; the code is new.
 
 from __future__ import annotations
 
+import functools
 import os
 import threading
 from collections.abc import Mapping, Sequence
@@ -26,7 +27,7 @@ import neo4j
 from neo4j_graphrag.indexes import upsert_vectors
 from neo4j_graphrag.retrievers import VectorRetriever
 
-from memini.infra.graph.schema import GraphSchema, load_schema
+from memini.infra.graph.schema import GraphNames, GraphSchema, load_schema
 
 # Environment variables of the connection settings (spec GR-05); none has a default.
 _ENV_URI, _ENV_USER, _ENV_PASSWORD, _ENV_DATABASE = (
@@ -36,26 +37,15 @@ _ENV_URI, _ENV_USER, _ENV_PASSWORD, _ENV_DATABASE = (
     "NEO4J_DATABASE",
 )
 
-# Graph names the store relies on (spec GR-03); the schema file declares each of them.
-_SCOPE = "scope"
-_ID = "id"
-_HASH = "content_hash"
-_STATUS = "status"
-_UPDATED_BY = "updated_by"
-_UPDATED_AT = "updated_at"
-_ACTIVE = "active"
-_SUPERSEDED = "superseded"
-_SUPERSEDES = "SUPERSEDES"
-# Graph names of the vector, delete and stats functions (spec GR-04).
-_DELETED = "deleted"
-_SUMMARY = "summary"
-_EMBEDDING = "embedding"  # the vector property, and the prefix of every vector property
-_TYPE = "type"
-_LEVEL = "level"
-_ENTITY = "Entity"
-_COMMUNITY = "Community"
-_MEMBER_OF = "BELONGS_TO_COMMUNITY"
+# Every graph name (label, relationship type, property, status) comes from the schema's
+# names section (spec GR-06); Cypher parameters and record keys use neutral names.
 _TOMBSTONE_CHARS = 200  # characters of summary a soft-deleted node keeps
+
+
+@functools.cache
+def _names() -> GraphNames:
+    """Return the graph names of the configured schema file, read once per process."""
+    return load_schema().names
 
 
 class _Shared:
@@ -105,11 +95,12 @@ class GraphStore:
         self._driver = driver
         driver.verify_connectivity()
         schema = load_schema()
+        p = schema.names.properties
         for label, props in schema.nodes.items():
-            if _ID in props:
+            if p.id in props:
                 driver.execute_query(
-                    f"CREATE CONSTRAINT {label.lower()}_{_SCOPE}_{_ID} IF NOT EXISTS "
-                    f"FOR (n:`{label}`) REQUIRE (n.`{_SCOPE}`, n.`{_ID}`) IS UNIQUE",
+                    f"CREATE CONSTRAINT {label.lower()}_{p.scope}_{p.id} IF NOT EXISTS "
+                    f"FOR (n:`{label}`) REQUIRE (n.`{p.scope}`, n.`{p.id}`) IS UNIQUE",
                     database_=self.database,
                 )
         self._schema = schema
@@ -120,57 +111,62 @@ class GraphStore:
         self._driver = None
         self._schema = None
 
-    def _checked(self, label: str) -> tuple[neo4j.Driver, tuple[str, ...]]:
-        """Return the open driver and ``label``'s properties; ValueError for an unknown label."""
+    def _checked(self, label: str) -> tuple[neo4j.Driver, tuple[str, ...], GraphNames]:
+        """Return the open driver, ``label``'s properties and the graph names.
+
+        ValueError for an unknown label.
+        """
         if self._driver is None or self._schema is None:
             raise RuntimeError("GraphStore is not connected; call connect() first")
         if label not in self._schema.nodes:
             raise ValueError(f"unknown node label {label!r}")
-        return self._driver, self._schema.nodes[label]
+        return self._driver, self._schema.nodes[label], self._schema.names
 
     def write(
         self, label: str, scope: str, items: Sequence[Mapping[str, Any]], *, updated_by: str
     ) -> list[str]:
         """Merge ``items`` as ``label`` nodes of ``scope``; return the written ids in order."""
-        driver, props = self._checked(label)
-        status = f", n.`{_STATUS}` = $status" if _STATUS in props else ""
+        driver, props, names = self._checked(label)
+        p = names.properties
+        status = f", n.`{p.status}` = $new_status" if p.status in props else ""
         records, _, _ = driver.execute_query(
             f"UNWIND $rows AS row "
             f"WITH row WHERE NOT EXISTS {{ MATCH (m:`{label}`) "
-            f"WHERE m.`{_SCOPE}` = $scope AND m.`{_HASH}` = row.`{_HASH}` }} "
-            f"MERGE (n:`{label}` {{`{_SCOPE}`: $scope, `{_ID}`: row.`{_ID}`}}) "
-            f"SET n += row, n.`{_UPDATED_BY}` = $updated_by, "
-            f"n.`{_UPDATED_AT}` = datetime(){status} "
-            f"RETURN row.`{_ID}` AS id",
+            f"WHERE m.`{p.scope}` = $part AND m.`{p.content_hash}` = row.`{p.content_hash}` }} "
+            f"MERGE (n:`{label}` {{`{p.scope}`: $part, `{p.id}`: row.`{p.id}`}}) "
+            f"SET n += row, n.`{p.updated_by}` = $author, "
+            f"n.`{p.updated_at}` = datetime(){status} "
+            f"RETURN row.`{p.id}` AS key",
             {
                 "rows": [dict(item) for item in items],
-                "scope": scope,
-                "updated_by": updated_by,
-                "status": _ACTIVE,
+                "part": scope,
+                "author": updated_by,
+                "new_status": names.statuses.active,
             },
             database_=self.database,
         )
-        written = {record["id"] for record in records}
-        return [str(item[_ID]) for item in items if item[_ID] in written]
+        written = {record["key"] for record in records}
+        return [str(item[p.id]) for item in items if item[p.id] in written]
 
     def supersede(
         self, label: str, scope: str, new_id: str, old_id: str, *, updated_by: str
     ) -> None:
         """Link ``new`` -[:SUPERSEDES]-> ``old`` and mark ``old`` superseded; keep both."""
-        driver, _ = self._checked(label)
+        driver, _, names = self._checked(label)
+        p = names.properties
         records, _, _ = driver.execute_query(
-            f"MATCH (new:`{label}` {{`{_SCOPE}`: $scope, `{_ID}`: $new_id}}) "
-            f"MATCH (old:`{label}` {{`{_SCOPE}`: $scope, `{_ID}`: $old_id}}) "
-            f"MERGE (new)-[:`{_SUPERSEDES}`]->(old) "
-            f"SET old.`{_STATUS}` = $status, old.`{_UPDATED_BY}` = $updated_by, "
-            f"old.`{_UPDATED_AT}` = datetime() "
+            f"MATCH (new:`{label}` {{`{p.scope}`: $part, `{p.id}`: $new_key}}) "
+            f"MATCH (old:`{label}` {{`{p.scope}`: $part, `{p.id}`: $old_key}}) "
+            f"MERGE (new)-[:`{names.relationships.supersedes}`]->(old) "
+            f"SET old.`{p.status}` = $new_status, old.`{p.updated_by}` = $author, "
+            f"old.`{p.updated_at}` = datetime() "
             f"RETURN count(*) AS linked",
             {
-                "scope": scope,
-                "new_id": new_id,
-                "old_id": old_id,
-                "status": _SUPERSEDED,
-                "updated_by": updated_by,
+                "part": scope,
+                "new_key": new_id,
+                "old_key": old_id,
+                "new_status": names.statuses.superseded,
+                "author": updated_by,
             },
             database_=self.database,
         )
@@ -194,10 +190,11 @@ def write_vectors(
     """
     if not vectors:
         return 0
+    p = _names().properties
     records, _, _ = driver.execute_query(
-        f"MATCH (n:`{label}`) WHERE n.`{_SCOPE}` = $scope AND n.`{_ID}` IN $ids "
-        f"RETURN n.`{_ID}` AS id, elementId(n) AS eid",
-        {"scope": scope, "ids": list(vectors)},
+        f"MATCH (n:`{label}`) WHERE n.`{p.scope}` = $part AND n.`{p.id}` IN $keys "
+        f"RETURN n.`{p.id}` AS key, elementId(n) AS eid",
+        {"part": scope, "keys": list(vectors)},
         database_=database,
     )
     if not records:
@@ -206,7 +203,7 @@ def write_vectors(
         driver,
         ids=[str(r["eid"]) for r in records],
         embedding_property=prop,
-        embeddings=[[float(x) for x in vectors[r["id"]]] for r in records],
+        embeddings=[[float(x) for x in vectors[r["key"]]] for r in records],
         neo4j_database=database,
     )
     return len(records)
@@ -226,23 +223,29 @@ def delete(
     becomes deleted, ``summary`` is cut to its first characters, every ``embedding*``
     property is removed and the community memberships are dropped.
     """
-    where = f"n.`{_SCOPE}` = $scope" + ("" if node_id is None else f" AND n.`{_ID}` = $id")
-    params: dict[str, Any] = {"scope": scope, "id": node_id}
+    names = _names()
+    p = names.properties
+    where = f"n.`{p.scope}` = $part" + ("" if node_id is None else f" AND n.`{p.id}` = $key")
+    params: dict[str, Any] = {"part": scope, "key": node_id}
     if hard:
         query = f"MATCH (n) WHERE {where} DETACH DELETE n RETURN count(*) AS c"
     else:
-        params.update(status=_DELETED, active=_ACTIVE, keep=_TOMBSTONE_CHARS)
+        params.update(
+            new_status=names.statuses.deleted,
+            live=names.statuses.active,
+            keep=_TOMBSTONE_CHARS,
+            prefix=p.embedding,
+        )
         query = (
-            f"MATCH (n) WHERE {where} AND n.`{_STATUS}` = $active "
-            f"OPTIONAL MATCH (n)-[m:`{_MEMBER_OF}`]->() DELETE m "
+            f"MATCH (n) WHERE {where} AND n.`{p.status}` = $live "
+            f"OPTIONAL MATCH (n)-[m:`{names.relationships.member_of}`]->() DELETE m "
             f"WITH DISTINCT n "
-            f"SET n.`{_STATUS}` = $status, "
-            f"n.`{_SUMMARY}` = left(n.`{_SUMMARY}`, $keep), "
-            f"n.`{_UPDATED_AT}` = datetime() "
+            f"SET n.`{p.status}` = $new_status, "
+            f"n.`{p.summary}` = left(n.`{p.summary}`, $keep), "
+            f"n.`{p.updated_at}` = datetime() "
             f"FOREACH (k IN [k IN keys(n) WHERE k STARTS WITH $prefix] | SET n[k] = null) "
             f"RETURN count(n) AS c"
         )
-        params["prefix"] = _EMBEDDING
     records, _, _ = driver.execute_query(query, params, database_=database)
     return int(records[0]["c"]) if records else 0
 
@@ -257,13 +260,14 @@ def _vector_search(
     database: str | None,
 ) -> list[tuple[str, float]]:
     """Run a filtered VectorRetriever search; return ``(id, score)`` best first."""
+    key = _names().properties.id
     retriever = VectorRetriever(
-        driver, index_name, return_properties=[_ID], neo4j_database=database
+        driver, index_name, return_properties=[key], neo4j_database=database
     )
     result = retriever.get_search_results(
         query_vector=[float(x) for x in vector], top_k=top_k, filters=filters
     )
-    hits = [(str(r["node"][_ID]), float(r["score"])) for r in result.records]
+    hits = [(str(r["node"][key]), float(r["score"])) for r in result.records]
     hits.sort(key=lambda hit: hit[1], reverse=True)
     return hits[:top_k]
 
@@ -278,7 +282,9 @@ def search_entities(
     database: str | None = None,
 ) -> list[tuple[str, float]]:
     """Return the active nodes of ``scope`` nearest to ``vector`` in ``index_name``."""
-    filters = {_SCOPE: {"$eq": scope}, _STATUS: {"$eq": _ACTIVE}}
+    names = _names()
+    p = names.properties
+    filters = {p.scope: {"$eq": scope}, p.status: {"$eq": names.statuses.active}}
     return _vector_search(driver, index_name, vector, filters, top_k=top_k, database=database)
 
 
@@ -293,9 +299,10 @@ def search_communities(
     database: str | None = None,
 ) -> list[tuple[str, float]]:
     """Return the communities of ``scope`` (only ``level`` when given) nearest to ``vector``."""
-    filters: dict[str, Any] = {_SCOPE: {"$eq": scope}}
+    p = _names().properties
+    filters: dict[str, Any] = {p.scope: {"$eq": scope}}
     if level is not None:
-        filters[_LEVEL] = {"$eq": level}
+        filters[p.level] = {"$eq": level}
     return _vector_search(driver, index_name, vector, filters, top_k=top_k, database=database)
 
 
@@ -303,34 +310,36 @@ def stats(driver: neo4j.Driver, scope: str, *, database: str | None = None) -> d
     """Count one scope: entities per status and type, relationships, coverage, communities."""
 
     def rows(query: str) -> list[neo4j.Record]:
-        records, _, _ = driver.execute_query(query, {"scope": scope}, database_=database)
+        records, _, _ = driver.execute_query(query, {"part": scope}, database_=database)
         return list(records)
 
-    in_scope = f"WHERE n.`{_SCOPE}` = $scope"
-    entity = f"MATCH (n:`{_ENTITY}`) {in_scope}"
+    names = _names()
+    p = names.properties
+    in_scope = f"WHERE n.`{p.scope}` = $part"
+    entity = f"MATCH (n:`{names.labels.entity}`) {in_scope}"
     by_status = {
         str(r["k"]): int(r["c"])
-        for r in rows(f"{entity} RETURN n.`{_STATUS}` AS k, count(*) AS c")
+        for r in rows(f"{entity} RETURN n.`{p.status}` AS k, count(*) AS c")
         if r["k"] is not None
     }
     by_type = {
         str(r["k"]): int(r["c"])
-        for r in rows(f"{entity} RETURN n.`{_TYPE}` AS k, count(*) AS c")
+        for r in rows(f"{entity} RETURN n.`{p.type}` AS k, count(*) AS c")
         if r["k"] is not None
     }
     rels = {
         str(r["k"]): int(r["c"])
         for r in rows(
-            f"MATCH (n)-[r]->(m) {in_scope} AND m.`{_SCOPE}` = $scope "
+            f"MATCH (n)-[r]->(m) {in_scope} AND m.`{p.scope}` = $part "
             f"RETURN type(r) AS k, count(r) AS c"
         )
     }
-    cov = rows(f"{entity} RETURN count(n) AS t, count(n.`{_EMBEDDING}`) AS e")[0]
+    cov = rows(f"{entity} RETURN count(n) AS t, count(n.`{p.embedding}`) AS e")[0]
     comm = rows(
-        f"MATCH (n:`{_COMMUNITY}`) {in_scope} "
-        f"OPTIONAL MATCH ()-[m:`{_MEMBER_OF}`]->(n) "
+        f"MATCH (n:`{names.labels.community}`) {in_scope} "
+        f"OPTIONAL MATCH ()-[m:`{names.relationships.member_of}`]->(n) "
         f"WITH n, count(m) AS size "
-        f"RETURN count(n) AS c, sum(size) AS members, collect(DISTINCT n.`{_LEVEL}`) AS levels"
+        f"RETURN count(n) AS c, sum(size) AS members, collect(DISTINCT n.`{p.level}`) AS levels"
     )[0]
     total, communities = int(cov["t"]), int(comm["c"])
     return {
