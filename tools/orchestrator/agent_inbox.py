@@ -127,10 +127,11 @@ def render(who: str, messages: Sequence[Message]) -> str:
     for m in messages:
         lines.append(f"{m.id} {m.at} {m.sender} -> {m.to}" + (f" re {m.re}" if m.re else ""))
         lines.append(m.text)
-    lines.append(
-        "Answer: python -m tools.orchestrator.agent_inbox reply --from "
-        f'{who} --id <M-id> "..." (qa/devops only; coders post with: post --from {who} --to qa)'
-    )
+    cmd = "python -m tools.orchestrator.agent_inbox"
+    if who in CODERS:
+        lines.append(f'Ask QA or DevOps: {cmd} post --from {who} --to qa "..."')
+    else:
+        lines.append(f'Answer: {cmd} reply --from {who} --id <M-id> "..."')
     return "\n".join(lines) + "\n"
 
 
