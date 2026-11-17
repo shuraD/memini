@@ -215,3 +215,37 @@ def test_the_ticket_that_edits_the_typed_classes_is_exempt_from_the_typed_check(
     assert enqueue._names_problems(cfg, _t(text), ())  # any other module is checked
     found = enqueue._names_problems(cfg, _t("matches (n:Invented)", module=typed), ())
     assert found == ["graph name Invented has no role in names: of config/graph_schema.yaml"]
+
+
+def test_a_fix_ticket_lists_the_consumers_of_every_removed_or_renamed_name(
+    cfg: config.Config,
+) -> None:
+    text = enqueue.fix_text(
+        cfg,
+        "Drop the loader",
+        [],
+        ["load_schema=read_schema"],
+        "owner 2026-11-17: remove it",
+    )
+    assert 'Owner words: "owner 2026-11-17: remove it".' in text
+    assert "Rename: load_schema -> read_schema." in text
+    assert "Consumers of load_schema: src/memini/mod.py." in text
+
+
+def test_a_fix_ticket_needs_the_owners_words_with_a_date_and_a_valid_rename(
+    cfg: config.Config,
+) -> None:
+    with pytest.raises(ValueError, match="owner-words"):
+        enqueue.fix_text(cfg, "x", [], [], "because I said so")
+    with pytest.raises(ValueError, match="old=new"):
+        enqueue.fix_text(cfg, "x", [], ["nope"], "owner 2026-11-17: x")
+
+
+def test_a_fix_ticket_goes_through_the_ready_gate_and_is_queued(cfg: config.Config) -> None:
+    text = enqueue.fix_text(cfg, "Cover every role", [], [], "owner 2026-11-16: rule 2")
+    ticket, found = enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text=text)
+    assert found == []
+    assert [t.id for t in enqueue.read_tickets(cfg.stages[0].queue)] == ["T-9"]
+    assert "Cover every role." in ticket.text
+    _, refused = enqueue.enqueue(cfg, task_id="T-10", module=MODULE, text=text + " atexit")
+    assert any("text:" in p for p in refused)

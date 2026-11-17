@@ -234,11 +234,21 @@ def _run_all(cfg: config.Config, args: argparse.Namespace) -> int:
 
 
 def _cmd_enqueue(cfg: config.Config, args: argparse.Namespace) -> int:
+    fix = bool(args.change)
+    if fix == bool(args.cards):
+        print("enqueue: give --cards, or --change with --owner-words (a structured fix)")
+        return 2
+    text = ""
+    if fix:
+        text = enqueue.fix_text(
+            cfg, args.change, args.remove_names, args.rename, args.owner_words or ""
+        )
     _, found = enqueue.enqueue(
         cfg,
         task_id=args.task_id,
         module=args.file,
-        card_list=args.cards.split(","),
+        card_list=args.cards.split(",") if args.cards else [],
+        text=text,
         deps=[d for d in args.deps.split(",") if d],
         sources=[s for s in args.sources.split(",") if s],
         needs=[n for n in args.needs.split(",") if n],
@@ -565,7 +575,11 @@ def parser() -> argparse.ArgumentParser:
     eq = add("enqueue", "add a ticket from cards; the ready gate decides (the only way to queue)")
     eq.add_argument("task_id")
     eq.add_argument("--file", required=True, help="the module the ticket writes")
-    eq.add_argument("--cards", required=True, help="card IDs, comma separated")
+    eq.add_argument("--cards", default="", help="card IDs, comma separated")
+    eq.add_argument("--change", help="a structured fix (D3): what changes in existing code")
+    eq.add_argument("--remove-names", nargs="*", default=[], help="names the fix removes")
+    eq.add_argument("--rename", nargs="*", default=[], help="old=new renames")
+    eq.add_argument("--owner-words", help="the owner's words, quoted, with the date")
     eq.add_argument("--deps", default="")
     eq.add_argument("--sources", default="")
     eq.add_argument("--needs", default="", help="graph names the ticket needs (must have roles)")

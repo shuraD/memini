@@ -292,22 +292,63 @@ def read_tickets(path: Path) -> list[Ticket]:
     return [parse(x) for x in lines if not x.lstrip().startswith("#")]
 
 
+def consumers(cfg: Config, name: str) -> list[str]:
+    """Return the files of ``src`` and ``tests`` on main that use ``name`` (D3)."""
+    found = gitops.git(
+        cfg.repo, "grep", "-l", "-w", "-e", name, "main", "--", "src", "tests", check=False
+    )
+    return sorted(line.removeprefix("main:") for line in found.stdout.splitlines() if line)
+
+
+def fix_text(
+    cfg: Config,
+    change: str,
+    remove_names: Sequence[str],
+    renames: Sequence[str],
+    owner_words: str,
+) -> str:
+    """Write a structured fix ticket's text and append its consumer list (D3).
+
+    ``renames`` are ``old=new``. The owner's words must carry a date; without them there is no
+    ticket. Every removed or renamed name is searched in ``src`` and ``tests`` on main.
+    """
+    if not re.search(r"\d{4}-\d{2}-\d{2}", owner_words):
+        msg = "owner-words must quote the owner and give the date (YYYY-MM-DD)"
+        raise ValueError(msg)
+    bad = [r for r in renames if r.count("=") != 1 or not all(r.split("="))]
+    if bad:
+        msg = f"rename must be old=new: {', '.join(bad)}"
+        raise ValueError(msg)
+    parts = [change.strip().rstrip(".") + ".", f'Owner words: "{owner_words.strip()}".']
+    if remove_names:
+        parts.append("Remove: " + ", ".join(remove_names) + ".")
+    if renames:
+        parts.append("Rename: " + ", ".join(r.replace("=", " -> ") for r in renames) + ".")
+    names = [*remove_names, *(r.split("=")[0] for r in renames)]
+    for name in names:
+        files = consumers(cfg, name)
+        parts.append(f"Consumers of {name}: " + (", ".join(files) if files else "none") + ".")
+    return " ".join(parts)
+
+
 def enqueue(
     cfg: Config,
     *,
     task_id: str,
     module: str,
-    card_list: Sequence[str],
+    card_list: Sequence[str] = (),
     deps: Sequence[str] = (),
     sources: Sequence[str] = (),
     needs: Sequence[str] = (),
+    text: str = "",
 ) -> tuple[Ticket, list[str]]:
-    """Build the ticket from its cards, run the gate, and append it to the first stage queue."""
+    """Build the ticket (from its cards, or the given fix ``text``), gate it, and queue it."""
     queue = cfg.stages[0].queue
     earlier = read_tickets(queue)
     if any(t.id == task_id for t in earlier):
         return Ticket(task_id, module, tuple(deps), "", ""), [f"{task_id} is already queued"]
-    ticket = Ticket(task_id, module, tuple(deps), ",".join(sources), ticket_text(cfg, card_list))
+    body = text or ticket_text(cfg, card_list)
+    ticket = Ticket(task_id, module, tuple(deps), ",".join(sources), body)
     found = problems(cfg, ticket, earlier, needs)
     if found:
         tell_devops(cfg, ticket, found)
@@ -321,7 +362,6 @@ def enqueue(
         queue.parent.mkdir(parents=True, exist_ok=True)
         with queue.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
-    state.ops_log(
-        cfg, task_id, "enqueue", f"ticket from cards {','.join(card_list)}", module=module
-    )
+    origin = f"cards {','.join(card_list)}" if card_list else "a structured fix"
+    state.ops_log(cfg, task_id, "enqueue", f"ticket from {origin}", module=module)
     return ticket, []
