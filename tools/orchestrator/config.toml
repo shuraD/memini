@@ -362,3 +362,32 @@ modules = ["src/memini/core/query/"]
 [code_queues.ingest-units]
 queue = "../.memini-orchestrator/queue-ingest-units.txt"
 modules = ["src/memini/core/units/", "src/memini/infra/ingest/", "src/memini/core/ingest/"]
+
+# Role sessions (D-10): each role runs its own queue with its own workers, started by its own
+# session (MEMINI_ROLE). A role's queue is one of the code_queues above or a stage; the
+# planner and devops have none: they work through the moves of tasks sent to them.
+[roles.dev1]
+queue = "llm-providers"
+workers = 4
+
+[roles.dev2]
+queue = "query"
+workers = 4
+
+[roles.dev3]
+queue = "ingest-units"
+workers = 4
+
+[roles.dev4]
+queue = "graph-schema"
+workers = 4
+
+[roles.qa]
+queue = "spec"
+workers = 2
+
+[roles.planner]
+workers = 1
+
+[roles.devops]
+workers = 1

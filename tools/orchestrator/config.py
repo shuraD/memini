@@ -13,7 +13,7 @@ import re
 import shutil
 import subprocess
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -90,6 +90,15 @@ class CodeQueue:
 
 
 @dataclass(frozen=True)
+class Role:
+    """One role session (D-10): its queue (a code queue or a stage; "" for a moves-only role)."""
+
+    name: str
+    queue: str
+    workers: int
+
+
+@dataclass(frozen=True)
 class Config:
     """Every setting the orchestrator uses (see ``config.toml`` for their meaning)."""
 
@@ -159,6 +168,7 @@ class Config:
     qa_gate_checks: Mapping[str, tuple[str, ...]] = dataclasses.field(default_factory=dict)
     # coding queues per work unit (owner 2026-11-15); a task whose module matches none goes to queue
     code_queues: Mapping[str, CodeQueue] = dataclasses.field(default_factory=dict)
+    roles: Mapping[str, Role] = dataclasses.field(default_factory=dict)
     sandbox_network: str = ""
     sandbox_neo4j_uri: str = ""
     sandbox_neo4j_user: str = ""
@@ -249,6 +259,26 @@ def _code_queues(repo: Path, raw: object, paths: Mapping[str, Path]) -> dict[str
             msg = f"code queue {name}: modules must be a list of module paths"
             raise ConfigError(msg)
         out[str(name)] = CodeQueue(str(name), queue, tuple(modules))
+    return out
+
+
+def _roles(
+    raw: object, queues: Mapping[str, CodeQueue], stage_names: Sequence[str]
+) -> dict[str, Role]:
+    """Return the roles; a role's queue names an existing code queue or stage, or is empty."""
+    if not isinstance(raw, dict):
+        msg = "roles must be a table of {queue, workers}"
+        raise ConfigError(msg)
+    out = {}
+    for name, item in raw.items():
+        queue, workers = str(item.get("queue", "")), int(item.get("workers", 1))
+        if queue and queue not in queues and queue not in stage_names:
+            msg = f"role {name}: {queue!r} is neither a code queue nor a stage"
+            raise ConfigError(msg)
+        if workers < 1:
+            msg = f"role {name}: workers must be at least 1"
+            raise ConfigError(msg)
+        out[str(name)] = Role(str(name), queue, workers)
     return out
 
 
@@ -363,6 +393,7 @@ def load_config(
                 msg = f"{key} {paths[key]} must be outside the repository and every worktree"
                 raise ConfigError(msg)
     stages = _stages(repo, raw.get("stages", []), paths)
+    code_queues = _code_queues(repo, raw.get("code_queues", {}), paths)
     if _inside(paths["worktrees_dir"], repo):
         msg = "worktrees_dir must be outside the repository"
         raise ConfigError(msg)
@@ -471,7 +502,8 @@ def load_config(
         engines=engines,
         stages=stages,
         spec_dir=_path(repo, str(raw.get("spec_dir") or "../specs")),
-        code_queues=_code_queues(repo, raw.get("code_queues", {}), paths),
+        code_queues=code_queues,
+        roles=_roles(raw.get("roles", {}), code_queues, [s.name for s in stages]),
         plan_max_waves=int(raw.get("plan_max_waves", 4)),
         qa_gate_checks={
             str(k): tuple(str(a) for a in v) for k, v in raw.get("qa_gate_checks", {}).items()

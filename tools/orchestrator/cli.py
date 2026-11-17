@@ -22,6 +22,7 @@ from tools.orchestrator import (
     gates,
     gitops,
     metrics,
+    moves,
     pipeline,
     planner,
     planstage,
@@ -113,7 +114,33 @@ def _deps(entry: state.QueueEntry) -> tuple[str, ...]:
         return ()  # run_task refuses the spec and reports it
 
 
+_HANDLERS: dict[str, dict[str, moves.Handler]] = {}  # role -> move kind -> handler
+
+
+def _apply_role(cfg: config.Config, args: argparse.Namespace) -> int | None:
+    """Point ``args`` at the queue of ``--role`` and its worker count.
+
+    Returns the exit code when the role has no queue to run (2 unknown; planner and devops serve
+    the moves sent to them), None when the code or stage loop should run.
+    """
+    role = cfg.roles.get(args.role)
+    if role is None:
+        print(f"unknown role {args.role!r} (configured: {', '.join(cfg.roles)})")
+        return 2
+    if not role.queue:
+        moves.serve(cfg, role.name, _HANDLERS.get(role.name, {}))
+        return 0
+    args.workers = role.workers
+    if role.queue in cfg.code_queues:
+        args.queue, args.wait_upstream = role.queue, True
+    elif role.queue:
+        args.stage = role.queue
+    return None
+
+
 def _cmd_run_queue(cfg: config.Config, args: argparse.Namespace) -> int:
+    if args.role and (code := _apply_role(cfg, args)) is not None:
+        return code
     if args.queue:
         if args.queue not in cfg.code_queues:
             print(f"unknown code queue {args.queue!r} (configured: {', '.join(cfg.code_queues)})")
@@ -579,6 +606,7 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     rq.add_argument("--stage", default=config.CODE_STAGE, help="the stage to run (default code)")
     rq.add_argument("--all", action="store_true", help="every stage and code, side by side")
     rq.add_argument("--queue", help="a work unit's coding queue (code_queues; default: queue)")
+    rq.add_argument("--role", help="a role's queue and worker count (roles in config.toml)")
     rq.add_argument(
         "--workers",
         type=int,

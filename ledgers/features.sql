@@ -2604,3 +2604,9 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-020', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-020', 'tests/gates/test_session_size_hook.py::test_a_small_session_hears_nothing');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-020', 'tests/gates/test_session_size_hook.py::test_without_usage_the_size_is_estimated_from_the_file');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-020', 'tests/gates/test_session_size_hook.py::test_a_missing_transcript_or_bad_event_never_blocks');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-021', 'A task moves between role queues (post, serve, resolve) and every move is a ledger row; run-queue --role starts a role''s own queue', 'infra', 'tests/gates/test_orchestrator_moves.py', 'active', 'tools/orchestrator/', 'C-20261117-0028');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-021', 'tests/gates/test_orchestrator_moves.py::test_a_posted_move_is_open_for_its_receiver_and_in_the_ledger');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-021', 'tests/gates/test_orchestrator_moves.py::test_serve_resolves_each_open_move_and_the_waiter_reads_the_result');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-021', 'tests/gates/test_orchestrator_moves.py::test_wait_gives_up_when_nobody_resolves');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-021', 'tests/gates/test_orchestrator_moves.py::test_serve_leaves_kinds_it_has_no_handler_for');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-021', 'tests/gates/test_orchestrator_moves.py::test_run_queue_role_names_come_from_config');
