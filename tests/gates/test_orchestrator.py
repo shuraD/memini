@@ -361,7 +361,7 @@ def test_two_failed_attempts_reject_the_task(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _plan(env, monkeypatch, coder=_coder({IMPL: SNEAKY}))
-    out = pipeline.run_task(_cfg(env), _task(env))
+    out = pipeline.run_task(_cfg(env, test_review=False), _task(env))
     assert out.status == "rejected"
     assert len(_prompts(env, "coder")) == 2
     assert "SECRET" not in out.reason
@@ -613,7 +613,12 @@ def test_the_slice_must_pass_in_every_profile(
     )
     _plan(env, monkeypatch, coder=_coder({IMPL: flag_bug}, {IMPL: GOOD}))
     _gate_plan(env, monkeypatch)
-    cfg = _cfg(env, gates=[_gate("tests", ["slice"], profiles=True)], profiles=BOTH_PROFILES)
+    cfg = _cfg(
+        env,
+        gates=[_gate("tests", ["slice"], profiles=True)],
+        profiles=BOTH_PROFILES,
+        test_review=False,
+    )
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "merged", out.reason
     retry = _prompts(env, "coder")[1]
