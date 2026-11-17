@@ -16,6 +16,7 @@ from tests.gates.test_orchestrator import (  # noqa: F401  (env is a fixture)
     TASK,
     _cfg,
     _coder,
+    _gate,
     _git,
     _plan,
     _prompts,
@@ -275,19 +276,15 @@ def test_a_line_without_a_proving_test_goes_to_qa(
 # --- D6 failure routing -----------------------------------------------------------------------
 
 
-def test_the_coder_sees_the_failing_assertion_and_the_same_one_twice_is_a_suspect_test(
+def test_the_same_failing_assertion_twice_is_not_a_dispute(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _plan(env, monkeypatch, coder=_coder({IMPL: SNEAKY}, {IMPL: SNEAKY + "\n# again\n"}))
     cfg = _cfg(env)
     out = pipeline.run_task(cfg, _task(env))
-    assert out.status == "disputed"
-    assert "suspect test" in out.reason
-    assert "test_holdout_secret_marker_xyz" in (cfg.state_dir / "agent-inbox" / "qa.md").read_text()
-    assert "suspect_test" in [
-        json.loads(x)["action"]
-        for x in (cfg.state_dir / "ops-ledger.jsonl").read_text().splitlines()
-    ]
+    assert out.status == "rejected"  # D-6: no suspect-test stop; the attempts run out
+    assert "test_holdout_secret_marker_xyz" in _prompts(env, "coder")[1]
+    assert not (cfg.state_dir / "agent-inbox" / "qa.md").exists()
 
 
 def test_failing_messages_come_from_pytests_own_summary_line() -> None:
@@ -300,14 +297,18 @@ def test_failing_messages_come_from_pytests_own_summary_line() -> None:
     assert "failing assertions: t::x: assert 3 == 4" in failure.summary()
 
 
-def test_a_coder_dispute_also_goes_to_the_qa_inbox(
+def test_a_coder_dispute_goes_to_the_planner_only(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _plan(env, monkeypatch, coder=[{"stdout": "TEST-DISPUTE: add must be commutative only\n"}])
     cfg = _cfg(env)
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "disputed"
-    assert "the coder disputes the tests" in (cfg.state_dir / "agent-inbox" / "qa.md").read_text()
+    assert (
+        "the coder disputes the ticket"
+        in (cfg.state_dir / "agent-inbox" / "planner.md").read_text()
+    )
+    assert not cfg.inbox.exists()
 
 
 # --- D5 handoff -------------------------------------------------------------------------------
@@ -382,3 +383,20 @@ def test_land_refuses_a_commit_that_is_not_on_main(env: dict[str, Any]) -> None:
     _git(repo, "checkout", "-q", "main")
     with pytest.raises(ValueError, match="not on main"):
         reconcile.land(_cfg(env), TASK, sha)
+
+
+# --- D-9: the unit suite runs once per batch ----------------------------------------------------
+
+
+@pytest.mark.parametrize(("others", "runs"), [("OTHER-1 spec fake\n", False), ("", True)])
+def test_the_batch_gate_runs_only_with_the_last_slice_of_the_queue(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch, others: str, runs: bool
+) -> None:
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
+    cfg = _cfg(env, gates=[_gate("tests", ["batch"])])
+    cfg.queue.parent.mkdir(parents=True, exist_ok=True)
+    cfg.queue.write_text(f"{TASK} spec fake\n{others}")
+    out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "merged", out.reason
+    log = (cfg.state_dir / "runs" / TASK / "gates.log").read_text()
+    assert ("gate tests" in log) is runs

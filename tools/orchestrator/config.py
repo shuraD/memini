@@ -29,7 +29,7 @@ _ENV_PATHS = {
     "inbox": "MEMINI_ORCH_INBOX",
     "queue": "MEMINI_ORCH_QUEUE",
 }
-STAGES = frozenset({"slice", "merge"})
+STAGES = frozenset({"slice", "merge", "batch"})
 
 
 class ConfigError(ValueError):

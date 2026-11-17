@@ -361,7 +361,7 @@ def test_two_failed_attempts_reject_the_task(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _plan(env, monkeypatch, coder=_coder({IMPL: SNEAKY}))
-    out = pipeline.run_task(_cfg(env, test_review=False), _task(env))
+    out = pipeline.run_task(_cfg(env), _task(env))
     assert out.status == "rejected"
     assert len(_prompts(env, "coder")) == 2
     assert "SECRET" not in out.reason
@@ -410,10 +410,10 @@ def test_test_dispute_goes_to_the_inbox_and_stops_retrying(
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "disputed"
     assert len(_prompts(env, "coder")) == 1
-    inbox = cfg.inbox.read_text()
+    inbox = (cfg.state_dir / "agent-inbox" / "planner.md").read_text()  # D-8: to the planner only
     assert TASK in inbox
-    assert "tier 1" in inbox
     assert "add must be commutative only" in inbox
+    assert not cfg.inbox.exists()
     assert state.State(cfg).task(TASK)["status"] == "disputed"
     assert out.worktree is not None
     assert out.worktree.exists()

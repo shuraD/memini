@@ -36,6 +36,7 @@ from tools.orchestrator import (
     gates,
     gitops,
     spec,
+    stages,
     state,
 )
 from tools.orchestrator.config import Config
@@ -236,8 +237,6 @@ class _Run:
         self.ident = gitops.identity_env(cfg.identity_name, cfg.identity_email)
         self.created: set[Path] = set()
         self.calls = 0
-        self.revealed: set[str] = set()
-        self.last_assertions: set[str] = set()
         self.test_rejects = 0
         self.gate_script = gates.PYTEST_GATE
         self.gate_env: dict[str, str] = {}
@@ -572,7 +571,6 @@ class _Run:
             files=revealed,
             commit=sha[:12],
         )
-        self.revealed = set(revealed)
         return sha, [*files, *revealed]
 
     def _qa_text_check(self, qa_sha: str, files: Sequence[str]) -> None:
@@ -678,9 +676,8 @@ class _Run:
                 raise _Stop(REJECTED, "; ".join(cheats))
             reason = engine.dispute(res.stdout)
             if reason:
-                state.inbox_append(cfg, self.task_id, "test dispute", 1, reason)
                 agent_inbox.notify(
-                    cfg, "qa", f"{self.task_id}: the coder disputes the tests: {reason}"
+                    cfg, "planner", f"{self.task_id}: the coder disputes the ticket: {reason}"
                 )
                 raise _Stop(DISPUTED, f"the coder disputes the tests: {reason}")
             if snap == qa_sha:
@@ -692,7 +689,6 @@ class _Run:
                 failures = hits[:20]
                 continue
             gate_fails = self._gate_slice(snap, base, files)
-            self._suspect_test(gate_fails)
             failures = [f.summary() for f in gate_fails]
             if not failures and edits:
                 failure = self._review_failure(attempt, qa_sha, snap, changed)
@@ -884,23 +880,6 @@ class _Run:
             return [f"audit: {f[:300]}" for f in verdict.findings[:10]]
         return self._verify(attempt, qa_sha, snap, files)
 
-    def _suspect_test(self, fails: Sequence[gates.Failure]) -> None:
-        """Stop the slice when the same revealed hold-out assertion fails twice (D6)."""
-        now = {
-            m
-            for f in fails
-            for m in (f.messages or f.tests)
-            if m.split("::")[0].split(": ")[0] in self.revealed
-        }
-        repeated = sorted(now & self.last_assertions)
-        self.last_assertions = now
-        if repeated:
-            shown = "; ".join(repeated)[:600]
-            text = f"suspect test: the same hold-out assertion failed twice: {shown}"
-            agent_inbox.notify(self.cfg, "qa", f"{self.task_id}: {text}")
-            state.ops_log(self.cfg, self.task_id, "suspect_test", text)
-            raise _Stop(DISPUTED, text)
-
     def _ticket_cards(self) -> tuple[list[str], str]:
         """Return the card IDs of this task's ticket and their text with the old-code evidence."""
         cfg = self.cfg
@@ -991,9 +970,10 @@ class _Run:
                     raise _Stop(REJECTED, "squash commit: " + "; ".join(cheats))
                 run = self._gate_run(self.merge_wt, squash, files)
                 fails = gates.qa_test_failures(cfg, self.ex, run, files)
-                fails += gates.run_gates(
-                    cfg, self.ex, run, "merge", main_sha, host=self.host, reuse=self.gate_reuse
-                )
+                for stage in ("merge", *(("batch",) if self._last_of_batch() else ())):
+                    fails += gates.run_gates(
+                        cfg, self.ex, run, stage, main_sha, host=self.host, reuse=self.gate_reuse
+                    )
                 fails += self._holdout(squash)
                 if fails:
                     reason = "; ".join(f.summary() for f in fails)
@@ -1005,6 +985,13 @@ class _Run:
                         self.task_id, MERGED, f"merged as {squash[:10]}{kept}{note}", None, squash
                     )
             raise _Stop(FAILED, f"main moved {cfg.merge_retries} times during the merge")
+
+    def _last_of_batch(self) -> bool:
+        """Return True when every other task of this queue is merged (D-9: the unit suite runs)."""
+        st = state.State(self.cfg)
+        queue = state.read_queue(self.cfg.queue) if self.cfg.queue.exists() else []
+        others = [e.task_id for e in queue if e.task_id != self.task_id]
+        return all(st.is_merged(t) for t in others) and not stages.upstream_pending(self.cfg)
 
     def _rebased(self, main_sha: str, snap: str) -> str:
         """Rebase the slice onto ``main_sha`` in the integration checkout; return the new tip.

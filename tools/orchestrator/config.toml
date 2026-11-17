@@ -241,12 +241,12 @@ ci_step = "Types"
 stages = ["slice", "merge"]
 
 [[gates]]
-# the per-slice test tier (AGENTS.md "tests by tier"): product tests with src coverage, in
-# the sandbox because they run coder code; the full suite (tests/gates too) runs in GitHub CI
-# on every push (owner 2026-11-15: gates must be quick)
+# the unit suite: product tests with src coverage, in the sandbox because they run coder code.
+# Owner 2026-11-17 (D-9): no full suite for each slice. A slice runs its own tests and its hidden
+# tests; this suite runs once per batch, with the last slice of the queue ("batch" stage).
 name = "tests"
 run = ["{python}", "-P", "tools/ci/pytest_gate.py", "tests/sanity", "tests/unit", "--", "--cov=src", "--cov-report=term-missing:skip-covered"]
-stages = ["slice", "merge"]
+stages = ["batch"]
 profiles = true
 forbid_output = true
 sandbox = true
