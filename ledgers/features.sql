@@ -2575,3 +2575,5 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-tools/orchestrator/vp_
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-tools/orchestrator/vp_start.py-001', 'tests/gates/test_vp_start.py::test_a_state_file_that_disagrees_gets_a_mismatch_line_per_claim');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-tools/orchestrator/vp_start.py-001', 'tests/gates/test_vp_start.py::test_a_state_file_that_agrees_has_no_mismatch');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-tools/orchestrator/vp_start.py-001', 'tests/gates/test_vp_start.py::test_a_missing_state_file_and_a_missing_origin_do_not_fail');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-013', 'The ready gate refuses a ticket whose graph role is in names: but has no field in the typed Graph classes', 'infra', 'tests/gates/test_orchestrator_enqueue.py', 'active', 'tools/orchestrator/', 'C-20261117-0018');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-013', 'tests/gates/test_orchestrator_enqueue.py::test_a_role_without_a_typed_field_is_refused');

@@ -25,6 +25,15 @@ CARD = """# Card
 OTHER = "| A3 | Another area's line. | not done | - | - |\n"
 CAPS = "| # | version | id | capability | how | evidence | graph |\n|---|---|---|---|---|---|---|\n"
 CAPS += "| 1 | baseline | x | c | h | `old/store.py:write L10-20` | W |\n"
+TYPED = """
+class GraphLabels:
+    project: str
+
+
+class GraphProperties:
+    scope: str
+    dirty: str
+"""
 MODULE = "src/memini/infra/graph/store.py"
 
 
@@ -44,9 +53,11 @@ def cfg(tmp_path: Path) -> config.Config:
     (repo / "config" / "graph_schema.yaml").write_text(
         (ROOT / "config" / "graph_schema.yaml").read_text()
     )
+    (repo / "src" / "memini" / "infra" / "graph").mkdir(parents=True, exist_ok=True)
+    (repo / "src" / "memini" / "infra" / "graph" / "schema.py").write_text(TYPED)
     (repo / "deploy").mkdir()
     (repo / "deploy" / ".env.example").write_text("NEO4J_URI=\n")
-    (repo / "src" / "memini").mkdir(parents=True)
+    (repo / "src" / "memini").mkdir(parents=True, exist_ok=True)
     (repo / "src" / "memini" / "mod.py").write_text("def load_schema():\n    pass\n")
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "user.name", "x")
@@ -185,3 +196,11 @@ def test_the_hook_lets_everything_else_through(event: object) -> None:
     from tools.orchestrator.hooks import guard_queue  # noqa: PLC0415
 
     assert guard_queue.blocked(event) == ""
+
+
+def test_a_role_without_a_typed_field_is_refused(cfg: config.Config) -> None:
+    found = enqueue.problems(cfg, _t("A1 reads `names.properties.scope`"), needs=["Project"])
+    assert found == []
+    found = enqueue.problems(cfg, _t("A1 reads (:Domain) and `names.properties.score`"))
+    assert "role labels.domain is in names: but has no field in " in " ".join(found)
+    assert "role properties.score is in names: but has no field in " in " ".join(found)

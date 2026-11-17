@@ -10,6 +10,7 @@ dependencies are not acyclic. ``enqueue`` writes the text from the cards and app
 
 from __future__ import annotations
 
+import ast
 import re
 import shlex
 from collections.abc import Collection, Sequence
@@ -23,6 +24,7 @@ from tools.orchestrator import agent_inbox, gates, gitops, state
 from tools.orchestrator.config import Config
 
 _FIELDS = 5
+_TYPED = "src/memini/infra/graph/schema.py"  # the typed Graph<Group> name classes
 _CARD = re.compile(r"\b([AIQT])(\d{1,3})\b(?:\s+to\s+\1(\d{1,3})\b)?")
 _ROW = re.compile(r"^\|\s*([AIQT]\d+)\s*\|\s*(.+?)\s*\|\s*(?:done|not done)\s*\|", re.MULTILINE)
 _PATH = re.compile(r"(?<![\w/.-])((?:src|tests|config|deploy|tools)/[\w./-]+\.\w+)")
@@ -129,15 +131,41 @@ def _schema(cfg: Config) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _typed_fields(cfg: Config) -> dict[str, set[str]]:
+    """Return the fields of the typed ``Graph<Group>`` classes on main, by group name."""
+    tree = ast.parse(gitops.out(cfg.repo, "show", f"main:{_TYPED}"))
+    return {
+        node.name.removeprefix("Graph").lower(): {
+            s.target.id
+            for s in node.body
+            if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)
+        }
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name.startswith("Graph")
+    }
+
+
 def _names_problems(cfg: Config, text: str, needs: Sequence[str]) -> list[str]:
-    """Return the graph names the ticket needs that have no role in ``names:`` (D4)."""
-    schema = _schema(cfg)
-    roles = {str(v) for g in (schema.get("names") or {}).values() for v in (g or {}).values()}
-    named = set(_CYPHER.findall(text))  # (:Label) and [:TYPE]; other words are prose
-    wanted = {n for n in named | set(needs) if n not in roles}
-    return [
-        f"graph name {n} has no role in names: of config/graph_schema.yaml" for n in sorted(wanted)
+    """Return graph names a ticket needs with no role in ``names:`` or no typed field (D4)."""
+    names = {g: dict(r or {}) for g, r in (_schema(cfg).get("names") or {}).items()}
+    by_name = {str(v): (g, k) for g, r in names.items() for k, v in r.items()}
+    named = set(_CYPHER.findall(text)) | set(needs)  # (:Label) and [:TYPE]; prose is not scanned
+    out = [
+        f"graph name {n} has no role in names: of config/graph_schema.yaml"
+        for n in sorted(n for n in named if n not in by_name)
     ]
+    wanted = {by_name[n] for n in named if n in by_name}
+    for t in _TICK.findall(text):
+        group, _, role = t.removeprefix("names.").partition(".")
+        if t.startswith("names.") and role in names.get(group, {}):
+            wanted.add((group, role))
+    typed = _typed_fields(cfg)
+    out += [
+        f"role {g}.{k} is in names: but has no field in {_TYPED}"
+        for g, k in sorted(wanted)
+        if k not in typed.get(g, set())
+    ]
+    return out
 
 
 def inputs_problems(cfg: Config, ticket: Ticket) -> list[str]:
