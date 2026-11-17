@@ -50,11 +50,9 @@ sandbox_neo4j_user = "neo4j"
 # sealed tests, stores the diff of every test change, and after the gates pass a QA review stage
 # returns approve or reject with a reason. One reject sends the slice back to the coder once; a
 # second goes to the owner. Every step is logged in <state_dir>/ops-ledger.jsonl.
-# false = the old flow (tests sealed, hold-out hidden). The old-flow tests in
-# tests/gates/test_orchestrator.py are frozen, so the shipped default stays false until the owner
-# approves changing them; turn it on with `test_review = true` in your own config file
-# (--config or MEMINI_ORCH_CONFIG).
-test_review = false
+# false = the old flow (tests sealed, hold-out hidden); the old-flow tests pin it explicitly.
+# Default on since the owner's approval of 2026-11-17.
+test_review = true
 # interpreter for the host-side hold-out run; empty = the orchestrator's own interpreter
 holdout_python = ""
 

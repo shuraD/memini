@@ -193,7 +193,7 @@ def test_happy_path_merges_one_neutral_squash_commit(
     _plan(env, monkeypatch, coder=_coder({IMPL: GOOD}))
     repo = env["repo"]
     before = _git(repo, "rev-parse", "main")
-    out = pipeline.run_task(_cfg(env), _task(env))
+    out = pipeline.run_task(_cfg(env, test_review=False), _task(env))
     assert out.status == "merged", out.reason
     assert _git(repo, "rev-list", "--count", f"{before}..main") == "1"
     assert _git(repo, "rev-parse", "main~1") == before
@@ -224,7 +224,7 @@ def test_happy_path_merges_one_neutral_squash_commit(
     assert out.worktree is None
     assert not (env["tmp"] / "wt" / TASK).exists()
     assert "orch/" + TASK not in _git(repo, "branch", "--list")
-    assert state.State(_cfg(env)).task(TASK)["status"] == "merged"
+    assert state.State(_cfg(env, test_review=False)).task(TASK)["status"] == "merged"
 
 
 def test_coder_commit_made_by_the_engine_itself_is_still_gated(
@@ -257,7 +257,7 @@ def test_coder_change_outside_the_allow_list_is_rejected(
     _plan(env, monkeypatch, coder=_coder(files))
     repo = env["repo"]
     before = _git(repo, "rev-parse", "main")
-    out = pipeline.run_task(_cfg(env), _task(env))
+    out = pipeline.run_task(_cfg(env, test_review=False), _task(env))
     assert out.status == "rejected"
     assert path in out.reason
     assert _git(repo, "rev-parse", "main") == before
@@ -335,7 +335,7 @@ def test_holdout_failure_text_never_reaches_the_retry_prompt(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _plan(env, monkeypatch, coder=_coder({IMPL: SNEAKY}, {IMPL: GOOD}))
-    out = pipeline.run_task(_cfg(env), _task(env))
+    out = pipeline.run_task(_cfg(env, test_review=False), _task(env))
     assert out.status == "merged", out.reason
     first, retry = _prompts(env, "coder")
     assert "hold-out failed" in retry
@@ -1224,7 +1224,9 @@ def test_b1_code_that_calls_os_exit_0_cannot_pass_by_exit_code(
     The deny scan is switched off here to show the pytest gate catches it on its own.
     """
     _plan(env, monkeypatch, coder=_coder({IMPL: EXIT0}))
-    cfg = _cfg(env, deny_patterns=[], forbidden_names=[])  # both static layers off
+    cfg = _cfg(
+        env, test_review=False, deny_patterns=[], forbidden_names=[]
+    )  # both static layers off
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "rejected"
     assert "QA acceptance tests [defaults] failed" in out.reason
