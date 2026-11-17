@@ -2599,3 +2599,8 @@ INSERT INTO feature (id, description, layer, proof, status, owner_module, added_
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-019', 'tests/gates/test_orchestrator_metrics.py::test_first_run_rule_and_ticket_metrics');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-019', 'tests/gates/test_orchestrator_metrics.py::test_people_in_the_ledger_count_as_relay_hops_and_money_on_failed_runs');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-019', 'tests/gates/test_orchestrator_metrics.py::test_status_md_gets_one_section_that_is_replaced_not_appended');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-020', 'A prompt hook tells an interactive session above 80K tokens to write its state file and end', 'infra', 'tests/gates/test_session_size_hook.py', 'active', 'tools/orchestrator/', 'C-20261117-0025');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-020', 'tests/gates/test_session_size_hook.py::test_a_large_session_is_told_to_end');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-020', 'tests/gates/test_session_size_hook.py::test_a_small_session_hears_nothing');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-020', 'tests/gates/test_session_size_hook.py::test_without_usage_the_size_is_estimated_from_the_file');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-020', 'tests/gates/test_session_size_hook.py::test_a_missing_transcript_or_bad_event_never_blocks');
