@@ -26,7 +26,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tools import ledger
-from tools.orchestrator import astcheck, audit, dockerexec, engine, gates, gitops, spec, state
+from tools.orchestrator import (
+    agent_inbox,
+    astcheck,
+    audit,
+    dockerexec,
+    engine,
+    enqueue,
+    gates,
+    gitops,
+    spec,
+    state,
+)
 from tools.orchestrator.config import Config
 from tools.orchestrator.executor import Executor, Result, allowed_env, executor_for
 
@@ -225,6 +236,8 @@ class _Run:
         self.ident = gitops.identity_env(cfg.identity_name, cfg.identity_email)
         self.created: set[Path] = set()
         self.calls = 0
+        self.revealed: set[str] = set()
+        self.last_assertions: set[str] = set()
         self.test_rejects = 0
         self.gate_script = gates.PYTEST_GATE
         self.gate_env: dict[str, str] = {}
@@ -341,7 +354,7 @@ class _Run:
         protected: Sequence[str],
     ) -> Result:
         cfg = self.cfg
-        name = self.engines["qa" if role == "review" else role]
+        name = self.engines[{"review": "qa", "verify": "audit"}.get(role, role)]
         self.calls += 1
         settings_path = self.run_dir / f"{self.calls:02d}-{role}-settings.json"
         guard = self.run_dir / f"{self.calls:02d}-{role}-guard.json"
@@ -364,7 +377,7 @@ class _Run:
         argv = engine.command(
             cfg,
             name,
-            "audit" if role == "review" else role,
+            "audit" if role in ("review", "verify") else role,
             workdir=workdir,
             settings=settings_path,
             prompt=prompt,
@@ -559,6 +572,7 @@ class _Run:
             files=revealed,
             commit=sha[:12],
         )
+        self.revealed = set(revealed)
         return sha, [*files, *revealed]
 
     def _qa_text_check(self, qa_sha: str, files: Sequence[str]) -> None:
@@ -665,6 +679,9 @@ class _Run:
             reason = engine.dispute(res.stdout)
             if reason:
                 state.inbox_append(cfg, self.task_id, "test dispute", 1, reason)
+                agent_inbox.notify(
+                    cfg, "qa", f"{self.task_id}: the coder disputes the tests: {reason}"
+                )
                 raise _Stop(DISPUTED, f"the coder disputes the tests: {reason}")
             if snap == qa_sha:
                 failures = ["no change was made"]
@@ -674,7 +691,9 @@ class _Run:
             if hits:
                 failures = hits[:20]
                 continue
-            failures = [f.summary() for f in self._gate_slice(snap, base, files)]
+            gate_fails = self._gate_slice(snap, base, files)
+            self._suspect_test(gate_fails)
+            failures = [f.summary() for f in gate_fails]
             if not failures and edits:
                 failure = self._review_failure(attempt, qa_sha, snap, changed)
                 if failure:
@@ -682,10 +701,9 @@ class _Run:
                     failures = [failure]
                     continue
             if not failures:
-                verdict = self._audit(qa_sha, snap, files)
-                if verdict.passed:
+                failures = self._final_checks(attempt, qa_sha, snap, files)
+                if not failures:
                     return snap
-                failures = [f"audit: {f[:300]}" for f in verdict.findings[:10]]
         if any(f.startswith("AST check:") for f in failures):
             state.inbox_append(
                 cfg,
@@ -854,8 +872,85 @@ class _Run:
             f"the coder's version in {snap[:12]}"
         )
         state.inbox_append(self.cfg, self.task_id, "test review rejected twice", 1, text)
+        agent_inbox.notify(self.cfg, "qa", f"{self.task_id}: {text}")
         state.ops_log(self.cfg, self.task_id, "test_review_escalated", text, files=changed)
         raise _Stop(DISPUTED, f"the QA review rejected the test change twice: {reason}")
+
+    def _final_checks(self, attempt: int, qa_sha: str, snap: str, files: list[str]) -> list[str]:
+        """Run the audit, then the Verifier; return the coder's failures (none: merge)."""
+        verdict = self._audit(qa_sha, snap, files)
+        if not verdict.passed:
+            return [f"audit: {f[:300]}" for f in verdict.findings[:10]]
+        return self._verify(attempt, qa_sha, snap, files)
+
+    def _suspect_test(self, fails: Sequence[gates.Failure]) -> None:
+        """Stop the slice when the same revealed hold-out assertion fails twice (D6)."""
+        now = {
+            m
+            for f in fails
+            for m in (f.messages or f.tests)
+            if m.split("::")[0].split(": ")[0] in self.revealed
+        }
+        repeated = sorted(now & self.last_assertions)
+        self.last_assertions = now
+        if repeated:
+            shown = "; ".join(repeated)[:600]
+            text = f"suspect test: the same hold-out assertion failed twice: {shown}"
+            agent_inbox.notify(self.cfg, "qa", f"{self.task_id}: {text}")
+            state.ops_log(self.cfg, self.task_id, "suspect_test", text)
+            raise _Stop(DISPUTED, text)
+
+    def _ticket_cards(self) -> tuple[list[str], str]:
+        """Return the card IDs of this task's ticket and their text with the old-code evidence."""
+        cfg = self.cfg
+        try:
+            tickets = enqueue.read_tickets(cfg.stages[0].queue) if cfg.stages else []
+        except (ValueError, OSError):
+            tickets = []
+        ticket = next((t for t in tickets if t.id == self.task_id), None)
+        if ticket is None:
+            return [], ""
+        known = enqueue.cards(cfg)
+        ids = [i for i in enqueue.card_ids(ticket.text, known) if i in known]
+        lines = [f"{i}: {known[i].text} (old code: {enqueue.evidence(cfg, i)})" for i in ids]
+        return ids, "\n".join(lines)
+
+    def _verify(self, attempt: int, qa_sha: str, snap: str, files: list[str]) -> list[str]:
+        """Run the Verifier (D8); return the coder's failures. A missing test stops for QA."""
+        ids, card_text = self._ticket_cards()
+        if not ids:
+            state.ops_log(self.cfg, self.task_id, "verifier_skipped", "the task has no card lines")
+            return []
+        diff = gitops.out(self.repo, "diff", qa_sha, snap)
+        tests = "\n\n".join(f"# {f}\n{gitops.out(self.repo, 'show', f'{snap}:{f}')}" for f in files)
+        if len(diff) + len(tests) > _DIFF_LIMIT:  # never verify half a change
+            return ["verifier: the change is too large for one verification"]
+        prompt = engine.render(
+            self.cfg, "verifier", task_id=self.task_id, cards=card_text, diff=diff, tests=tests
+        )
+        with tempfile.TemporaryDirectory(prefix="memini-verify-") as tmp:
+            res = self._agent("verify", prompt, Path(tmp), (), ())
+        found = audit.parse_verifier(res.stdout, ids)
+        extras = "\n".join(f"- {x}" for x in found.extras) or "none"
+        (self.run_dir / f"verifier-{attempt}.md").write_text(
+            f"{found.table}\nExtras nobody asked for:\n{extras}\n", encoding="utf-8"
+        )
+        state.ops_log(
+            self.cfg,
+            self.task_id,
+            "verifier",
+            "ok" if found.ok else "blocked",
+            attempt=attempt,
+            cards=ids,
+            extras=len(found.extras),
+        )
+        if found.code_problems:
+            return [f"verifier: {p}" for p in found.code_problems[:10]]
+        if found.test_problems:
+            text = "; ".join(found.test_problems)[:600]
+            agent_inbox.notify(self.cfg, "qa", f"{self.task_id}: verifier: {text}")
+            raise _Stop(DISPUTED, f"verifier: a card line has no proving test: {text}")
+        return []
 
     def _audit(self, qa_sha: str, snap: str, files: list[str]) -> audit.Verdict:
         diff = gitops.out(self.repo, "diff", qa_sha, snap)

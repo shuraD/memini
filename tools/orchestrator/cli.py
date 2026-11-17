@@ -19,8 +19,10 @@ from tools.orchestrator import (
     dockerexec,
     enqueue,
     gates,
+    gitops,
     pipeline,
     planstage,
+    reconcile,
     schedule,
     spec,
     specstage,
@@ -44,6 +46,22 @@ exit codes: 0 done/merged, 1 rejected, disputed, failed or blocked, 2 usage or c
             3 run-queue: entries left that wait on depends_on
 """
 _EXIT_WAITING = 3
+_UPSTREAM_GRACE_S = 120  # how long the code loop waits for a stage loop that has not started
+
+
+def _upstream_busy(cfg: config.Config, wait: bool, started: float) -> bool:
+    """Return True while a stage loop runs, or (``wait``) stage tasks are still pending (D5)."""
+    if stages.upstream_active(cfg):
+        return True
+    return (
+        wait
+        and time.monotonic() - started < _UPSTREAM_GRACE_S
+        and bool(stages.upstream_pending(cfg))
+    )
+
+
+def _queue_entries(cfg: config.Config) -> list[state.QueueEntry]:
+    return state.read_queue(cfg.queue) if cfg.queue.exists() else []
 
 
 def _repo() -> Path:
@@ -109,7 +127,9 @@ def _cmd_run_queue(cfg: config.Config, args: argparse.Namespace) -> int:
         )
     workers = min(args.workers, cfg.max_parallel)
     if workers > 1 and cfg.parallel:
-        return run_queue_parallel(cfg, workers=workers, launch=_launcher(args, cfg))
+        return run_queue_parallel(
+            cfg, workers=workers, launch=_launcher(args, cfg), wait_upstream=args.wait_upstream
+        )
     if args.workers > 1:
         print(
             "run-queue: parallel runs need the docker executor and max_parallel > 1; one at a time"
@@ -132,6 +152,7 @@ def run_queue_parallel(
     workers: int,
     launch: Callable[[state.QueueEntry], Any],
     pause: float = 2.0,
+    wait_upstream: bool = False,
 ) -> int:
     """Run the queue with up to ``workers`` slices at once; return the exit code.
 
@@ -140,7 +161,8 @@ def run_queue_parallel(
     should be able to work alone"); the run reports it at the end and exits 1.
     """
     st = state.State(cfg)
-    entries = state.read_queue(cfg.queue)
+    started = time.monotonic()
+    entries = _queue_entries(cfg)
     seen = {e.task_id for e in entries}
     failed = _blocked(st, entries)  # only the slices that depend on them wait
     running: dict[str, Any] = {}
@@ -169,7 +191,7 @@ def run_queue_parallel(
         ):
             print(f"{task_id}: started")
             running[task_id] = launch(by_id[task_id])
-        if not running and not stages.upstream_active(cfg):
+        if not running and not _upstream_busy(cfg, wait_upstream, started):
             break
         time.sleep(pause)
     return _queue_exit(st, entries, failed)
@@ -200,6 +222,8 @@ def _run_all(cfg: config.Config, args: argparse.Namespace) -> int:
     procs = []
     for name in [*(s.name for s in cfg.stages), config.CODE_STAGE]:
         argv = [*base, "run-queue", "--stage", name, "--workers", str(args.workers)]
+        if name == config.CODE_STAGE:
+            argv.append("--wait-upstream")
         if args.worker:
             argv += ["--worker", args.worker]
         procs.append(subprocess.Popen(argv, cwd=_repo()))  # noqa: S603 — our own CLI
@@ -247,6 +271,12 @@ def _cmd_ready(cfg: config.Config, args: argparse.Namespace) -> int:
         )
     print(f"workers for the batch: {enqueue.workers(tickets)}")
     return 1 if bad else 0
+
+
+def _cmd_land(cfg: config.Config, args: argparse.Namespace) -> int:
+    changed = reconcile.land(cfg, args.task_id, args.commit)
+    print(f"{args.task_id}: merged; queues updated: {', '.join(p.name for p in changed) or 'none'}")
+    return 0
 
 
 def _cmd_stage_run(cfg: config.Config, args: argparse.Namespace) -> int:
@@ -326,7 +356,8 @@ def _launcher(args: argparse.Namespace, cfg: config.Config) -> Callable[[state.Q
 
 def _run_queue_serial(cfg: config.Config, args: argparse.Namespace) -> int:
     st = state.State(cfg)
-    entries = state.read_queue(cfg.queue)
+    started = time.monotonic()
+    entries = _queue_entries(cfg)
     ids = {e.task_id for e in entries}
     while True:
         progress, waiting = False, []
@@ -350,7 +381,11 @@ def _run_queue_serial(cfg: config.Config, args: argparse.Namespace) -> int:
             st.mark_done(entry.task_id)
             progress = True
         if not progress:
-            break
+            if not _upstream_busy(cfg, args.wait_upstream, started):
+                break
+            time.sleep(2)  # a stage may still hand a task over (D5)
+            entries = _queue_entries(cfg)
+            ids = {e.task_id for e in entries}
     if waiting:
         print("waiting on depends_on: " + "; ".join(waiting))
         return _EXIT_WAITING
@@ -420,6 +455,13 @@ def status_lines(cfg: config.Config) -> list[str]:
 
 def _cmd_status(cfg: config.Config, args: argparse.Namespace) -> int:
     print("\n".join(status_lines(cfg)))
+    try:
+        found = reconcile.mismatches(cfg)
+    except gitops.GitError as exc:
+        found = [f"cannot compare with {cfg.main_branch}: {exc}"]
+    print("main/state/queue mismatches: " + ("none" if not found else f"{len(found)}"))
+    for line in found:
+        print(f"  - {line}")
     return 0
 
 
@@ -506,6 +548,11 @@ def parser() -> argparse.ArgumentParser:
         default=1,
         help="slices at once (docker executor; capped by max_parallel)",
     )
+    rq.add_argument(
+        "--wait-upstream",
+        action="store_true",
+        help="code only: wait for stage tasks that have not run yet (set by --all)",
+    )
     cs = add("check-spec", "the $0 pre-dispatch check of spec files")
     cs.add_argument("specs", nargs="+")
     sp = add("sandbox-pytest", "run pytest in a sandbox container (the coder's test wrapper)")
@@ -525,6 +572,9 @@ def parser() -> argparse.ArgumentParser:
     rd = add("ready", "run the ready gate over a stage queue's tickets")
     rd.add_argument("ids", nargs="*")
     rd.add_argument("--queue")
+    ld = add("land", "record a merge made outside the stage: state, queues and main agree")
+    ld.add_argument("task_id")
+    ld.add_argument("commit", help="the commit on main that merged the task")
     sr = add("stage-run", "run one stage task (started by run-queue --stage)")
     sr.add_argument("stage")
     sr.add_argument("task_id")
@@ -541,6 +591,7 @@ _COMMANDS = {
     "stage-run": _cmd_stage_run,
     "enqueue": _cmd_enqueue,
     "ready": _cmd_ready,
+    "land": _cmd_land,
 }
 
 

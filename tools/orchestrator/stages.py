@@ -135,6 +135,29 @@ def upstream_active(cfg: Config) -> list[str]:
     return out
 
 
+def upstream_pending(cfg: Config) -> list[str]:
+    """Return the stage tasks that still have to run (not done, not failed, deps not failed).
+
+    The code loop waits for them, so it neither starts before QA sealed anything nor exits on
+    an empty queue while a stage loop has not taken its lock yet (D5).
+    """
+    out = []
+    for s in cfg.stages:
+        items = read_stage_queue(s.queue)
+        records = StageState(cfg, s.name).records()
+
+        def status(task_id: str, rec: dict[str, Any] = records) -> str | None:
+            return (rec.get(task_id) or {}).get("status")
+
+        failed = {i.task_id for i in items if status(i.task_id) not in (None, DONE, RELEASED)}
+        out += [
+            f"{s.name}/{i.task_id}"
+            for i in items
+            if status(i.task_id) in (None, RELEASED) and not failed.intersection(i.depends_on)
+        ]
+    return out
+
+
 def handoff(cfg: Config, stage_spec: StageSpec, line: str, module: str = "") -> None:
     """Append ``line`` to the queue of the stage after ``stage_spec`` (once per task id).
 

@@ -36,8 +36,10 @@ def test_a_request_lands_in_the_addressees_file(cfg: config.Config) -> None:
 def test_only_coders_post_and_only_to_qa_or_devops(cfg: config.Config) -> None:
     with pytest.raises(ValueError, match="through vp-rnd"):
         agent_inbox.post(cfg, "dev1", "owner", "may I change the license?")
-    with pytest.raises(ValueError, match="only dev1"):
+    with pytest.raises(ValueError, match="qa posts to planner, vp-rnd"):
         agent_inbox.post(cfg, "qa", "devops", "x")
+    with pytest.raises(ValueError, match="does not post"):
+        agent_inbox.post(cfg, "stranger", "qa", "x")
     with pytest.raises(ValueError, match="empty"):
         agent_inbox.post(cfg, "dev1", "qa", "  ")
     assert not (cfg.state_dir / "agent-inbox").exists()
@@ -104,3 +106,12 @@ def test_the_hook_text_and_the_command_line(
     monkeypatch.setenv("MEMINI_SQUAD", "")
     assert agent_inbox.main(["unread"]) == 0  # no squad: silent
     assert agent_inbox.main(["post", "--to", "owner", "x"]) == 2
+
+
+def test_qa_posts_to_the_planner_and_anyone_to_vp_rnd(cfg: config.Config) -> None:
+    back = agent_inbox.post(cfg, "qa", "planner", "GR-11 cannot be built from main")
+    assert "qa -> planner" in (cfg.state_dir / "agent-inbox" / "planner.md").read_text()
+    assert [m.id for m in agent_inbox.unread(cfg, "planner")] == [back]
+    for who in ("dev3", "qa", "devops", "planner"):
+        agent_inbox.post(cfg, who, "vp-rnd", "a T1 question")
+    assert len(agent_inbox.unread(cfg, "vp-rnd")) == 4

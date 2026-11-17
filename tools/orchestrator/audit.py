@@ -101,3 +101,63 @@ def parse_review(text: str) -> Review:
     if rejects:
         return Review(False, "; ".join(dict.fromkeys(r.reason for r in rejects)))
     return Review(True, "; ".join(dict.fromkeys(r.reason for r in seen)))
+
+
+@dataclass(frozen=True)
+class Verification:
+    """The Verifier's table, and what blocks the merge (D8): code problems go to the coder."""
+
+    table: str
+    code_problems: tuple[str, ...]
+    test_problems: tuple[str, ...]
+    extras: tuple[str, ...]
+
+    @property
+    def ok(self) -> bool:
+        """Return True when every card line is met, reachable and proved by a test."""
+        return not self.code_problems and not self.test_problems
+
+
+_HEAD = (
+    "| Card ID | status | code (file:line) | reachable | test that proves it"
+    " | not done as the old code did |\n|---|---|---|---|---|---|\n"
+)
+
+
+def parse_verifier(text: str, cards: list[str]) -> Verification:
+    """Return the Verifier's table for ``cards``; anything unclear fails closed.
+
+    The answer is ``{"lines": [{"card", "status": met|partial|missing, "code", "reachable",
+    "test", "gap"}], "extras": [str]}``. A card without a row, a status other than ``met``, an
+    unreachable line is a code problem; a ``met`` line without a test is a test problem.
+    """
+    answer = next(
+        (v for v in _candidates(text) if isinstance(v, dict) and isinstance(v.get("lines"), list)),
+        None,
+    )
+    if answer is None:
+        return Verification("", ("verifier output is not a JSON table (fail closed)",), (), ())
+    rows = {str(r.get("card")): r for r in answer["lines"] if isinstance(r, dict)}
+    table, code, tests = _HEAD, [], []
+    for card in cards:
+        row = rows.get(card)
+        if row is None:
+            code.append(f"{card}: the verifier reported no row (fail closed)")
+            table += f"| {card} | missing | - | - | - | not reported |\n"
+            continue
+        status, where = str(row.get("status")), str(row.get("code") or "-")
+        reach, test, gap = (
+            bool(row.get("reachable")),
+            str(row.get("test") or ""),
+            str(row.get("gap") or ""),
+        )
+        seen = "yes" if reach else "no"
+        table += f"| {card} | {status} | {where} | {seen} | {test or '-'} | {gap or '-'} |\n"
+        if status != "met":
+            code.append(f"{card} is {status}: {gap}"[:300])
+        elif not reach:
+            code.append(f"{card} is not reachable from the entry point ({where})")
+        elif not test:
+            tests.append(f"{card} is met in {where} but no test proves it")
+    extras = tuple(str(x) for x in answer.get("extras") or () if isinstance(x, str))
+    return Verification(table, tuple(code), tuple(tests), extras)

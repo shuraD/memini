@@ -217,11 +217,16 @@ class Failure:
     gate: str
     tests: tuple[str, ...] = ()
     findings: tuple[str, ...] = ()  # "<rule> <path>:<line>" in the coder's paths, no message
+    messages: tuple[str, ...] = ()  # "<test id>: <assertion message>", only for shown tests (D6)
 
     def summary(self) -> str:
         """Return the one-line reason for a retry prompt or an outcome."""
         out = self.gate
-        for label, ids in (("failing tests", self.tests), ("findings", self.findings)):
+        for label, ids in (
+            ("failing tests", self.tests),
+            ("findings", self.findings),
+            ("failing assertions", self.messages[:_MAX_MESSAGES]),
+        ):
             if ids:
                 shown = ", ".join(ids[:_MAX_IDS])
                 more = f" and {len(ids) - _MAX_IDS} more" if len(ids) > _MAX_IDS else ""
@@ -275,6 +280,24 @@ def failing_ids(output: str, node_ids: Collection[str]) -> tuple[str, ...]:
     by_label = {"::".join(p for p in junit_key(n) if p): n for n in node_ids}
     found = (i for i in _FAILED_ID.findall(output) if _SAFE_ID.fullmatch(i))
     return tuple(dict.fromkeys(by_label[i] for i in found if i in by_label))
+
+
+_FAILED_LINE = re.compile(r"^FAILED (\S+?)(?: - (.+))?$", re.MULTILINE)
+_MAX_MESSAGES = 3
+
+
+def failing_messages(output: str, ids: Collection[str]) -> tuple[str, ...]:
+    """Return ``<test id>: <message>`` for each failing test in ``ids`` (D6).
+
+    The message is the first line of pytest's own ``FAILED`` summary, cut to 200 printable
+    characters. Use it only for tests the coder may see: the revealed hold-out and the QA tests.
+    """
+    found = {m[1]: (m[2] or "").strip() for m in _FAILED_LINE.finditer(output)}
+    return tuple(
+        f"{i}: {found[i][:200]}".replace("\n", " ")
+        for i in ids
+        if found.get(i) and found[i].isprintable()
+    )
 
 
 # ------------------------------------------------------------------ deny scan
@@ -527,7 +550,9 @@ def qa_test_failures(
         label = f"QA acceptance tests [{prof.name}]"
         _log(run.log, f"{label} exit {res.code}", res.output)
         if res.code != 0:
-            out.append(Failure(f"{label} failed", failing_ids(res.output, run.test_ids)))
+            ids = failing_ids(res.output, run.test_ids)
+            shown = failing_messages(res.output, ids) if cfg.test_review else ()
+            out.append(Failure(f"{label} failed", ids, messages=shown))
         elif re.search(cfg.forbid_output, res.output):
             out.append(Failure(f"{label}: skipped tests are not allowed"))
     return out

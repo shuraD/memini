@@ -27,7 +27,14 @@ from pathlib import Path
 from tools.orchestrator import config, state
 
 CODERS = ("dev1", "dev2", "dev3", "dev4")
-TARGETS = ("qa", "devops")
+# Who may post to whom (FLOW-HARD D6): a coder to QA or DevOps, QA to the planner (send a ticket
+# back), anyone to vp-rnd (T1 questions). T2 items go to the owner through vp-rnd, not here.
+ROUTES = {
+    **dict.fromkeys(CODERS, ("qa", "devops", "vp-rnd")),
+    "qa": ("planner", "vp-rnd"),
+    "devops": ("vp-rnd",),
+    "planner": ("vp-rnd",),
+}
 _HEAD = re.compile(r"^## (M-\d{4}) (\S+) (\S+) -> (\S+?)(?: re (M-\d{4}))?$", re.MULTILINE)
 
 
@@ -90,11 +97,12 @@ def _append(
 
 
 def post(cfg: config.Config, sender: str, to: str, text: str) -> str:
-    """Post a coder's request to QA or DevOps, into the addressee's file."""
-    if sender not in CODERS:
-        raise ValueError(f"only {', '.join(CODERS)} post requests, not {sender!r}")
-    if to not in TARGETS:
-        raise ValueError(f"post to {' or '.join(TARGETS)}; T2 items go to the owner through vp-rnd")
+    """Post a request into the addressee's file, if the route is allowed."""
+    if sender not in ROUTES:
+        raise ValueError(f"{sender!r} does not post requests; squads are {', '.join(ROUTES)}")
+    if to not in ROUTES[sender]:
+        allowed = ", ".join(ROUTES[sender])
+        raise ValueError(f"{sender} posts to {allowed}; T2 items go to the owner through vp-rnd")
     return _append(cfg, to, sender, to, text)
 
 
