@@ -41,7 +41,8 @@ def on_main(cfg: Config) -> dict[str, str]:
     return found
 
 
-def _active_ids(path: Path) -> set[str]:
+def active_ids(path: Path) -> set[str]:
+    """Return the task ids of a queue file's lines that are not commented out."""
     out: set[str] = set()
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip() and not line.lstrip().startswith("#"):
@@ -85,7 +86,7 @@ def mismatches(cfg: Config) -> list[str]:
     tasks = state.State(cfg).tasks()
     done = set(state.State(cfg).queue_done())
     code = [p for p in queue_files(cfg) if p not in {x.queue for x in cfg.stages}]
-    queued = {p: _active_ids(p) for p in code}  # a stage queue keeps its lines as history
+    queued = {p: active_ids(p) for p in code}  # a stage queue keeps its lines as history
     for task_id, sha in sorted(titled.items()):
         status = (tasks.get(task_id) or {}).get("status")
         if task_id in tasks and status != "merged":
