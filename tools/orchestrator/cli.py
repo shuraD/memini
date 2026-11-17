@@ -348,6 +348,12 @@ def _cmd_move(cfg: config.Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_move_done(cfg: config.Config, args: argparse.Namespace) -> int:
+    task = moves.finish_tool(cfg, args.move_id, args.result, "devops")
+    print(f"{task}: released; the squad's runner takes it again ({args.move_id} closed)")
+    return 0
+
+
 def _cmd_land(cfg: config.Config, args: argparse.Namespace) -> int:
     changed = reconcile.land(cfg, args.task_id, args.commit)
     print(f"{args.task_id}: merged; queues updated: {', '.join(p.name for p in changed) or 'none'}")
@@ -677,6 +683,9 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     mv.add_argument("--text", required=True, help="why it moves")
     mv.add_argument("--from", dest="sender", default="devops")
     mv.add_argument("--owner-words", help="the owner's words, dated (a dispute needs them)")
+    md = add("move-done", "close a tool move: the tool is fixed, the waiting task is released")
+    md.add_argument("move_id")
+    md.add_argument("--result", required=True, help="what was fixed")
     sr = add("stage-run", "run one stage task (started by run-queue --stage)")
     sr.add_argument("stage")
     sr.add_argument("task_id")
@@ -697,6 +706,7 @@ _COMMANDS = {
     "ready": _cmd_ready,
     "land": _cmd_land,
     "move": _cmd_move,
+    "move-done": _cmd_move_done,
 }
 
 

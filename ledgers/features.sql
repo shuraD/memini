@@ -2619,3 +2619,7 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-023', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-023', 'tests/gates/test_orchestrator_reissue.py::test_an_unusable_answer_leaves_the_queue_as_it_was');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-023', 'tests/gates/test_orchestrator_reissue.py::test_the_planner_role_serves_a_dispute_move_and_resolves_it');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-023', 'tests/gates/test_orchestrator_reissue.py::test_a_stage_record_of_the_old_ticket_is_released_for_the_new_one');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-024', 'A crashed tool or gate (not the slice''s code) moves the task to DevOps'' queue; fixing it closes the move and releases the task', 'infra', 'tests/gates/test_orchestrator_tool_move.py', 'active', 'tools/orchestrator/', 'C-20261117-0031');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-024', 'tests/gates/test_orchestrator_tool_move.py::test_a_crashed_tool_or_gate_moves_the_task_to_devops');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-024', 'tests/gates/test_orchestrator_tool_move.py::test_a_gate_failing_on_the_slices_code_stays_with_the_coder');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-024', 'tests/gates/test_orchestrator_tool_move.py::test_fixing_the_tool_closes_the_move_and_releases_the_task');

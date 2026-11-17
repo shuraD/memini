@@ -116,3 +116,16 @@ def serve(
             return done
         if not batch:
             time.sleep(poll_s)
+
+
+def finish_tool(cfg: Config, move_id: str, result: str, by: str) -> str:
+    """Close a ``tool`` move when the tool is fixed: the waiting task is released to run again."""
+    move = get(cfg, move_id)
+    if move["kind"] != "tool":
+        msg = f"{move_id} is a {move['kind']} move, not a tool move"
+        raise ValueError(msg)
+    resolve(cfg, move_id, result, by)
+    st = state.State(cfg)
+    if st.task(move["task"]) is not None:
+        st.update(move["task"], "released", reason=f"tool fixed ({move_id}): {result}")
+    return str(move["task"])

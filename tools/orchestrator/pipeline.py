@@ -200,6 +200,7 @@ def _run_locked(cfg: Config, task: Task, sp: spec.Spec, known_ids: Collection[st
     except Exception as exc:  # any crash must leave the task blocked, not active
         reason = f"unexpected error {type(exc).__name__}: {exc}"
         state.inbox_append(cfg, task.task_id, "orchestrator error (task blocked)", 1, reason)
+        _tool_broke(cfg, task.task_id, reason)
         outcome = Outcome(task.task_id, FAILED, reason, run.wt)
     st.update(
         task.task_id,
@@ -209,6 +210,18 @@ def _run_locked(cfg: Config, task: Task, sp: spec.Spec, known_ids: Collection[st
         commit=outcome.commit or "",
     )
     return outcome
+
+
+def _tool_broke(cfg: Config, task_id: str, reason: str) -> None:
+    """Send the task to DevOps' queue: a tool or gate crashed, not the slice's code."""
+    moves.post(
+        cfg,
+        task_id,
+        sender=cfg.worker or "squad",
+        to="devops",
+        kind="tool",
+        text=reason,
+    )
 
 
 class _Run:
@@ -287,7 +300,9 @@ class _Run:
         except _Stop as stop:
             return Outcome(self.task_id, stop.status, stop.reason, self.wt)
         except gates.GateConfigError as exc:
-            return Outcome(self.task_id, FAILED, f"gate configuration: {exc}", self.wt)
+            reason = f"gate configuration: {exc}"
+            _tool_broke(self.cfg, self.task_id, reason)
+            return Outcome(self.task_id, FAILED, reason, self.wt)
 
     def _go(self) -> Outcome:
         cfg = self.cfg
