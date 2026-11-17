@@ -21,6 +21,7 @@ from tools.orchestrator import (
     gates,
     gitops,
     pipeline,
+    planner,
     planstage,
     reconcile,
     schedule,
@@ -259,6 +260,12 @@ def _cmd_enqueue(cfg: config.Config, args: argparse.Namespace) -> int:
         queued = enqueue.read_tickets(cfg.stages[0].queue)
         print(f"{args.task_id}: queued; workers for the batch: {enqueue.workers(queued)}")
     return 1 if found else 0
+
+
+def _cmd_plan(cfg: config.Config, args: argparse.Namespace) -> int:
+    for line in planner.plan(cfg, Path(args.brief)):
+        print(line)
+    return 0
 
 
 def _cmd_ready(cfg: config.Config, args: argparse.Namespace) -> int:
@@ -519,7 +526,7 @@ def _cmd_release(cfg: config.Config, args: argparse.Namespace) -> int:
     return 0
 
 
-def parser() -> argparse.ArgumentParser:
+def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     """Return the argument parser."""
     ap = argparse.ArgumentParser(
         prog="python -m tools.orchestrator",
@@ -583,6 +590,8 @@ def parser() -> argparse.ArgumentParser:
     eq.add_argument("--deps", default="")
     eq.add_argument("--sources", default="")
     eq.add_argument("--needs", default="", help="graph names the ticket needs (must have roles)")
+    pl = add("plan", "the Planner: a batch brief file in, ready-gated tickets out (D2)")
+    pl.add_argument("--brief", required=True, help="the batch brief file vp-rnd saved")
     rd = add("ready", "run the ready gate over a stage queue's tickets")
     rd.add_argument("ids", nargs="*")
     rd.add_argument("--queue")
@@ -604,6 +613,7 @@ _COMMANDS = {
     "release": _cmd_release,
     "stage-run": _cmd_stage_run,
     "enqueue": _cmd_enqueue,
+    "plan": _cmd_plan,
     "ready": _cmd_ready,
     "land": _cmd_land,
 }
