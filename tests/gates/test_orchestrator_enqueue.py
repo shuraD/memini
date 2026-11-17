@@ -61,7 +61,7 @@ def cfg(tmp_path: Path) -> config.Config:
     (repo / "src" / "memini" / "mod.py").write_text("def load_schema():\n    pass\n")
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "user.name", "x")
-    _git(repo, "config", "user.email", "x@example.invalid")
+    _git(repo, "config", "user.email", "t@example.invalid")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "x")
     return config.load_config(
@@ -91,7 +91,7 @@ def test_a_good_ticket_is_ready(cfg: config.Config) -> None:
 @pytest.mark.parametrize(
     ("text", "expect"),
     [
-        ("A1 uses bolt://10.0.0.5:7687", "IP address"),
+        ("A1 uses bolt://10.1.2.3:7687", "IP address"),
         ("A1 connects to localhost", "host name"),
         ("A1 reads /Users/someone/x", "home path"),
         ("A1 then import atexit", "deny word"),

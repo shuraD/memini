@@ -38,7 +38,7 @@ def _repo(tmp: Path, files: dict[str, str]) -> Path:
         (repo / name).write_text(text)
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "user.name", "x")
-    _git(repo, "config", "user.email", "x@example.invalid")
+    _git(repo, "config", "user.email", "t@example.invalid")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "x")
     return repo
@@ -87,7 +87,7 @@ def test_the_shipped_config_lists_the_graph_paths() -> None:
 @pytest.mark.parametrize(
     ("text", "kind"),
     [
-        ("uri = 'bolt://10.0.0.5:7687'", "IP address"),
+        ("uri = 'bolt://10.1.2.3:7687'", "IP address"),
         ("uri = 'bolt://localhost:7687'", "host name"),
         ("uri = 'https://db.example.com'", "host name"),
         ("path = '/Users/someone/work'", "home path"),
@@ -108,12 +108,12 @@ def test_plain_text_has_no_problem() -> None:
 def test_a_visible_test_with_an_address_is_refused_before_sealing(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    bad = "def test_x():\n    assert 'bolt://10.0.0.5:7687'\n"
+    bad = "def test_x():\n    assert 'bolt://10.1.2.3:7687'\n"
     _plan(env, monkeypatch, qa=[{"write": {"tests/unit/test_calc.py": bad}}])
     out = pipeline.run_task(_cfg(env), _task(env))
     assert out.status == "rejected"
     assert "QA tests refused before sealing" in out.reason
-    assert "10.0.0.5" in out.reason
+    assert "10.1.2.3" in out.reason
 
 
 def test_a_hidden_test_with_a_deny_word_is_refused_before_sealing(

@@ -37,7 +37,7 @@ def cfg(tmp_path: Path) -> config.Config:
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "user.name", "x")
-    _git(repo, "config", "user.email", "x@example.invalid")
+    _git(repo, "config", "user.email", "t@example.invalid")
     (repo / "a.txt").write_text("a")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "first")
