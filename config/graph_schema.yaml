@@ -45,3 +45,42 @@ relationships:
   BELONGS_TO_COMMUNITY: {from: [Entity, Community], to: Community}
   HIERARCHICAL_LINK: {from: Community, to: Community, properties: [similarity]}
   INTER_LAYER_LINK: {from: Community, to: [Community, Entity]}
+
+# Names the code refers to by role, so no module spells a label, relationship, property or
+# status as a string literal. Keys are roles; values are the names used above.
+names:
+  labels:
+    project: Project
+    domain: Domain
+    artifact: Artifact
+    chunk: Chunk
+    entity: Entity
+    community: Community
+    relation_type: RelationType
+  relationships:
+    has_domain: HAS_DOMAIN
+    contains: CONTAINS
+    has_chunk: HAS_CHUNK
+    has_entity: HAS_ENTITY
+    related_to: RELATED_TO
+    similar: SIMILAR
+    code_link: CODE_LINK
+    supersedes: SUPERSEDES
+    member_of: BELONGS_TO_COMMUNITY
+    hierarchical_link: HIERARCHICAL_LINK
+    inter_layer_link: INTER_LAYER_LINK
+  properties:
+    scope: scope
+    id: id
+    status: status
+    content_hash: content_hash
+    updated_by: updated_by
+    updated_at: updated_at
+    summary: summary
+    embedding: embedding
+    type: type
+    level: level
+  statuses:
+    active: active
+    superseded: superseded
+    deleted: deleted

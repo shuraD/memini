@@ -79,3 +79,13 @@ def test_relationship_endpoints_are_declared_labels() -> None:
             for e in (side if isinstance(side, list) else [side])
         }
         assert ends <= labels
+
+
+def test_names_match_the_schema() -> None:
+    data = _schema()
+    names = data["names"]
+    assert set(names["labels"].values()) == set(data["nodes"])
+    assert set(names["relationships"].values()) == set(data["relationships"])
+    assert set(names["statuses"].values()) == set(data["nodes"]["Artifact"]["values"]["status"])
+    every = {p for n in data["nodes"].values() for p in n["properties"]}
+    assert set(names["properties"].values()) <= every
