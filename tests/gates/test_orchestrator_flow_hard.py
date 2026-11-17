@@ -125,7 +125,7 @@ def test_a_hidden_test_with_a_deny_word_is_refused_before_sealing(
     assert "hold-out/test_hidden_exit.py" in out.reason
 
 
-def test_a_slice_with_a_graph_name_literal_is_rejected_by_the_gate(
+def test_a_graph_name_literal_goes_back_to_the_coder_to_fix(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = env["repo"]
@@ -133,11 +133,11 @@ def test_a_slice_with_a_graph_name_literal_is_rejected_by_the_gate(
     (repo / "config" / "graph_schema.yaml").write_text(SCHEMA)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "schema")
-    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD + 'KEY = "scope"\n'}))
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD + 'KEY = "scope"\n'}, {IMPL: GOOD}))
     cfg = _cfg(env, graph_name_paths=["src/memini/core/calc/"])
     out = pipeline.run_task(cfg, _task(env))
-    assert out.status == "rejected"
-    assert "graph name literal 'scope'" in out.reason
+    assert out.status == "merged", out.reason
+    assert "graph name literal 'scope'" in _prompts(env, "coder")[1]
 
 
 def test_a_regular_expression_is_not_the_builtin_compile() -> None:

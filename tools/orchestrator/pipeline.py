@@ -750,7 +750,6 @@ class _Run:
         ]
         out += [f"not a regular file: {p}" for p in gitops.bad_modes(self.repo, base, head)]
         out += gates.sealed_problems(self.repo, head, sealed, allow_edits=self.cfg.test_review)
-        out += gates.graph_literal_problems(self.repo, head, changed, self.cfg.graph_name_paths)
         return out
 
     def _path_protected(self) -> list[str]:
@@ -796,6 +795,8 @@ class _Run:
         cfg = self.cfg
         diff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap, *_exclude(changed))
         hits = [f"deny scan: {h}" for h in gates.deny_hits(diff, cfg.deny_patterns)]
+        files = gitops.changed(self.repo, qa_sha, snap)  # D12: a literal is a fix, not a cheat
+        hits += gates.graph_literal_problems(self.repo, snap, files, cfg.graph_name_paths)
         if changed:  # edited tests: the deny scan too, minus plain use of pytest itself
             tdiff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap, "--", *changed)
             relaxed = [p for p in cfg.deny_patterns if p != r"\bpytest\b"]
