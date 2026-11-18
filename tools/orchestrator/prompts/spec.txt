@@ -53,6 +53,8 @@ size: <estimated lines and hours>
    - Never replace or reassign interpreter-wide state (os.environ, sys.modules, builtins,
      sys.stdout): pytest itself uses it. To prove code does not read something, record the
      calls with monkeypatch only around the call under test.
+   - A test text with any of these regexes is refused before sealing (the word pytest is allowed
+     in tests): $deny_patterns
    - Do not change any existing file. Do not write any implementation code.
    - Contract first: from a task you depend on, use only its contract (types, protocols,
      errors, fakes named in its spec). Where its behaviour is needed, use the contract's

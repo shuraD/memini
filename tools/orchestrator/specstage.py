@@ -109,6 +109,10 @@ class _Job:
         """Return the paths the agent may write."""
         return [SPEC_FILE, *self.cfg.qa_allow]
 
+    def deny_for_tests(self) -> str:
+        """Return the words a QA test may not contain, as the gate applies them."""
+        return "  ".join(p for p in self.cfg.deny_patterns if p != r"\bpytest\b")
+
     def prompt_values(self) -> dict[str, str]:
         """Return extra prompt placeholders of this stage kind."""
         return {}
@@ -200,6 +204,7 @@ class _Job:
             task=item.title,
             sources="\n".join(f"  {s}" for s in sources) or "  none",
             qa_allow=", ".join(cfg.qa_allow),
+            deny_patterns=self.deny_for_tests(),
             allow=", ".join(cfg.allow),
             failures=failures,
             **self.prompt_values(),

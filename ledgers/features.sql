@@ -2712,3 +2712,7 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-036', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-036', 'tests/gates/test_orchestrator_reissue.py::test_a_batch_failure_lists_the_failing_test_files_as_pinned');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-027', 'tests/gates/test_orchestrator_stage_sources.py::test_a_header_with_a_plain_colon_value_is_refused_and_says_why');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-027', 'tests/gates/test_orchestrator_stage_sources.py::test_the_spec_prompt_asks_for_block_scalars_for_free_text');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-037', 'QA is told the denied words before it writes tests', 'infra', 'a QA prompt carries the deny list the gate applies', 'active', 'tools/orchestrator/', 'C-20261118-0022');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'tests/gates/test_orchestrator_qa_deny.py::test_qa_prompt_lists_the_denied_words');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'tests/gates/test_orchestrator_qa_deny.py::test_every_qa_render_passes_the_list');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'tests/gates/test_orchestrator_qa_deny.py::test_the_listed_words_are_the_ones_the_gate_refuses');

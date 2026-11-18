@@ -560,6 +560,7 @@ class _Run:
                 task_id=self.task_id,
                 spec=self.sp.text(),
                 qa_allow=", ".join(cfg.qa_allow),
+                deny_patterns="  ".join(p for p in cfg.deny_patterns if p != r"\bpytest\b"),
                 failures=failures,
             )
             self._agent("qa", prompt, self.wt, cfg.qa_allow, protected)

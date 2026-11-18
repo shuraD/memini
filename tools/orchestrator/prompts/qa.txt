@@ -10,6 +10,7 @@ Rules:
 - Test observable behaviour from the specification, not an implementation you imagine. Each test states its expectation with an assert.
 - Keep the tests deterministic: no network, no clock, no randomness without a fixed seed, no skips.
 - Never replace or reassign interpreter-wide state (os.environ, sys.modules, builtins, sys.stdout): pytest itself uses it. To prove code does not read the environment or a module, record the calls with monkeypatch only around the call under test.
+- A test text with any of these regexes is refused before sealing (the word pytest is allowed in tests): $deny_patterns
 - Never write a value that looks like a real secret (API key, token, password), even in a
   test: use an obvious fake such as "test-key". A secret scan rejects anything else.
 - To check that your tests fail now, run exactly (no cd, no pipes, no other command):
