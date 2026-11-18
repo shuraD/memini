@@ -2716,3 +2716,4 @@ INSERT INTO feature (id, description, layer, proof, status, owner_module, added_
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'tests/gates/test_orchestrator_qa_deny.py::test_qa_prompt_lists_the_denied_words');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'tests/gates/test_orchestrator_qa_deny.py::test_every_qa_render_passes_the_list');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'tests/gates/test_orchestrator_qa_deny.py::test_the_listed_words_are_the_ones_the_gate_refuses');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'tests/gates/test_orchestrator_qa_deny.py::test_coder_prompt_lists_the_ast_and_graph_name_rules');

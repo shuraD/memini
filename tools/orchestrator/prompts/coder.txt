@@ -17,6 +17,11 @@ $test_rule
 - Gates you cannot run yourself also check your code (know them before you write):
   - the deny scan refuses any match of these regexes in your changes, comments and docstrings
     included: $deny_patterns
+  - the AST gate refuses: getattr/setattr/delattr/hasattr with a non-literal name; the calls
+    $ast_calls; dunder attributes other than $ast_dunders; imports outside the standard
+    allow-list $imports (plus memini and the declared dependencies); the names $forbidden_names
+  - the graph-name gate: in $graph_paths a NEW file may not hold a string literal equal to a
+    name of config/graph_schema.yaml; use the typed names
   - the security gate is bandit: a finding you made safe (e.g. a URL scheme checked before
     urlopen) is marked on the line bandit reports with "# nosec <id>" plus the reason; ruff's
     "# noqa" does not silence bandit.

@@ -27,3 +27,14 @@ def test_the_listed_words_are_the_ones_the_gate_refuses() -> None:
     listed = [p for p in CFG.deny_patterns if p != r"\bpytest\b"]
     assert gates.text_problems("import importlib", listed)
     assert not gates.text_problems("import pytest", listed)
+
+
+def test_coder_prompt_lists_the_ast_and_graph_name_rules() -> None:
+    text = engine.render(
+        CFG,
+        "coder",
+        ast_calls="ast-calls-marker",
+        imports="imports-marker",
+        graph_paths="graph-paths-marker",
+    )
+    assert all(m in text for m in ("ast-calls-marker", "imports-marker", "graph-paths-marker"))

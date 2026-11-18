@@ -705,6 +705,11 @@ class _Run:
                 reference=reference,
                 failures="\n".join(f"- {f}" for f in failures) or "none (first attempt)",
                 deny_patterns="  ".join(cfg.deny_patterns),
+                ast_calls=", ".join(cfg.ast_forbidden_calls),
+                ast_dunders=", ".join(cfg.ast_dunder_allow),
+                imports=", ".join(cfg.import_allow),
+                forbidden_names=", ".join(cfg.forbidden_names),
+                graph_paths=", ".join(cfg.graph_name_paths),
             )
             res = self._agent("coder", prompt, self.wt, writable, protected)  # watched
             for item in engine.follow_ups(res.stdout):
