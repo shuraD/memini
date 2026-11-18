@@ -48,7 +48,7 @@ def start(cfg: Config, role: str) -> str:
         return f"{role}: not a runner role"
     pid_file = _pid_file(cfg, role)
     if _alive(pid_file):
-        return f"{role}: runner already running (pid {pid_file.read_text().strip()})"
+        return ""  # already running: say nothing on every prompt
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     log = cfg.state_dir / f"runner-{role}.log"
     with log.open("a", encoding="utf-8") as out:
@@ -63,9 +63,18 @@ def start(cfg: Config, role: str) -> str:
     from tools.orchestrator import state  # noqa: PLC0415
 
     state.ops_log(
-        cfg, role, "runner_started", f"session open: run-queue --role {role}", pid=proc.pid
+        cfg,
+        role,
+        "runner_started",
+        f"started by the hook in the {role} session, not by the session itself",
+        pid=proc.pid,
+        trigger="hook",
     )
-    return f"{role}: runner started (pid {proc.pid}, log {log})"
+    return (
+        f"[runner] A background program for the {role} role was started automatically by a hook "
+        f"(pid {proc.pid}, log {log}). It is not this session and you did not start it: it runs "
+        f"the {role} queue and the moves sent to {role}. You need to do nothing about it."
+    )
 
 
 def supervise(cfg: Config, role: str, poll_s: float = _POLL_S) -> None:
@@ -89,8 +98,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         supervise(cfg, args[1])
         return 0
     role = os.environ.get("MEMINI_ROLE") or os.environ.get("MEMINI_SQUAD", "")
-    if role:
-        sys.stdout.write(start(cfg, role) + "\n")
+    if role and (message := start(cfg, role)):
+        sys.stdout.write(message + "\n")
     return 0
 
 

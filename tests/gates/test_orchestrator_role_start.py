@@ -33,15 +33,18 @@ def test_a_role_session_starts_its_supervisor_once(
         return _Proc()
 
     monkeypatch.setattr(subprocess, "Popen", popen)
-    assert "runner started" in role_start.start(cfg, "dev4")
+    told = role_start.start(cfg, "dev4")
+    assert "started automatically by a hook" in told
+    assert "you did not start it" in told
     assert calls[0][-3:] == ["role_start", "--supervise", "dev4"] or calls[0][-2:] == [
         "--supervise",
         "dev4",
     ]
-    assert "runner already running" in role_start.start(cfg, "dev4")
+    assert role_start.start(cfg, "dev4") == ""  # silent on every later prompt
     assert len(calls) == 1
     ledger = (cfg.state_dir / "ops-ledger.jsonl").read_text().splitlines()
-    assert json.loads(ledger[-1])["action"] == "runner_started"
+    row = json.loads(ledger[-1])
+    assert (row["action"], row["details"]["trigger"]) == ("runner_started", "hook")
 
 
 def test_a_role_outside_the_table_starts_nothing(cfg: config.Config) -> None:
