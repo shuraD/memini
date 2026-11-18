@@ -7,6 +7,7 @@ import dataclasses
 import json
 import shlex
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -196,3 +197,45 @@ def test_a_heavy_pinned_update_stops_the_slice_for_the_owner(
     assert out.status == "disputed"
     assert "heavy" in out.reason
     assert "heavy test update" in cfg.inbox.read_text()
+
+
+# --- the ticket lists nothing: the coder fixes the old test its change broke ---------------
+
+
+def _unlisted(env: dict[str, Any], cfg: config.Config) -> None:
+    repo = env["repo"]
+    (repo / OLD).write_text(OLD_BEFORE)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "an older slice's test")
+    line = shlex.join([TASK, "src/memini/core/calc/", "-", "-", "Change, no tests listed."])
+    cfg.stages[0].queue.parent.mkdir(parents=True, exist_ok=True)
+    cfg.stages[0].queue.write_text(line + "\n")
+
+
+def test_the_coder_fixes_an_old_test_its_change_broke_and_it_is_reviewed(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(
+        env,
+        monkeypatch,
+        coder=_coder({IMPL: GOOD, OLD: OLD_AFTER}),
+        audit=[{"stdout": APPROVE}, {"stdout": AUDIT_PASS}],
+    )
+    cfg = _cfg(env, test_review=True)
+    _unlisted(env, cfg)
+    out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "merged", out.reason
+    assert [m["kind"] for m in moves._read(cfg)] == ["test_review", "stale_test_review"]
+    assert _git(env["repo"], "show", f"main:{OLD}") == OLD_AFTER.rstrip("\n")
+
+
+def test_an_old_test_is_never_deleted_by_a_slice(enq_cfg: config.Config, tmp_path: Path) -> None:
+    repo, base, snap, names = _repo_with_update(tmp_path, None)
+    run = SimpleNamespace(repo=repo, cfg=dataclasses.replace(enq_cfg, test_review=True), pinned=[])
+    sealed: dict[str, str] = {}
+    files: list[str] = []
+    with pytest.raises(pipeline._Stop, match="deleted"):
+        pipeline._Run._take_old_tests(run, base, snap, sealed, files)
+    assert names
+    assert not sealed
+    assert not files

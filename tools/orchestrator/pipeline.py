@@ -687,7 +687,7 @@ class _Run:
         failures: list[str] = []
         snap = qa_sha
         edits = cfg.test_review
-        writable = (*self.paths, *files) if edits else self.paths
+        writable = (*self.paths, *files, *cfg.old_test_paths) if edits else self.paths
         limit, attempt = cfg.max_coder_attempts, 0
         while attempt < limit:
             attempt += 1
@@ -720,6 +720,7 @@ class _Run:
                 raise _Stop(REJECTED, "; ".join(left))
             self._autoformat()
             snap = gitops.snapshot(self.wt, f"{self.task_id}: coder attempt {attempt}", self.ident)
+            self._take_old_tests(qa_sha, snap, sealed, files)
             cheats = self._cheats(qa_sha, snap, sealed, extra=files if edits else ())
             if cheats:
                 raise _Stop(REJECTED, "; ".join(cheats))
@@ -768,6 +769,29 @@ class _Run:
             REJECTED,
             f"not green after {cfg.max_coder_attempts} attempts: " + "; ".join(failures)[:1500],
         )
+
+    def _take_old_tests(
+        self, qa_sha: str, snap: str, sealed: dict[str, str], files: list[str]
+    ) -> None:
+        """Add the existing tests the coder edited to the slice's tests; refuse a deleted one.
+
+        An old test the change breaks is the coder's to fix (owner 2026-11-18). It is sealed at
+        its original content so the edit shows as a test change: QA reviews it, then vp-rnd.
+        """
+        if not self.cfg.test_review:
+            return
+        gone = []
+        for status, path in gitops.name_status(self.repo, qa_sha, snap):
+            if path in sealed or not any(gates.matches(o, path) for o in self.cfg.old_test_paths):
+                continue
+            if status == "D":
+                gone.append(path)
+            elif status == "M":
+                sealed[path] = gates.seal(self.repo, qa_sha, [path])[path]
+                files.append(path)
+                self.pinned.append(path)
+        if gone:
+            raise _Stop(REJECTED, "an existing test was deleted: " + ", ".join(gone))
 
     def _ast_problems(self, qa_sha: str, snap: str, skip: Sequence[str] = ()) -> list[str]:
         """Return the AST check's problems for the Python files the coder changed.

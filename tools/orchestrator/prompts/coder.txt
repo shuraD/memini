@@ -22,6 +22,10 @@ $test_rule
     allow-list $imports (plus memini and the declared dependencies); the names $forbidden_names
   - the graph-name gate: in $graph_paths a NEW file may not hold a string literal equal to a
     name of config/graph_schema.yaml; use the typed names
+  - existing tests: run `uv run python -m tools.orchestrator sandbox-pytest tests/unit` to see
+    which old tests your change breaks. You own that fix: update such a test to the new correct
+    behavior, in the same slice. Never delete a test or check less than before. QA, then vp-rnd,
+    review the diff; a heavy change goes to the owner.
   - the security gate is bandit: a finding you made safe (e.g. a URL scheme checked before
     urlopen) is marked on the line bandit reports with "# nosec <id>" plus the reason; ruff's
     "# noqa" does not silence bandit.

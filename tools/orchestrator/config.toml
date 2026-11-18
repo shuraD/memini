@@ -135,6 +135,9 @@ module_roots = { "src/memini/core/" = "core", "src/memini/extensions/" = "extens
 ignored_ok = ["__pycache__/", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".venv/"]
 # the QA agent may only ADD test files (test_*.py) under these
 qa_allow = ["tests/unit/"]
+# Existing tests a slice may update when its change makes them fail (owner 2026-11-18: the coder
+# owns the fix, QA then vp-rnd review the diff). Only edits, never deletes; a heavy one goes to the owner.
+old_test_paths = ["tests/unit/"]
 
 state_dir = "../.memini-orchestrator"
 holdout_dir = "../memini-holdout"         # hold-out tests: <holdout_dir>/<TASK-ID>/test_*.py

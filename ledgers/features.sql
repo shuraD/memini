@@ -2717,3 +2717,6 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'tests/gates/test_orchestrator_qa_deny.py::test_every_qa_render_passes_the_list');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'tests/gates/test_orchestrator_qa_deny.py::test_the_listed_words_are_the_ones_the_gate_refuses');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-037', 'tests/gates/test_orchestrator_qa_deny.py::test_coder_prompt_lists_the_ast_and_graph_name_rules');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-038', 'A slice may update an existing test its change breaks, without the ticket listing it', 'infra', 'the update is sealed, reviewed by QA then vp-rnd, merged; a deleted old test is refused', 'active', 'tools/orchestrator/', 'C-20261118-0024');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-038', 'tests/gates/test_orchestrator_pinned.py::test_the_coder_fixes_an_old_test_its_change_broke_and_it_is_reviewed');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-038', 'tests/gates/test_orchestrator_pinned.py::test_an_old_test_is_never_deleted_by_a_slice');

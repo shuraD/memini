@@ -132,6 +132,7 @@ class Config:
     protected: tuple[str, ...]
     guard_protected: tuple[str, ...]
     qa_allow: tuple[str, ...]
+    old_test_paths: tuple[str, ...]
     state_dir: Path
     holdout_dir: Path
     worktrees_dir: Path
@@ -478,6 +479,7 @@ def load_config(
         protected=_strs(raw, "protected"),
         guard_protected=_strs(raw, "guard_protected"),
         qa_allow=_strs(raw, "qa_allow"),
+        old_test_paths=_strs(raw, "old_test_paths"),
         state_dir=paths["state_dir"],
         holdout_dir=paths["holdout_dir"],
         worktrees_dir=paths["worktrees_dir"],
