@@ -78,3 +78,15 @@ def test_the_seen_file_makes_a_second_call_a_no_op(cfg: config.Config) -> None:
     ci_watch.check(cfg, runner)
     assert len(moves.open_for(cfg, "devops")) == 1
     assert json.loads((cfg.state_dir / "ci-seen.json").read_text()) == [4]
+
+
+def test_the_first_look_reports_only_the_newest_finished_run(cfg: config.Config) -> None:
+    runs = [_run(3, "failure"), _run(2, "failure"), _run(1, "failure")]
+    lines = ci_watch.check(cfg, _runner(runs))
+    assert len(lines) == 1
+    assert len(moves.open_for(cfg, "devops")) == 1
+
+
+def test_a_timestamp_before_the_line_is_ignored() -> None:
+    log = "gate\tstep\t2026-11-18T12:03:06.2135466Z E   KeyError: 'NEO4J_URI'"
+    assert ci_watch._failures(log) == ([], ["E   KeyError: 'NEO4J_URI'"])

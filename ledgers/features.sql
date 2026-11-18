@@ -2681,3 +2681,5 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'tests/gates/test_orchestrator_ci_watch.py::test_a_red_run_posts_one_move_with_the_failing_tests');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'tests/gates/test_orchestrator_ci_watch.py::test_an_unfinished_run_is_ignored_until_it_completes');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'tests/gates/test_orchestrator_ci_watch.py::test_the_seen_file_makes_a_second_call_a_no_op');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'tests/gates/test_orchestrator_ci_watch.py::test_the_first_look_reports_only_the_newest_finished_run');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'tests/gates/test_orchestrator_ci_watch.py::test_a_timestamp_before_the_line_is_ignored');

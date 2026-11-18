@@ -7,6 +7,7 @@ a ledger row, red is a ledger row plus one move to devops carrying the failing t
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections.abc import Callable
 
@@ -18,6 +19,7 @@ Runner = Callable[[list[str]], str]
 _FIELDS = "databaseId,conclusion,headSha,displayTitle,status"
 _MAX_ERRORS = 8
 _FAIL_MARKS = ("FAILED ", "ERROR at setup of ")
+_STAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ")  # GitHub puts a timestamp before each line
 
 
 def _gh(argv: list[str]) -> str:
@@ -29,7 +31,7 @@ def _failures(log: str) -> tuple[list[str], list[str]]:
     tests: dict[str, None] = {}
     errors: dict[str, None] = {}
     for raw in log.splitlines():
-        line = raw.split("\t")[-1].strip()
+        line = _STAMP.sub("", raw.split("\t")[-1].strip())
         for mark in _FAIL_MARKS:
             if mark in line:
                 tests[line.split(mark, 1)[1].split(" - ")[0].strip()] = None
@@ -44,7 +46,11 @@ def check(cfg: Config, runner: Runner = _gh) -> list[str]:
         runner(["gh", "run", "list", "--branch", "main", "--limit", "10", "--json", _FIELDS])
     )
     path = cfg.state_dir / SEEN
-    seen: list[int] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    first = not path.exists()
+    seen: list[int] = [] if first else json.loads(path.read_text(encoding="utf-8"))
+    if first:  # the first look reports only the newest finished run; older ones are history
+        done = [r["databaseId"] for r in runs if r["status"] == "completed"]
+        seen = done[1:]
     lines = []
     for run in runs:
         if run["status"] != "completed" or run["databaseId"] in seen:
