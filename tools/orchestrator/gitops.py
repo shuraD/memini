@@ -154,7 +154,7 @@ def set_aside(repo: Path, worktrees: Path, prefix: str, task_id: str, tag: str) 
     exists. Nothing is deleted: the worktree directories and the branch only get a new name.
     """
     moved = []
-    for name in (task_id, f"{task_id}.gate", f"{task_id}.merge"):
+    for name in (task_id, f"{task_id}.gate", f"{task_id}.merge", f"{task_id}.spec"):
         old = worktrees / name
         if old.exists():
             git(repo, "worktree", "move", str(old), str(worktrees / f"{name}-{tag}"))

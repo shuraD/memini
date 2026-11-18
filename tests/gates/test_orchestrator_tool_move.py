@@ -87,3 +87,21 @@ def test_closing_a_tool_move_releases_a_stage_that_stopped_on_it(
     move = moves.post(cfg, "GR-X", sender="qa", to="devops", kind="tool", text="parser")
     moves.finish_tool(cfg, move, "fixed", "devops")
     assert stage.status("GR-X") == stages.RELEASED
+
+
+def test_release_sets_the_leftover_spec_worktree_aside(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools.orchestrator import cli  # noqa: PLC0415
+
+    _plan(env, monkeypatch)
+    cfg = _cfg(env)
+    left = cfg.worktrees_dir / f"{TASK}.spec"
+    _git(env["repo"], "worktree", "add", "-q", "--detach", str(left), "HEAD")
+    stages.StageState(cfg, cfg.stages[0].name).set(TASK, "failed", "x")
+    args = cli.parser().parse_args(
+        ["release", TASK, "--stage", cfg.stages[0].name, "--reason", "r"]
+    )
+    assert cli._cmd_release(cfg, args) == 0
+    assert not left.exists()
+    assert any(p.name.startswith(f"{TASK}.spec-rel") for p in cfg.worktrees_dir.iterdir())

@@ -574,6 +574,16 @@ def _cmd_sandbox_pytest(cfg: config.Config, args: argparse.Namespace) -> int:
     return res.code
 
 
+def _set_aside(cfg: config.Config, task_id: str) -> None:
+    """Rename the leftovers of the released task's stopped run so that it can run again."""
+    tag = datetime.now(UTC).strftime("rel%H%M%S")
+    moved = gitops.set_aside(cfg.repo, cfg.worktrees_dir, cfg.branch_prefix, task_id, tag)
+    if moved:
+        state.ops_log(
+            cfg, task_id, "set_aside", "leftovers of the released run renamed", moved=moved
+        )
+
+
 def _cmd_release(cfg: config.Config, args: argparse.Namespace) -> int:
     if args.stage != config.CODE_STAGE:
         rec = stages.StageState(cfg, stages.stage(cfg, args.stage).name)
@@ -583,6 +593,7 @@ def _cmd_release(cfg: config.Config, args: argparse.Namespace) -> int:
                     print(f"{args.stage}/{args.task_id}: unknown task")
                     return 1
                 rec.set(args.task_id, stages.RELEASED, args.reason)
+                _set_aside(cfg, args.task_id)
         except state.BusyError as exc:
             print(f"{args.stage}/{args.task_id}: not released: {exc}")
             return 1
@@ -595,6 +606,7 @@ def _cmd_release(cfg: config.Config, args: argparse.Namespace) -> int:
                 print(f"{args.task_id}: unknown task")
                 return 1
             st.update(args.task_id, "released", reason=args.reason)
+            _set_aside(cfg, args.task_id)
     except state.BusyError as exc:
         print(f"{args.task_id}: not released: {exc}")
         return 1
