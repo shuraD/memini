@@ -3,10 +3,12 @@
 # ruff: noqa: F811
 from __future__ import annotations
 
+import dataclasses
 import json
+from pathlib import Path
 
 from tests.gates.test_orchestrator_enqueue import MODULE, cfg  # noqa: F401  (cfg is a fixture)
-from tools.orchestrator import config, enqueue, moves, planner, stages, state
+from tools.orchestrator import config, enqueue, moves, planner, specstage, stages, state
 
 WORDS = "owner 2026-11-17 (D-10): remove only the properties that now have a role"
 FIX = json.dumps(
@@ -79,3 +81,23 @@ def test_a_stage_record_of_the_old_ticket_is_released_for_the_new_one(cfg: confi
     stages.StageState(cfg, cfg.stages[0].name).set("T-9", stages.DONE, "passed")
     planner.reissue(cfg, move, lambda _prompt: FIX)
     assert stages.StageState(cfg, cfg.stages[0].name).status("T-9") == stages.RELEASED
+
+
+def test_the_old_spec_and_hold_out_are_set_aside_not_deleted(
+    cfg: config.Config, tmp_path: Path
+) -> None:
+    cfg = dataclasses.replace(cfg, spec_dir=tmp_path / "specs", holdout_dir=tmp_path / "holdout")
+    item = stages.StageItem("T-9", MODULE, (), (), "")
+    spec_file = specstage.spec_path(cfg, item)
+    spec_file.parent.mkdir(parents=True)
+    spec_file.write_text("old spec")
+    hold = cfg.holdout_dir / "T-9"
+    hold.mkdir(parents=True)
+    (hold / "test_old.py").write_text("def test_x(): ...")
+    move = _dispute(cfg)
+    planner.reissue(cfg, move, lambda _prompt: FIX)
+    assert not spec_file.exists() and not hold.exists()
+    assert (
+        spec_file.with_name(f"{spec_file.name}.superseded-{move['id']}").read_text() == "old spec"
+    )
+    assert (hold.with_name(f"T-9.superseded-{move['id']}") / "test_old.py").exists()

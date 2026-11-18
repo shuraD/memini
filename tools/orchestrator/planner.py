@@ -17,7 +17,17 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.orchestrator import agent_inbox, engine, enqueue, moves, reconcile, stages, state
+from tools.orchestrator import (
+    agent_inbox,
+    engine,
+    enqueue,
+    gates,
+    moves,
+    reconcile,
+    specstage,
+    stages,
+    state,
+)
 from tools.orchestrator.config import Config
 from tools.orchestrator.executor import executor_for
 
@@ -172,8 +182,17 @@ def plan(cfg: Config, brief_path: Path, ask: Callable[[str], str] | None = None)
     return lines
 
 
-def _supersede(cfg: Config, task_id: str, reason: str) -> None:
-    """Comment out the task's lines in every queue (history stays) and release its records."""
+def _supersede(cfg: Config, old: enqueue.Ticket, reason: str, move_id: str) -> None:
+    """Comment out the task's lines, set its spec and hold-out aside, release its records.
+
+    Nothing is deleted: the old spec file and hold-out directory are renamed
+    ``*.superseded-<move>``, so the spec stage writes the new ones without overwriting.
+    """
+    task_id = old.id
+    item = stages.StageItem(task_id, old.module, (), (), "")
+    for old_path in (specstage.spec_path(cfg, item), gates.holdout_dir(cfg, task_id)):
+        if old_path.exists():
+            old_path.rename(old_path.with_name(f"{old_path.name}.superseded-{move_id}"))
     for path in reconcile.queue_files(cfg):
         lines = path.read_text(encoding="utf-8").splitlines()
         if not any(x.split(" ", 1)[0] == task_id for x in lines):
@@ -234,7 +253,7 @@ def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = No
     found = enqueue.problems(cfg, ticket, others)
     if found:
         return "refused by the ready gate: " + "; ".join(found)
-    _supersede(cfg, task, f"cannot be built as written, move {move['id']}")
+    _supersede(cfg, old, f"cannot be built as written, move {move['id']}", move["id"])
     _, found = enqueue.enqueue(
         cfg,
         task_id=task,
