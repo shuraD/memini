@@ -15,7 +15,8 @@ Files under .sources/deps/ are the specs of the tasks this one depends on: use t
 interfaces as given, never redefine them. Read the current code of the repository as needed.
 
 1. Write SPEC.md at the repository root, in exactly this shape (YAML header between --- lines,
-   then a short free-text note):
+   then a short free-text note). Every free-text value is a `|` block like `interface:` below; a
+   plain value must never contain a colon followed by a space, or the header is not valid YAML:
 
 ---
 id: $task_id
@@ -23,7 +24,8 @@ module: $module
 paths: <the files or directories this slice creates or changes, all inside $module; paths only, no notes>
 depends_on: <task ids, keep every one of: $depends_on>
 flag: none
-behavior: <one sentence: what the slice does>
+behavior: |
+  <one sentence: what the slice does>
 interface: |
   <the exact public signatures the tests use: functions, classes, fields, errors>
 acceptance: |

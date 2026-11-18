@@ -128,7 +128,8 @@ def load(path: Path) -> Spec:
     try:
         header = yaml.safe_load("\n".join(lines[1:end])) or {}
     except yaml.YAMLError as exc:
-        msg = f"spec {path.name}: the header is not valid YAML"
+        detail = " ".join(str(exc).split())[:200]
+        msg = f"spec {path.name}: the header is not valid YAML ({detail})"
         raise SpecError(msg) from exc
     if not isinstance(header, dict):
         msg = f"spec {path.name}: the header must be a mapping of fields"
