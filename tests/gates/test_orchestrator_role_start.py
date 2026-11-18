@@ -48,20 +48,25 @@ def test_a_role_outside_the_table_starts_nothing(cfg: config.Config) -> None:
     assert role_start.start(cfg, "vp-rnd") == "vp-rnd: not a runner role"
 
 
-def test_the_supervisor_runs_the_roles_queue_again_and_again(
+def test_the_supervisor_serves_moves_and_runs_the_queue_in_fresh_processes(
     cfg: config.Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runs: list[list[str]] = []
 
     def run(argv: list[str], **_kw: Any) -> None:
         runs.append(argv)
-        if len(runs) == 2:
+        if len(runs) == 4:
             raise KeyboardInterrupt
 
     monkeypatch.setattr(subprocess, "run", run)
     with pytest.raises(KeyboardInterrupt):
-        role_start.supervise(cfg, "dev4", {}, poll_s=0)
-    assert [a[-3:] for a in runs] == [["run-queue", "--role", "dev4"]] * 2
+        role_start.supervise(cfg, "dev4", poll_s=0)
+    assert [a[-3:] for a in runs] == [
+        ["tools.orchestrator", "serve-moves", "dev4"],
+        ["run-queue", "--role", "dev4"],
+        ["tools.orchestrator", "serve-moves", "dev4"],
+        ["run-queue", "--role", "dev4"],
+    ]
 
 
 def test_the_supervisor_serves_the_moves_sent_to_its_role(cfg: config.Config) -> None:

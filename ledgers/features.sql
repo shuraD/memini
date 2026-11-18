@@ -2630,3 +2630,4 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'tests/gates/test_orchestrator_role_start.py::test_the_supervisor_serves_the_moves_sent_to_its_role');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'tests/gates/test_orchestrator_role_start.py::test_a_squad_session_starts_its_runner_from_memini_squad');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-023', 'tests/gates/test_orchestrator_reissue.py::test_the_old_spec_and_hold_out_are_set_aside_not_deleted');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'tests/gates/test_orchestrator_role_start.py::test_the_supervisor_serves_moves_and_runs_the_queue_in_fresh_processes');

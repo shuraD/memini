@@ -14,12 +14,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
 
-from tools.orchestrator import moves
 from tools.orchestrator.config import Config, load_config
 
 _POLL_S = 30.0
@@ -70,21 +68,16 @@ def start(cfg: Config, role: str) -> str:
     return f"{role}: runner started (pid {proc.pid}, log {log})"
 
 
-def supervise(
-    cfg: Config, role: str, handlers: dict[str, moves.Handler], poll_s: float = _POLL_S
-) -> None:
-    """Serve the role's moves and run its queue until the process is stopped."""
-    if handlers:
-        threading.Thread(target=moves.serve, args=(cfg, role, handlers), daemon=True).start()
-    if not cfg.roles[role].queue:
-        while True:
-            time.sleep(3600)
+def supervise(cfg: Config, role: str, poll_s: float = _POLL_S) -> None:
+    """Serve the role's moves and run its queue, each in a fresh process, until stopped.
+
+    Fresh processes pick up code that landed after the supervisor started.
+    """
+    base = [*_python(cfg), "-m", "tools.orchestrator"]
     while True:
-        subprocess.run(  # noqa: S603 — our own CLI, no shell
-            [*_python(cfg), "-m", "tools.orchestrator", "run-queue", "--role", role],
-            cwd=cfg.repo,
-            check=False,
-        )
+        subprocess.run([*base, "serve-moves", role], cwd=cfg.repo, check=False)  # noqa: S603
+        if cfg.roles[role].queue:
+            subprocess.run([*base, "run-queue", "--role", role], cwd=cfg.repo, check=False)  # noqa: S603
         time.sleep(poll_s)
 
 
@@ -93,10 +86,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     cfg = load_config(Path(__file__).resolve().parents[2])
     if args[:1] == ["--supervise"]:
-        from tools.orchestrator import cli  # noqa: PLC0415
-
-        role = args[1]
-        supervise(cfg, role, cli.HANDLERS.get(role, {}))
+        supervise(cfg, args[1])
         return 0
     role = os.environ.get("MEMINI_ROLE") or os.environ.get("MEMINI_SQUAD", "")
     if role:

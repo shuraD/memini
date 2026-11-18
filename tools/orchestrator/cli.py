@@ -131,7 +131,7 @@ def _apply_role(cfg: config.Config, args: argparse.Namespace) -> int | None:
         print(f"unknown role {args.role!r} (configured: {', '.join(cfg.roles)})")
         return 2
     if not role.queue:
-        moves.serve(cfg, role.name, HANDLERS.get(role.name, {}))
+        moves.serve(cfg, role.name, HANDLERS.get(role.name, {}), once=True)
         return 0
     args.workers = role.workers
     if role.queue in cfg.code_queues:
@@ -340,6 +340,12 @@ def _cmd_move(cfg: config.Config, args: argparse.Namespace) -> int:
         owner_words=args.owner_words or "",
     )
     print(f"{args.task_id}: moved to {args.to} as {move_id}")
+    return 0
+
+
+def _cmd_serve_moves(cfg: config.Config, args: argparse.Namespace) -> int:
+    done = moves.serve(cfg, args.role, HANDLERS.get(args.role, {}), once=True)
+    print(f"{args.role}: {done} move(s) served")
     return 0
 
 
@@ -678,6 +684,8 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     mv.add_argument("--text", required=True, help="why it moves")
     mv.add_argument("--from", dest="sender", default="devops")
     mv.add_argument("--owner-words", help="the owner's words, dated (a dispute needs them)")
+    sm = add("serve-moves", "serve the open moves sent to a role once (the runner calls this)")
+    sm.add_argument("role")
     md = add("move-done", "close a tool move: the tool is fixed, the waiting task is released")
     md.add_argument("move_id")
     md.add_argument("--result", required=True, help="what was fixed")
@@ -702,6 +710,7 @@ _COMMANDS = {
     "land": _cmd_land,
     "move": _cmd_move,
     "move-done": _cmd_move_done,
+    "serve-moves": _cmd_serve_moves,
 }
 
 
