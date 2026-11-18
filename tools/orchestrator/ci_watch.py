@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 from collections.abc import Callable
 
 from tools.orchestrator import moves, state
@@ -74,3 +75,23 @@ def check(cfg: Config, runner: Runner = _gh) -> list[str]:
     cfg.state_dir.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(seen), encoding="utf-8")
     return lines
+
+
+def wait(
+    cfg: Config, sha: str, runner: Runner = _gh, timeout_s: float = 900, poll_s: float = 20
+) -> list[str]:
+    """Wait for the run of commit ``sha`` to finish, then record it (a red run posts its move).
+
+    A push is not done until its CI run is green: this is the step after ``git push``.
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        runs = json.loads(
+            runner(["gh", "run", "list", "--commit", sha, "--json", _FIELDS, "--limit", "5"])
+        )
+        if runs and all(r["status"] == "completed" for r in runs):
+            return check(cfg, runner)
+        if time.monotonic() >= deadline:
+            state.ops_log(cfg, sha[:7], "ci_timeout", f"no finished CI run for {sha[:7]} in time")
+            return [f"{sha[:7]}: no finished CI run in {int(timeout_s)} s"]
+        time.sleep(poll_s)

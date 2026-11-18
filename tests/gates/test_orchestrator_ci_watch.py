@@ -90,3 +90,16 @@ def test_the_first_look_reports_only_the_newest_finished_run(cfg: config.Config)
 def test_a_timestamp_before_the_line_is_ignored() -> None:
     log = "gate\tstep\t2026-11-18T12:03:06.2135466Z E   KeyError: 'NEO4J_URI'"
     assert ci_watch._failures(log) == ([], ["E   KeyError: 'NEO4J_URI'"])
+
+
+def test_wait_returns_when_the_run_of_the_commit_has_finished(cfg: config.Config) -> None:
+    runs = [_run(5, "failure")]
+    lines = ci_watch.wait(cfg, "abcdef1234", _runner(runs), timeout_s=5, poll_s=0)
+    assert lines and "RED" in lines[0]
+    assert len(moves.open_for(cfg, "devops")) == 1
+
+
+def test_wait_gives_up_when_the_run_never_finishes(cfg: config.Config) -> None:
+    runs = [_run(6, "", status="in_progress")]
+    lines = ci_watch.wait(cfg, "abcdef1234", _runner(runs), timeout_s=0, poll_s=0)
+    assert "no finished CI run" in lines[0]

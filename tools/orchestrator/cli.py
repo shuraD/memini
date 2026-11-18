@@ -358,6 +358,12 @@ def _cmd_move_done(cfg: config.Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ci_wait(cfg: config.Config, args: argparse.Namespace) -> int:
+    lines = ci_watch.wait(cfg, args.sha, timeout_s=args.timeout)
+    print("\n".join(lines))
+    return 0 if lines and all("RED" not in x and "no finished" not in x for x in lines) else 1
+
+
 def _cmd_ci_check(cfg: config.Config, args: argparse.Namespace) -> int:
     for line in ci_watch.check(cfg):
         print(line)
@@ -735,6 +741,9 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     md = add("move-done", "close a tool move: the tool is fixed, the waiting task is released")
     md.add_argument("move_id")
     md.add_argument("--result", required=True, help="what was fixed")
+    cw = add("ci-wait", "wait for the CI run of a pushed commit; red posts a move, exit 1")
+    cw.add_argument("sha")
+    cw.add_argument("--timeout", type=float, default=900)
     add("ci-check", "check the GitHub CI runs of main; a red run posts a move to devops")
     mo = add("mode", "show or set a role's mode: autonomous (the runner) or supervised (a person)")
     mo.add_argument("role")
@@ -767,6 +776,7 @@ _COMMANDS = {
     "move": _cmd_move,
     "move-done": _cmd_move_done,
     "ci-check": _cmd_ci_check,
+    "ci-wait": _cmd_ci_wait,
     "serve-moves": _cmd_serve_moves,
     "mode": _cmd_mode,
     "moves": _cmd_moves,

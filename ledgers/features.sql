@@ -2696,3 +2696,5 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_vprnd.py::test_a_missing_decisions_file_escalates');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_vprnd.py::test_serving_the_role_answers_the_ask_move');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_vprnd.py::test_a_dispute_without_owner_words_posts_an_ask_move_to_vp_rnd');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'tests/gates/test_orchestrator_ci_watch.py::test_wait_returns_when_the_run_of_the_commit_has_finished');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'tests/gates/test_orchestrator_ci_watch.py::test_wait_gives_up_when_the_run_never_finishes');
