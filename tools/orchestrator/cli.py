@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.orchestrator import (
+    ci_watch,
     config,
     dockerexec,
     enqueue,
@@ -352,6 +353,12 @@ def _cmd_serve_moves(cfg: config.Config, args: argparse.Namespace) -> int:
 def _cmd_move_done(cfg: config.Config, args: argparse.Namespace) -> int:
     task = moves.finish_tool(cfg, args.move_id, args.result, "devops")
     print(f"{task}: released; the squad's runner takes it again ({args.move_id} closed)")
+    return 0
+
+
+def _cmd_ci_check(cfg: config.Config, args: argparse.Namespace) -> int:
+    for line in ci_watch.check(cfg):
+        print(line)
     return 0
 
 
@@ -701,6 +708,7 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     md = add("move-done", "close a tool move: the tool is fixed, the waiting task is released")
     md.add_argument("move_id")
     md.add_argument("--result", required=True, help="what was fixed")
+    add("ci-check", "check the GitHub CI runs of main; a red run posts a move to devops")
     sr = add("stage-run", "run one stage task (started by run-queue --stage)")
     sr.add_argument("stage")
     sr.add_argument("task_id")
@@ -722,6 +730,7 @@ _COMMANDS = {
     "land": _cmd_land,
     "move": _cmd_move,
     "move-done": _cmd_move_done,
+    "ci-check": _cmd_ci_check,
     "serve-moves": _cmd_serve_moves,
 }
 

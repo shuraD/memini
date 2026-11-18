@@ -95,6 +95,8 @@ def supervise(cfg: Config, role: str, poll_s: float = _POLL_S) -> None:
     base = [*_python(cfg), "-m", "tools.orchestrator"]
     while True:
         subprocess.run([*base, "serve-moves", role], cwd=cfg.repo, check=False)  # noqa: S603
+        if role == "devops":
+            subprocess.run([*base, "ci-check"], cwd=cfg.repo, check=False)  # noqa: S603
         if cfg.roles[role].queue:
             subprocess.run([*base, "run-queue", "--role", role], cwd=cfg.repo, check=False)  # noqa: S603
         time.sleep(poll_s)
