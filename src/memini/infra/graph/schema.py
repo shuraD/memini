@@ -26,9 +26,6 @@ from neo4j_graphrag.indexes import create_vector_index
 
 from memini.infra.paths import schema_file
 
-# A range-indexed property with no role in the names section yet (spec GR-02, GR-06).
-_UNNAMED_RANGE_PROPERTIES = frozenset({"name"})
-
 
 @dataclass(frozen=True)
 class GraphLabels:
@@ -74,6 +71,11 @@ class GraphProperties:
     embedding: str
     type: str
     level: str
+    name: str
+    dirty: str
+    embedding_code: str
+    score: str
+    code_score: str
 
 
 @dataclass(frozen=True)
@@ -161,7 +163,7 @@ def ensure_schema(
 ) -> None:
     """Create the schema's constraints, range indexes and vector indexes, if missing."""
     p = schema.names.properties
-    ranged = _UNNAMED_RANGE_PROPERTIES | {p.type, p.status, p.content_hash, p.level}
+    ranged = {p.name, p.type, p.status, p.content_hash, p.level}
     for label, props in schema.nodes.items():
         base = label.lower()
         if p.scope in props and p.id in props:
