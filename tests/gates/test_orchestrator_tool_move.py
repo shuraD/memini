@@ -9,6 +9,7 @@ import pytest
 from tests.gates.test_orchestrator import (  # noqa: F401  (env is a fixture)
     TASK,
     _cfg,
+    _git,
     _plan,
     _task,
     env,
@@ -58,3 +59,19 @@ def test_fixing_the_tool_closes_the_move_and_releases_the_task(
     assert moves.finish_tool(cfg, move["id"], "gate fixed", "devops") == TASK
     assert state.State(cfg).task(TASK)["status"] == "released"
     assert moves.open_for(cfg, "devops") == []
+
+
+def test_fixing_the_tool_sets_the_stopped_runs_leftovers_aside(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(env, monkeypatch)
+    monkeypatch.setattr(pipeline._Run, "_go", _crash(RuntimeError("boom")))
+    cfg = _cfg(env)
+    wt = cfg.worktrees_dir / TASK
+    _git(env["repo"], "worktree", "add", "-q", "-b", cfg.branch_prefix + TASK, str(wt), "HEAD")
+    pipeline.run_task(cfg, _task(env))
+    (move,) = moves.open_for(cfg, "devops")
+    moves.finish_tool(cfg, move["id"], "fixed", "devops")
+    assert not wt.exists()
+    assert (cfg.worktrees_dir / f"{TASK}-{move['id']}").exists()
+    assert _git(env["repo"], "branch", "--list", cfg.branch_prefix + TASK) == ""

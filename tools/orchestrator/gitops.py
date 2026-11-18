@@ -145,3 +145,22 @@ def all_refs(repo: Path) -> bytes:
 def common_dir(repo: Path) -> Path:
     """Return the repository's common git directory (shared by every worktree)."""
     return Path(out(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+
+
+def set_aside(repo: Path, worktrees: Path, prefix: str, task_id: str, tag: str) -> list[str]:
+    """Move a task's leftover worktrees and branch aside (renamed ``-<tag>``); return what moved.
+
+    A rejected run keeps its worktree for inspection, and the next run refuses to start while it
+    exists. Nothing is deleted: the worktree directories and the branch only get a new name.
+    """
+    moved = []
+    for name in (task_id, f"{task_id}.gate", f"{task_id}.merge"):
+        old = worktrees / name
+        if old.exists():
+            git(repo, "worktree", "move", str(old), str(worktrees / f"{name}-{tag}"))
+            moved.append(name)
+    branch = f"{prefix}{task_id}"
+    if git(repo, "rev-parse", "--verify", "--quiet", branch, check=False).stdout:
+        git(repo, "branch", "-m", branch, f"{branch}-{tag}")
+        moved.append(branch)
+    return moved

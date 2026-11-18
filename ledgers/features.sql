@@ -2665,3 +2665,4 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/schema.py-003', 'tests/unit/test_hold_graph_schema_names_complete.py::test_repo_vector_indexes_unchanged');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/schema.py-003', 'tests/unit/test_hold_graph_schema_names_complete.py::test_range_index_follows_renamed_name_role');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/schema.py-003', 'tests/unit/test_hold_graph_schema_names_complete.py::test_no_new_role_name_literal_in_schema_source');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-024', 'tests/gates/test_orchestrator_tool_move.py::test_fixing_the_tool_sets_the_stopped_runs_leftovers_aside');

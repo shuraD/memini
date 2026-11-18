@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from tools.orchestrator import state
+from tools.orchestrator import gitops, state
 from tools.orchestrator.config import Config
 
 MOVES = "moves.jsonl"
@@ -125,6 +125,10 @@ def finish_tool(cfg: Config, move_id: str, result: str, by: str) -> str:
         msg = f"{move_id} is a {move['kind']} move, not a tool move"
         raise ValueError(msg)
     resolve(cfg, move_id, result, by)
+    moved = gitops.set_aside(cfg.repo, cfg.worktrees_dir, cfg.branch_prefix, move["task"], move_id)
+    state.ops_log(
+        cfg, move["task"], "set_aside", "leftovers of the stopped run renamed", moved=moved
+    )
     st = state.State(cfg)
     if st.task(move["task"]) is not None:
         st.update(move["task"], "released", reason=f"tool fixed ({move_id}): {result}")
