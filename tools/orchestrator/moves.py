@@ -168,3 +168,19 @@ def finish_tool(cfg: Config, move_id: str, result: str, by: str) -> str:
     if st.task(move["task"]) is not None:
         st.update(move["task"], "released", reason=why)
     return str(move["task"])
+
+
+def parse_verdict(result: str) -> tuple[bool, str]:
+    """Read a review answer: JSON ``{"approved", "reason"}``, or text ``approve`` / ``reject: why``.
+
+    A person answering from a session writes the text form. Anything else is a reject.
+    """
+    try:
+        data = json.loads(result)
+        return bool(data["approved"]), str(data.get("reason", ""))
+    except (ValueError, KeyError, TypeError):
+        pass
+    text = result.strip()
+    if text.lower().startswith("approve"):
+        return True, ""
+    return False, text.removeprefix("reject:").strip() or "rejected"

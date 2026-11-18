@@ -258,6 +258,7 @@ class _Run:
         self.calls = 0
         self.test_rejects = 0
         self.reject_reasons: list[str] = []
+        self.pinned: list[str] = []
         self.gate_script = gates.PYTEST_GATE
         self.gate_env: dict[str, str] = {}
         # gate passes reused while their inputs stay the same (main unmoved: no second pass)
@@ -335,9 +336,29 @@ class _Run:
         qa_sha, files = self._qa(base)
         if cfg.test_review:
             qa_sha, files = self._reveal_holdout(qa_sha, files)
+        files = [*files, *self._pinned(qa_sha)]
         sealed = gates.seal(self.repo, qa_sha, files)
         snap = self._coder(base, qa_sha, files, sealed)
         return self._merge(snap, qa_sha, files, sealed)
+
+    def _pinned(self, qa_sha: str) -> list[str]:
+        """Return the existing tests the ticket lists as pinning its change (found at qa_sha)."""
+        queue = self.cfg.stages[0].queue
+        text = next(
+            (t.text for t in reversed(enqueue.read_tickets(queue)) if t.id == self.task_id), ""
+        )
+        self.pinned = [
+            p for p in enqueue.pinned_tests(text) if gitops.blob_sha256(self.repo, qa_sha, p)
+        ]
+        if self.pinned:
+            state.ops_log(
+                self.cfg,
+                self.task_id,
+                "pinned_tests",
+                "existing tests the slice may update",
+                files=self.pinned,
+            )
+        return self.pinned
 
     # -------------------------------------------------------------- helpers
     def _setup(self, wt: Path) -> None:
@@ -849,12 +870,45 @@ class _Run:
         """Return the coder's next failure after a reject; a second reject stops the slice."""
         reason = self._ask_qa(attempt, qa_sha, snap, changed)
         if reason is None:
+            reason = self._ask_vprnd(attempt, qa_sha, snap, changed)
+        if reason is None:
             return None
         self.test_rejects += 1
         self.reject_reasons.append(reason)
         if self.test_rejects >= _REVIEW_REJECTS:
             self._escalate(qa_sha, snap, changed, reason)
         return f"the QA review rejected your test change: {reason}"
+
+    def _ask_vprnd(self, attempt: int, qa_sha: str, snap: str, changed: list[str]) -> str | None:
+        """After QA approves, move the slice to vp-rnd when it updated tests it does not own.
+
+        A light update is approved or rejected by vp-rnd; a heavy one (a deleted test, a weakened
+        assertion, a gate file, many tests) stops the slice and goes to the owner inbox.
+        """
+        stale = [c for c in changed if c in self.pinned]
+        if not stale:
+            return None
+        move = moves.post(
+            self.cfg,
+            self.task_id,
+            sender=self.cfg.worker or "squad",
+            to="vp-rnd",
+            kind="stale_test_review",
+            text=(
+                f"{len(stale)} existing test file(s) updated by the slice, attempt {attempt}: "
+                f"{', '.join(stale)}. Answer approve, or reject: <reason and the fix>."
+            ),
+            qa_sha=qa_sha,
+            snap=snap,
+            changed=stale,
+        )
+        answer = moves.wait(self.cfg, move, _MOVE_WAIT_S)
+        if answer is None:
+            raise _Stop(FAILED, f"vp-rnd did not answer the test update review ({move}) in time")
+        approved, reason = moves.parse_verdict(answer["result"])
+        if not approved and reason.startswith("heavy:"):
+            raise _Stop(DISPUTED, f"vp-rnd sent the test update to the owner: {reason}")
+        return None if approved else reason
 
     def _ask_qa(self, attempt: int, qa_sha: str, snap: str, changed: list[str]) -> str | None:
         """Move the slice to QA's queue with its test changes; wait for the answer.

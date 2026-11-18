@@ -243,6 +243,7 @@ def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = No
             list(fix.get("remove_names", [])),
             list(fix.get("renames", [])),
             words,
+            touches=list(fix.get("touches", [])),
         )
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         return f"the Planner answer is not a usable fix: {exc}"
@@ -307,6 +308,8 @@ def batch_fix(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = 
             list(fix.get("remove_names", [])),
             list(fix.get("renames", [])),
             words,
+            touches=list(fix.get("touches", [])),
+            pinned=sorted(set(re.findall(r"tests/[\w/.\-]+\.py", move["text"]))),
         )
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         return f"the Planner answer is not a usable fix: {exc}"

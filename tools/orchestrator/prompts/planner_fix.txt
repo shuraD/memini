@@ -23,4 +23,4 @@ Write the corrected change as a structured fix. Rules:
 - name every identifier the change removes or renames.
 
 Answer with exactly one JSON object and nothing else:
-{"change": "<one or two sentences: what changes and what stays out of scope>", "remove_names": ["<name>", ...], "renames": ["<old>=<new>", ...]}
+{"change": "<one or two sentences: what changes and what stays out of scope>", "remove_names": ["<name>", ...], "renames": ["<old>=<new>", ...], "touches": ["<class or section the change adds to or extends>", ...]}

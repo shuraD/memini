@@ -119,7 +119,7 @@ def _deps(entry: state.QueueEntry) -> tuple[str, ...]:
 HANDLERS: dict[str, dict[str, moves.Handler]] = {
     "qa": {"test_review": pipeline.review_move},
     "planner": {"dispute": planner.reissue, "batch_failure": planner.batch_fix},
-    "vp-rnd": {"ask": vprnd.answer},
+    "vp-rnd": {"ask": vprnd.answer, "stale_test_review": vprnd.review_stale},
 }  # role -> move kind -> handler
 
 

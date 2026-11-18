@@ -306,8 +306,15 @@ def fix_text(
     remove_names: Sequence[str],
     renames: Sequence[str],
     owner_words: str,
+    *,
+    touches: Sequence[str] = (),
+    pinned: Sequence[str] = (),
 ) -> str:
     """Write a structured fix ticket's text and append its consumer list (D3).
+
+    ``touches`` are names the change adds to or extends and ``pinned`` are test files already
+    known to pin it: every existing test that mentions a touched name, or a removed or renamed
+    one, is listed as "Existing tests that pin this", and the slice may update exactly those.
 
     ``renames`` are ``old=new``. The owner's words must carry a date; without them there is no
     ticket. Every removed or renamed name is searched in ``src`` and ``tests`` on main.
@@ -325,10 +332,25 @@ def fix_text(
     if renames:
         parts.append("Rename: " + ", ".join(r.replace("=", " -> ") for r in renames) + ".")
     names = [*remove_names, *(r.split("=")[0] for r in renames)]
+    tests = set(pinned)
     for name in names:
         files = consumers(cfg, name)
         parts.append(f"Consumers of {name}: " + (", ".join(files) if files else "none") + ".")
+        tests |= {f for f in files if f.startswith("tests/")}
+    for name in touches:
+        tests |= {f for f in consumers(cfg, name) if f.startswith("tests/")}
+    if tests:
+        parts.append("Existing tests that pin this: " + ", ".join(sorted(tests)) + ".")
     return " ".join(parts)
+
+
+_PINNED = re.compile(r"Existing tests that pin this: ([^.]*\.py(?:, [^.]*\.py)*)\.")
+
+
+def pinned_tests(text: str) -> list[str]:
+    """Return the existing test files a ticket's text lists as pinning its change."""
+    found = _PINNED.search(text)
+    return found[1].split(", ") if found else []
 
 
 def enqueue(
