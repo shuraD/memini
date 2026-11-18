@@ -815,7 +815,8 @@ class _Run:
         cfg = self.cfg
         diff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap, *_exclude(changed))
         hits = [f"deny scan: {h}" for h in gates.deny_hits(diff, cfg.deny_patterns)]
-        files = gitops.changed(self.repo, qa_sha, snap)  # D12: a literal is a fix, not a cheat
+        # D12 applies to the files the coder added; an existing file keeps what it already had
+        files = [p for st, p in gitops.name_status(self.repo, qa_sha, snap) if st == "A"]
         hits += gates.graph_literal_problems(self.repo, snap, files, cfg.graph_name_paths)
         if changed:  # edited tests: the deny scan too, minus plain use of pytest itself
             tdiff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap, "--", *changed)

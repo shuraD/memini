@@ -142,6 +142,25 @@ def test_a_graph_name_literal_goes_back_to_the_coder_to_fix(
     assert "graph name literal 'scope'" in _prompts(env, "coder")[1]
 
 
+def test_d12_leaves_an_existing_file_alone_when_the_coder_only_edits_it(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MV-0004: GR-06b edited schema.py, which already held the YAML section keys."""
+    repo = env["repo"]
+    old = "src/memini/core/calc/legacy.py"
+    (repo / "config").mkdir()
+    (repo / "config" / "graph_schema.yaml").write_text(SCHEMA)
+    (repo / old).parent.mkdir(parents=True, exist_ok=True)
+    (repo / old).write_text('KEY = "scope"\n')
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "an old file with a literal")
+    _plan(env, monkeypatch, coder=_coder({IMPL: GOOD, old: 'KEY = "scope"\nOTHER = 1\n'}))
+    cfg = _cfg(env, graph_name_paths=["src/memini/core/calc/"])
+    out = pipeline.run_task(cfg, _task(env))
+    assert out.status == "merged", out.reason
+    assert "graph name literal" not in " ".join(_prompts(env, "coder"))
+
+
 def test_a_regular_expression_is_not_the_builtin_compile() -> None:
     deny = [r"\bcompile\s*\("]
     assert gates.text_problems("PAT = re.compile('x')\n", deny) == []
