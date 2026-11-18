@@ -31,6 +31,7 @@ from tools.orchestrator import (
     agent_inbox,
     astcheck,
     audit,
+    config,
     dockerexec,
     engine,
     enqueue,
@@ -209,6 +210,8 @@ def _run_locked(cfg: Config, task: Task, sp: spec.Spec, known_ids: Collection[st
         worktree=str(outcome.worktree or ""),
         commit=outcome.commit or "",
     )
+    if role := config.role_for_module(cfg, sp.module):
+        agent_inbox.notify(cfg, role, f"{task.task_id}: {outcome.status}: {outcome.reason[:300]}")
     return outcome
 
 

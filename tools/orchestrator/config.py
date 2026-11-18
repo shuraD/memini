@@ -282,6 +282,19 @@ def _roles(
     return out
 
 
+def role_for_module(cfg: Config, module: str) -> str:
+    """Return the role (dev1..dev4) whose coding queue takes ``module``; "" when none does."""
+    queue = next(
+        (
+            cq.name
+            for cq in cfg.code_queues.values()
+            if any(module == m or module.startswith(m.rstrip("/") + "/") for m in cq.modules)
+        ),
+        "",
+    )
+    return next((r.name for r in cfg.roles.values() if queue and r.queue == queue), "")
+
+
 def code_queue_for(cfg: Config, module: str) -> Path:
     """Return the coding queue for a task of ``module`` (``queue`` when no squad matches)."""
     for cq in cfg.code_queues.values():

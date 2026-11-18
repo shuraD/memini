@@ -226,7 +226,8 @@ def test_every_step_is_logged_in_order(
     actions = _actions(cfg)
     order = ["holdout_revealed", "test_changed", "test_review_approve"]
     assert [a for a in actions if a in order] == order
-    assert all(r["actor"] == "orchestrator" and r["target"] == TASK for r in _ops(cfg))
+    own = [r for r in _ops(cfg) if r["action"] != "inbox_post"]  # inbox notes target M-0001, ...
+    assert all(r["actor"] == "orchestrator" and r["target"] == TASK for r in own)
     assert _git(env["repo"], "log", "-1", "--format=%s", "main")
 
 

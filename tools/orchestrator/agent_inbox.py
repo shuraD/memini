@@ -152,7 +152,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Command line: post, reply, unread."""
     ap = argparse.ArgumentParser(prog="agent_inbox", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    who = os.environ.get("MEMINI_SQUAD", "")
+    who = os.environ.get("MEMINI_SQUAD") or os.environ.get("MEMINI_ROLE", "")
     for name in ("post", "reply"):
         p = sub.add_parser(name)
         p.add_argument("--from", dest="sender", default=who)

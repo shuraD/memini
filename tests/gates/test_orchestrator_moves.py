@@ -18,7 +18,8 @@ def cfg(tmp_path: Path) -> config.Config:
 
 def _ledger(cfg: config.Config) -> list[dict]:
     text = (cfg.state_dir / "ops-ledger.jsonl").read_text()
-    return [json.loads(line) for line in text.splitlines()]
+    rows = [json.loads(line) for line in text.splitlines()]
+    return [r for r in rows if r["action"] != "inbox_post"]  # the roles' notes are tested apart
 
 
 def test_a_posted_move_is_open_for_its_receiver_and_in_the_ledger(cfg: config.Config) -> None:
@@ -57,3 +58,20 @@ def test_run_queue_role_names_come_from_config(cfg: config.Config) -> None:
     assert cfg.roles["dev4"].queue in cfg.code_queues
     assert cfg.roles["qa"].queue == "spec"
     assert cfg.roles["planner"].queue == ""
+
+
+def test_both_roles_are_told_when_a_task_moves_and_when_it_comes_back(cfg: config.Config) -> None:
+    move_id = moves.post(cfg, "GR-10", sender="dev4", to="qa", kind="test_review", text="diff")
+    assert f"GR-10 moved to you by dev4 (test_review, {move_id})" in _inbox(cfg, "qa")
+    moves.serve(cfg, "qa", {"test_review": lambda _c, _m: "approve"}, once=True)
+    assert f"GR-10 came back from qa (test_review, {move_id}): approve" in _inbox(cfg, "dev4")
+
+
+def _inbox(cfg: config.Config, role: str) -> str:
+    return (cfg.state_dir / "agent-inbox" / f"{role}.md").read_text()
+
+
+def test_a_module_belongs_to_the_role_whose_queue_takes_it(cfg: config.Config) -> None:
+    assert config.role_for_module(cfg, "src/memini/infra/graph/schema.py") == "dev4"
+    assert config.role_for_module(cfg, "src/memini/core/query/engine.py") == "dev2"
+    assert config.role_for_module(cfg, "docs/x.md") == ""

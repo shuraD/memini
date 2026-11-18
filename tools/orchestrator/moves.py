@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from tools.orchestrator import gitops, state
+from tools.orchestrator import agent_inbox, gitops, state
 from tools.orchestrator.config import Config
 
 MOVES = "moves.jsonl"
@@ -59,6 +59,7 @@ def post(
         )
         _write(cfg, rows)
     state.ops_log(cfg, task, "move", f"{sender} -> {to}: {kind}: {text}", move=move_id)
+    agent_inbox.notify(cfg, to, f"{task} moved to you by {sender} ({kind}, {move_id}): {text}")
     return move_id
 
 
@@ -83,6 +84,9 @@ def resolve(cfg: Config, move_id: str, result: str, by: str) -> None:
         row.update(status="done", result=result, by=by)
         _write(cfg, rows)
     state.ops_log(cfg, row["task"], "move_done", f"{by} -> {row['from']}: {result}", move=move_id)
+    agent_inbox.notify(
+        cfg, row["from"], f"{row['task']} came back from {by} ({row['kind']}, {move_id}): {result}"
+    )
 
 
 def wait(cfg: Config, move_id: str, timeout_s: float, poll_s: float = 5.0) -> Move | None:
