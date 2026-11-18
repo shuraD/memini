@@ -33,6 +33,7 @@ from tools.orchestrator import (
     specstage,
     stages,
     state,
+    vprnd,
 )
 from tools.orchestrator.executor import clean_env
 
@@ -118,6 +119,7 @@ def _deps(entry: state.QueueEntry) -> tuple[str, ...]:
 HANDLERS: dict[str, dict[str, moves.Handler]] = {
     "qa": {"test_review": pipeline.review_move},
     "planner": {"dispute": planner.reissue},
+    "vp-rnd": {"ask": vprnd.answer},
 }  # role -> move kind -> handler
 
 
@@ -359,6 +361,31 @@ def _cmd_move_done(cfg: config.Config, args: argparse.Namespace) -> int:
 def _cmd_ci_check(cfg: config.Config, args: argparse.Namespace) -> int:
     for line in ci_watch.check(cfg):
         print(line)
+    return 0
+
+
+def _cmd_mode(cfg: config.Config, args: argparse.Namespace) -> int:
+    if args.mode:
+        moves.set_mode(cfg, args.role, args.mode)
+    print(f"{args.role}: {moves.mode(cfg, args.role)}")
+    return 0
+
+
+def _cmd_moves(cfg: config.Config, args: argparse.Namespace) -> int:
+    for m in moves.open_for(cfg, args.role):
+        words = m["payload"].get("owner_words")
+        print(f"{m['id']}  {m['task']}  {m['kind']}  from {m['from']}\n  {m['text']}")
+        if words:
+            print(f"  owner words: {words}")
+    return 0
+
+
+def _cmd_move_answer(cfg: config.Config, args: argparse.Namespace) -> int:
+    if moves.get(cfg, args.move_id)["kind"] == "tool":
+        moves.finish_tool(cfg, args.move_id, args.result, args.by)
+    else:
+        moves.resolve(cfg, args.move_id, args.result, args.by)
+    print(f"{args.move_id}: closed by {args.by}")
     return 0
 
 
@@ -709,6 +736,15 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     md.add_argument("move_id")
     md.add_argument("--result", required=True, help="what was fixed")
     add("ci-check", "check the GitHub CI runs of main; a red run posts a move to devops")
+    mo = add("mode", "show or set a role's mode: autonomous (the runner) or supervised (a person)")
+    mo.add_argument("role")
+    mo.add_argument("mode", nargs="?", choices=["autonomous", "supervised"])
+    ml = add("moves", "list the open moves of a role")
+    ml.add_argument("--role", required=True)
+    ma = add("move-answer", "answer an open move from any session (a tool move releases its task)")
+    ma.add_argument("move_id")
+    ma.add_argument("--result", required=True)
+    ma.add_argument("--by", required=True, help="the answering role")
     sr = add("stage-run", "run one stage task (started by run-queue --stage)")
     sr.add_argument("stage")
     sr.add_argument("task_id")
@@ -732,6 +768,9 @@ _COMMANDS = {
     "move-done": _cmd_move_done,
     "ci-check": _cmd_ci_check,
     "serve-moves": _cmd_serve_moves,
+    "mode": _cmd_mode,
+    "moves": _cmd_moves,
+    "move-answer": _cmd_move_answer,
 }
 
 

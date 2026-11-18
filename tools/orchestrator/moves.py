@@ -19,6 +19,8 @@ from tools.orchestrator import agent_inbox, gitops, stages, state
 from tools.orchestrator.config import Config
 
 MOVES = "moves.jsonl"
+MODES = "modes.json"
+AUTONOMOUS, SUPERVISED = "autonomous", "supervised"
 Move = dict[str, Any]
 Handler = Callable[[Config, Move], str]
 
@@ -33,6 +35,28 @@ def _read(cfg: Config) -> list[Move]:
 def _write(cfg: Config, rows: list[Move]) -> None:
     text = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
     (cfg.state_dir / MOVES).write_text(text, encoding="utf-8")
+
+
+def mode(cfg: Config, role: str) -> str:
+    """Return ``autonomous`` (the runner handles the role's moves) or ``supervised`` (a person)."""
+    path = cfg.state_dir / MODES
+    modes = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return str(modes.get(role, AUTONOMOUS))
+
+
+def set_mode(cfg: Config, role: str, new: str) -> None:
+    """Set the role's mode; a ledger row records every change."""
+    if new not in (AUTONOMOUS, SUPERVISED):
+        msg = f"mode must be {AUTONOMOUS} or {SUPERVISED}, not {new!r}"
+        raise ValueError(msg)
+    with state.locked(cfg.state_dir / "modes.lock"):
+        cfg.state_dir.mkdir(parents=True, exist_ok=True)
+        path = cfg.state_dir / MODES
+        modes = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        old = modes.get(role, AUTONOMOUS)
+        modes[role] = new
+        path.write_text(json.dumps(modes), encoding="utf-8")
+    state.ops_log(cfg, role, "mode", f"{old} -> {new}", role=role, mode=new)
 
 
 def post(
@@ -110,6 +134,8 @@ def serve(
     poll_s: float = 5.0,
 ) -> int:
     """Handle the open moves of ``role`` by kind; loop until none is left when ``once``."""
+    if mode(cfg, role) == SUPERVISED:
+        return 0  # a person handles this role's moves
     done = 0
     while True:
         batch = [m for m in open_for(cfg, role) if m["kind"] in handlers]

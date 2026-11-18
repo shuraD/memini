@@ -2683,3 +2683,16 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'tests/gates/test_orchestrator_ci_watch.py::test_the_seen_file_makes_a_second_call_a_no_op');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'tests/gates/test_orchestrator_ci_watch.py::test_the_first_look_reports_only_the_newest_finished_run');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-033', 'tests/gates/test_orchestrator_ci_watch.py::test_a_timestamp_before_the_line_is_ignored');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-034', 'Each role runs autonomous or supervised (modes.json; a supervised role is not served by the runner), any Claude session lists and answers a role''s open moves, and the vp-rnd role answers ask moves from DECISIONS.md or escalates to the owner inbox', 'infra', 'tests/gates/test_orchestrator_modes.py', 'active', 'tools/orchestrator/', 'C-20261118-0016');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_modes.py::test_a_role_is_autonomous_until_set');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_modes.py::test_every_mode_change_writes_a_ledger_row');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_modes.py::test_serve_skips_a_supervised_role');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_modes.py::test_the_mode_command_shows_and_sets');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_modes.py::test_move_answer_resolves_an_open_move_and_the_list_shows_it');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_modes.py::test_move_answer_on_a_tool_move_releases_the_task');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_vprnd.py::test_a_decision_naming_the_task_gives_the_owners_words');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_vprnd.py::test_a_card_id_in_the_text_finds_the_decision');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_vprnd.py::test_without_a_decision_the_owner_inbox_gets_the_question');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_vprnd.py::test_a_missing_decisions_file_escalates');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_vprnd.py::test_serving_the_role_answers_the_ask_move');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-034', 'tests/gates/test_orchestrator_vprnd.py::test_a_dispute_without_owner_words_posts_an_ask_move_to_vp_rnd');

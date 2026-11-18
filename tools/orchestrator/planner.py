@@ -220,13 +220,11 @@ def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = No
     task, p = move["task"], move["payload"]
     words = str(p.get("owner_words", "")).strip()
     if not words:
-        agent_inbox.notify(
-            cfg,
-            "vp-rnd",
-            f"{task}: cannot be built as written ({move['text']}); "
-            "a ticket needs the owner's words",
-            "planner",
+        why = (
+            f"{task}: cannot be built as written ({move['text']}); a ticket needs the owner's words"
         )
+        agent_inbox.notify(cfg, "vp-rnd", why, "planner")
+        moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=why)
         return "no owner words: asked vp-rnd"
     queue = cfg.stages[0].queue
     old = next((t for t in enqueue.read_tickets(queue) if t.id == task), None)
