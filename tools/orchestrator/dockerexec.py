@@ -49,6 +49,21 @@ _CONTAINER_ENV = {
 }
 
 
+def env_file_value(path: Path | None, key: str) -> str:
+    """Return ``key`` from a ``KEY=value`` env file, or "" (the value never reaches an agent).
+
+    The coder's ``sandbox-pytest`` runs in the agent's filtered environment, which has no
+    ``NEO4J_PASSWORD``; the password goes only into the sandbox container.
+    """
+    if path is None or not path.is_file():
+        return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        name, sep, value = line.strip().partition("=")
+        if sep and name.strip() == key:
+            return value.strip().strip("\"'")
+    return ""
+
+
 class DockerError(RuntimeError):
     """The docker CLI could not build the image or run a container."""
 
@@ -128,6 +143,7 @@ class DockerExecutor:
         network: str = "",
         neo4j_uri: str = "",
         neo4j_user: str = "",
+        env_file: Path | None = None,
     ) -> None:
         """Configure the executor; the image is built lazily on the first run."""
         self.cli = cli
@@ -140,6 +156,7 @@ class DockerExecutor:
         self.network = network
         self.neo4j_uri = neo4j_uri
         self.neo4j_user = neo4j_user
+        self.env_file = env_file
         self.tag = f"{image}:{lock_tag(dockerfile, lock)}"
         self._built = False
 
@@ -204,7 +221,9 @@ class DockerExecutor:
         forward = [k for k in (*self.env_allow, *pass_env) if k not in ("PATH", "HOME")]
         container_env = _container_env(allowed_env(forward, env), cwd)
         if self.network:
-            password = os.environ.get("NEO4J_PASSWORD", "")
+            password = os.environ.get("NEO4J_PASSWORD") or env_file_value(
+                self.env_file, "NEO4J_PASSWORD"
+            )
             if not password:
                 return Result(125, "", "sandbox network is set but NEO4J_PASSWORD is not\n")
             # fixed by the orchestrator: a coder-supplied value never names another host
@@ -322,4 +341,5 @@ def build_executor(cfg: Config, env_allow: Sequence[str]) -> DockerExecutor:
         network=cfg.sandbox_network,
         neo4j_uri=cfg.sandbox_neo4j_uri,
         neo4j_user=cfg.sandbox_neo4j_user,
+        env_file=cfg.repo / "deploy" / ".env",
     )

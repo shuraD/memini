@@ -2631,3 +2631,8 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'tests/gates/test_orchestrator_role_start.py::test_a_squad_session_starts_its_runner_from_memini_squad');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-023', 'tests/gates/test_orchestrator_reissue.py::test_the_old_spec_and_hold_out_are_set_aside_not_deleted');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-025', 'tests/gates/test_orchestrator_role_start.py::test_the_supervisor_serves_moves_and_runs_the_queue_in_fresh_processes');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-026', 'The coder''s sandbox-pytest reads NEO4J_PASSWORD from deploy/.env inside the sandbox executor, so the password never enters the agent''s environment and the acceptance tests can run', 'infra', 'tests/gates/test_orchestrator_env_file.py', 'active', 'tools/orchestrator/', 'C-20261118-0004');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-026', 'tests/gates/test_orchestrator_env_file.py::test_the_value_is_read_from_a_key_value_file');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-026', 'tests/gates/test_orchestrator_env_file.py::test_a_missing_file_gives_nothing');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-026', 'tests/gates/test_orchestrator_env_file.py::test_without_a_password_anywhere_the_sandbox_refuses');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-026', 'tests/gates/test_orchestrator_env_file.py::test_the_password_in_the_file_is_enough');
