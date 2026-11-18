@@ -150,3 +150,16 @@ def test_a_batch_failure_lists_the_failing_test_files_as_pinned(cfg: config.Conf
     planner.batch_fix(cfg, moves.get(cfg, move_id), lambda _p: FIX)
     tickets = {t.id: t for t in enqueue.read_tickets(cfg.stages[0].queue)}
     assert enqueue.pinned_tests(tickets["T-9x1"].text) == ["tests/unit/test_x.py"]
+
+
+def test_the_disputed_runs_worktree_and_branch_are_set_aside(cfg: config.Config) -> None:
+    wt = cfg.worktrees_dir / "T-9"
+    cfg.worktrees_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(  # noqa: S603
+        ["git", "-C", str(cfg.repo), "worktree", "add", "-q", "-b", "orch/T-9", str(wt)],  # noqa: S607
+        check=True,
+    )
+    move = _dispute(cfg)
+    planner.reissue(cfg, move, lambda _prompt: FIX)
+    assert not wt.exists()
+    assert (cfg.worktrees_dir / f"T-9-sup-{move['id']}").exists()

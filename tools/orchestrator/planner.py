@@ -22,6 +22,7 @@ from tools.orchestrator import (
     engine,
     enqueue,
     gates,
+    gitops,
     moves,
     reconcile,
     specstage,
@@ -183,7 +184,7 @@ def plan(cfg: Config, brief_path: Path, ask: Callable[[str], str] | None = None)
 
 
 def _supersede(cfg: Config, old: enqueue.Ticket, reason: str, move_id: str) -> None:
-    """Comment out the task's lines, set its spec and hold-out aside, release its records.
+    """Comment out the task's lines, set its spec, hold-out and run aside, release its records.
 
     Nothing is deleted: the old spec file and hold-out directory are renamed
     ``*.superseded-<move>``, so the spec stage writes the new ones without overwriting.
@@ -209,6 +210,8 @@ def _supersede(cfg: Config, old: enqueue.Ticket, reason: str, move_id: str) -> N
     st = state.State(cfg)
     if st.task(task_id) is not None:
         st.update(task_id, "released", reason=reason)
+    # the disputed run keeps its worktree and branch: the new ticket's run must find none
+    gitops.set_aside(cfg.repo, cfg.worktrees_dir, cfg.branch_prefix, task_id, f"sup-{move_id}")
 
 
 def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = None) -> str:
