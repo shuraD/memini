@@ -2709,3 +2709,4 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-036', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-036', 'tests/gates/test_orchestrator_pinned.py::test_a_ticket_without_pinned_tests_lists_none');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-036', 'tests/gates/test_orchestrator_pinned.py::test_the_slice_updates_a_pinned_test_and_vp_rnd_approves');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-036', 'tests/gates/test_orchestrator_pinned.py::test_the_ticket_text_lists_the_existing_tests_that_pin_it');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-036', 'tests/gates/test_orchestrator_reissue.py::test_a_batch_failure_lists_the_failing_test_files_as_pinned');

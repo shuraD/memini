@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import subprocess
 from pathlib import Path
 
 from tests.gates.test_orchestrator_enqueue import MODULE, cfg  # noqa: F401  (cfg is a fixture)
@@ -112,7 +113,7 @@ def test_a_batch_failure_gets_a_new_fix_ticket_on_the_slices_module(cfg: config.
         sender="dev4",
         to="planner",
         kind="batch_failure",
-        text="the unit suite failed: tests/unit/test_x.py::test_y",
+        text="the unit suite failed: test_y",
     )
     result = planner.batch_fix(cfg, moves.get(cfg, move_id), lambda _p: FIX)
     assert result == "T-9x1: fix ticket queued for QA's ready review"
@@ -130,3 +131,22 @@ def test_a_batch_failure_without_any_owner_words_asks_vp_rnd(cfg: config.Config)
     result = planner.batch_fix(cfg, moves.get(cfg, move_id), lambda _p: FIX)
     assert result == "no owner words: asked vp-rnd"
     assert len(moves.open_for(cfg, "vp-rnd")) == 1
+
+
+def test_a_batch_failure_lists_the_failing_test_files_as_pinned(cfg: config.Config) -> None:
+    (cfg.repo / "tests" / "unit").mkdir(parents=True, exist_ok=True)
+    (cfg.repo / "tests/unit/test_x.py").write_text("def test_y():\n    assert True\n")
+    for args in (["add", "-A"], ["commit", "-qm", "an older test"]):
+        subprocess.run(["git", "-C", str(cfg.repo), *args], check=True)  # noqa: S603, S607
+    enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text=f'The slice. Owner words: "{WORDS}".')
+    move_id = moves.post(
+        cfg,
+        "T-9",
+        sender="dev4",
+        to="planner",
+        kind="batch_failure",
+        text="the unit suite failed: tests/unit/test_x.py::test_y",
+    )
+    planner.batch_fix(cfg, moves.get(cfg, move_id), lambda _p: FIX)
+    tickets = {t.id: t for t in enqueue.read_tickets(cfg.stages[0].queue)}
+    assert enqueue.pinned_tests(tickets["T-9x1"].text) == ["tests/unit/test_x.py"]
