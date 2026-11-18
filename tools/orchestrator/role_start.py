@@ -1,10 +1,12 @@
 """A role session starts its own runner when it opens (FLOW-HARD.md D-10).
 
-A SessionStart hook runs ``python -m tools.orchestrator.role_start`` in a session started with
-``MEMINI_ROLE=<role>`` (dev1..dev4, qa, planner, devops). It starts one detached supervisor for
-the role, once: the supervisor runs the role's queue (``run-queue --role``) again and again, and
-serves the moves sent to the role, so work that arrives later is picked up without anyone typing
-a command. A role that is not in ``[roles]`` (vp-rnd, say) starts nothing.
+A SessionStart and UserPromptSubmit hook runs ``python -m tools.orchestrator.role_start`` in a
+session started with ``MEMINI_ROLE=<role>`` (or ``MEMINI_SQUAD``, which the squad sessions
+already set): dev1..dev4, qa, planner, devops. It starts one detached supervisor for the role,
+once (a session that was open before the hook existed starts it on its next prompt): the
+supervisor runs the role's queue (``run-queue --role``) again and again and serves the moves
+sent to the role, so work that arrives later is picked up without anyone typing a command. A
+role that is not in ``[roles]`` (vp-rnd, say) starts nothing.
 """
 
 from __future__ import annotations
@@ -96,7 +98,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         role = args[1]
         supervise(cfg, role, cli.HANDLERS.get(role, {}))
         return 0
-    role = os.environ.get("MEMINI_ROLE", "")
+    role = os.environ.get("MEMINI_ROLE") or os.environ.get("MEMINI_SQUAD", "")
     if role:
         sys.stdout.write(start(cfg, role) + "\n")
     return 0

@@ -68,3 +68,15 @@ def test_the_supervisor_serves_the_moves_sent_to_its_role(cfg: config.Config) ->
     move_id = moves.post(cfg, "T-1", sender="dev4", to="qa", kind="test_review", text="x")
     moves.serve(cfg, "qa", {"test_review": lambda _c, _m: "approve"}, once=True)
     assert moves.get(cfg, move_id)["status"] == "done"
+
+
+def test_a_squad_session_starts_its_runner_from_memini_squad(
+    cfg: config.Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MEMINI_ROLE", raising=False)
+    monkeypatch.setenv("MEMINI_SQUAD", "dev4")
+    seen: list[str] = []
+    monkeypatch.setattr(role_start, "start", lambda _cfg, role: seen.append(role) or role)
+    monkeypatch.setattr(role_start, "load_config", lambda _root: cfg)
+    assert role_start.main([]) == 0
+    assert seen == ["dev4"]
