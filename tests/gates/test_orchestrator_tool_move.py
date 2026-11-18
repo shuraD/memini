@@ -14,7 +14,7 @@ from tests.gates.test_orchestrator import (  # noqa: F401  (env is a fixture)
     _task,
     env,
 )
-from tools.orchestrator import gates, moves, pipeline, state
+from tools.orchestrator import gates, moves, pipeline, stages, state
 
 
 def _crash(exc: Exception) -> Any:
@@ -75,3 +75,15 @@ def test_fixing_the_tool_sets_the_stopped_runs_leftovers_aside(
     assert not wt.exists()
     assert (cfg.worktrees_dir / f"{TASK}-{move['id']}").exists()
     assert _git(env["repo"], "branch", "--list", cfg.branch_prefix + TASK) == ""
+
+
+def test_closing_a_tool_move_releases_a_stage_that_stopped_on_it(
+    env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _plan(env, monkeypatch)
+    cfg = _cfg(env)
+    stage = stages.StageState(cfg, cfg.stages[0].name)
+    stage.set("GR-X", "failed", "source - is not a readable file")
+    move = moves.post(cfg, "GR-X", sender="qa", to="devops", kind="tool", text="parser")
+    moves.finish_tool(cfg, move, "fixed", "devops")
+    assert stage.status("GR-X") == stages.RELEASED

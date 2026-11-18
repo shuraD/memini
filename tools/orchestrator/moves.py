@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from tools.orchestrator import agent_inbox, gitops, state
+from tools.orchestrator import agent_inbox, gitops, stages, state
 from tools.orchestrator.config import Config
 
 MOVES = "moves.jsonl"
@@ -133,7 +133,12 @@ def finish_tool(cfg: Config, move_id: str, result: str, by: str) -> str:
     state.ops_log(
         cfg, move["task"], "set_aside", "leftovers of the stopped run renamed", moved=moved
     )
+    why = f"tool fixed ({move_id}): {result}"
+    for stage in cfg.stages:  # a stage that stopped on the broken tool takes the task again
+        rec = stages.StageState(cfg, stage.name)
+        if rec.status(move["task"]) not in (None, stages.ACTIVE, stages.DONE, stages.RELEASED):
+            rec.set(move["task"], stages.RELEASED, why)
     st = state.State(cfg)
     if st.task(move["task"]) is not None:
-        st.update(move["task"], "released", reason=f"tool fixed ({move_id}): {result}")
+        st.update(move["task"], "released", reason=why)
     return str(move["task"])

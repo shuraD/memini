@@ -88,3 +88,24 @@ def test_a_squad_session_starts_its_runner_from_memini_squad(
     monkeypatch.setattr(role_start, "load_config", lambda _root: cfg)
     assert role_start.main([]) == 0
     assert seen == ["dev4"]
+
+
+def test_autonomous_mode_starts_every_role_but_devops_once(
+    cfg: config.Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started: list[str] = []
+
+    def popen(argv: list[str], **_kw: Any) -> _Proc:
+        started.append(argv[-1])
+        proc = _Proc()
+        proc.pid = os.getpid() + len(started)  # a distinct pid file per role is enough
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    first = role_start.start_all(cfg)
+    assert sorted(started) == ["dev1", "dev2", "dev3", "dev4", "planner", "qa"]
+    assert all("autonomous command" in m for m in first)
+    ledger = [json.loads(x) for x in (cfg.state_dir / "ops-ledger.jsonl").read_text().splitlines()]
+    assert {r["details"]["trigger"] for r in ledger if r["action"] == "runner_started"} == {
+        "command"
+    }

@@ -42,7 +42,7 @@ def _python(cfg: Config) -> list[str]:
     return [sys.executable]
 
 
-def start(cfg: Config, role: str) -> str:
+def start(cfg: Config, role: str, trigger: str = "hook") -> str:
     """Start the role's supervisor unless it runs; return what happened."""
     if role not in cfg.roles:
         return f"{role}: not a runner role"
@@ -66,15 +66,25 @@ def start(cfg: Config, role: str) -> str:
         cfg,
         role,
         "runner_started",
-        f"started by the hook in the {role} session, not by the session itself",
+        f"started by the {trigger}, not by a {role} session",
         pid=proc.pid,
-        trigger="hook",
+        trigger=trigger,
     )
+    how = "a hook" if trigger == "hook" else "the autonomous command"
     return (
-        f"[runner] A background program for the {role} role was started automatically by a hook "
+        f"[runner] A background program for the {role} role was started automatically by {how} "
         f"(pid {proc.pid}, log {log}). It is not this session and you did not start it: it runs "
         f"the {role} queue and the moves sent to {role}. You need to do nothing about it."
     )
+
+
+def start_all(cfg: Config) -> list[str]:
+    """Autonomous mode: start the supervisor of every role that has a queue or moves.
+
+    The same programs the hook starts, started by one command instead of by sessions opening
+    (devops has neither a queue nor handlers: a person closes its moves).
+    """
+    return [m for r in cfg.roles if r != "devops" and (m := start(cfg, r, trigger="command"))]
 
 
 def supervise(cfg: Config, role: str, poll_s: float = _POLL_S) -> None:
@@ -94,6 +104,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Start the runner of ``$MEMINI_ROLE``; ``--supervise <role>`` is the detached process."""
     args = list(sys.argv[1:] if argv is None else argv)
     cfg = load_config(Path(__file__).resolve().parents[2])
+    if args[:1] == ["--all"]:
+        sys.stdout.write("\n".join(start_all(cfg)) + "\n")
+        return 0
     if args[:1] == ["--supervise"]:
         supervise(cfg, args[1])
         return 0
