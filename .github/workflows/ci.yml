@@ -7,6 +7,26 @@ jobs:
   gate:
     # a fixed runner image: ubuntu-latest moves to Ubuntu 26 from 2026-10-19 (runner-images#14748)
     runs-on: ubuntu-24.04
+    env:
+      # the Neo4j tests read the server from the environment (owner 2026-11-16: no host in code);
+      # a throwaway value per run, the container lives only for this job
+      NEO4J_URI: bolt://localhost:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ci-${{ github.run_id }}-throwaway
+    services:
+      # the same server as deploy/docker-compose.yml (GDS and APOC fetched at the matching version);
+      # the job waits until it answers
+      neo4j:
+        image: neo4j:2026.09
+        env:
+          NEO4J_AUTH: neo4j/ci-${{ github.run_id }}-throwaway
+          NEO4J_PLUGINS: '["graph-data-science","apoc"]'
+          NEO4J_dbms_security_procedures_unrestricted: "gds.*,apoc.*"
+          NEO4J_dbms_security_procedures_allowlist: "gds.*,apoc.*"
+        ports: ["7687:7687"]
+        options: >-
+          --health-cmd "wget -qO- http://localhost:7474 || exit 1"
+          --health-interval 5s --health-timeout 5s --health-retries 40 --health-start-period 30s
     steps:
       # every action is pinned to a full commit SHA (repository setting; tests/gates/test_actions_pinned.py)
       # newest versions, Node 24; no published advisory for either action (owner 2026-11-15)
