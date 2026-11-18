@@ -264,3 +264,61 @@ def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = No
         cfg, task, "reissued", f"D3 change ticket for QA's ready review, move {move['id']}"
     )
     return "reissued: " + ("; ".join(found) if found else "queued for QA's ready review")
+
+
+_OWNER_WORDS = re.compile(r'Owner words: "(.*?)"')
+
+
+def batch_fix(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = None) -> str:
+    """Serve a ``batch_failure`` move: write a new fix ticket for the failing tests (D-9, D-10).
+
+    The authority is the owner's words in the merged slice's own ticket (or in the move); without
+    any, nothing is written and vp-rnd is asked. The new ticket is ``<task>x<n>``, on the merged
+    slice's module, and goes to QA's ready review like every ticket.
+    """
+    task, p = move["task"], move["payload"]
+    queue = cfg.stages[0].queue
+    slice_ticket = next((t for t in enqueue.read_tickets(queue) if t.id == task), None)
+    found_words = _OWNER_WORDS.search(slice_ticket.text) if slice_ticket else None
+    words = str(p.get("owner_words", "")).strip() or (found_words[1] if found_words else "")
+    module = str(p.get("module", "")) or (slice_ticket.module if slice_ticket else "")
+    if not words or not module:
+        why = (
+            f"{task}: the batch suite failed ({move['text'][:300]}); "
+            "a fix ticket needs the owner's words"
+        )
+        agent_inbox.notify(cfg, "vp-rnd", why, "planner")
+        moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=why)
+        return "no owner words: asked vp-rnd"
+    prompt = engine.render(
+        cfg,
+        "planner_fix",
+        ticket=f"(a new fix ticket: the unit suite failed after {task} merged)",
+        reason=move["text"],
+        owner_words=words,
+    )
+    try:
+        fix = json.loads(
+            re.findall(r"\{.*\}", (ask or (lambda q: _ask(cfg, q)))(prompt), re.DOTALL)[0]
+        )
+        text = enqueue.fix_text(
+            cfg,
+            str(fix["change"]),
+            list(fix.get("remove_names", [])),
+            list(fix.get("renames", [])),
+            words,
+        )
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        return f"the Planner answer is not a usable fix: {exc}"
+    taken = {t.id for t in enqueue.read_tickets(queue)} | state.State(cfg).task_ids()
+    n = 1
+    while f"{task}x{n}" in taken:
+        n += 1
+    new_id = f"{task}x{n}"
+    _, refused = enqueue.enqueue(cfg, task_id=new_id, module=module, text=text)
+    if refused:
+        return "refused by the ready gate: " + "; ".join(refused)
+    state.ops_log(
+        cfg, new_id, "batch_fix", f"fix ticket for the batch failure of {task}, move {move['id']}"
+    )
+    return f"{new_id}: fix ticket queued for QA's ready review"

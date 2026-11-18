@@ -430,5 +430,7 @@ def test_a_failing_batch_suite_goes_to_the_planner_and_the_slice_stays_merged(
     out = pipeline.run_task(cfg, _task(env))
     assert out.status == "merged"  # the last coder is not sent back
     assert "batch suite FAILED" in out.reason
-    assert "write a fix ticket" in (cfg.state_dir / "agent-inbox" / "planner.md").read_text()
+    (move,) = moves.open_for(cfg, "planner")  # D-10: a task move, with the failing tests
+    assert (move["task"], move["kind"]) == (TASK, "batch_failure")
+    assert "the unit suite failed after the last slice merged" in move["text"]
     assert len(_prompts(env, "coder")) == 1

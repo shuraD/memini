@@ -101,3 +101,32 @@ def test_the_old_spec_and_hold_out_are_set_aside_not_deleted(
         spec_file.with_name(f"{spec_file.name}.superseded-{move['id']}").read_text() == "old spec"
     )
     assert (hold.with_name(f"T-9.superseded-{move['id']}") / "test_old.py").exists()
+
+
+def test_a_batch_failure_gets_a_new_fix_ticket_on_the_slices_module(cfg: config.Config) -> None:
+    ticket_text = f'The slice. Owner words: "{WORDS}".'
+    enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text=ticket_text)
+    move_id = moves.post(
+        cfg,
+        "T-9",
+        sender="dev4",
+        to="planner",
+        kind="batch_failure",
+        text="the unit suite failed: tests/unit/test_x.py::test_y",
+    )
+    result = planner.batch_fix(cfg, moves.get(cfg, move_id), lambda _p: FIX)
+    assert result == "T-9x1: fix ticket queued for QA's ready review"
+    tickets = {t.id: t for t in enqueue.read_tickets(cfg.stages[0].queue)}
+    assert tickets["T-9x1"].module == MODULE
+    assert f'Owner words: "{WORDS}"' in tickets["T-9x1"].text
+    assert "T-9" in tickets  # the merged slice's ticket stays as it was
+
+
+def test_a_batch_failure_without_any_owner_words_asks_vp_rnd(cfg: config.Config) -> None:
+    enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text="A card ticket with no quote.")
+    move_id = moves.post(
+        cfg, "T-9", sender="dev4", to="planner", kind="batch_failure", text="suite failed"
+    )
+    result = planner.batch_fix(cfg, moves.get(cfg, move_id), lambda _p: FIX)
+    assert result == "no owner words: asked vp-rnd"
+    assert len(moves.open_for(cfg, "vp-rnd")) == 1

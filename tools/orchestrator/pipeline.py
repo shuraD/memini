@@ -1065,11 +1065,14 @@ class _Run:
             state.ops_log(self.cfg, self.task_id, "batch_suite_passed", "the unit suite is green")
             return "; batch suite green"
         text = "; ".join(f.summary() for f in fails)[:1500]
-        agent_inbox.notify(
+        moves.post(
             self.cfg,
-            "planner",
-            f"{self.task_id}: the unit suite failed after the last slice merged ({squash[:10]}); "
-            f"write a fix ticket for: {text}",
+            self.task_id,
+            sender=self.cfg.worker or "squad",
+            to="planner",
+            kind="batch_failure",
+            text=f"the unit suite failed after the last slice merged ({squash[:10]}): {text}",
+            module=self.sp.module,
         )
         state.ops_log(self.cfg, self.task_id, "batch_suite_failed", text)
         return "; batch suite FAILED (fix ticket requested from the planner)"
