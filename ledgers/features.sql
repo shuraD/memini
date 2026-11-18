@@ -2636,3 +2636,5 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-026', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-026', 'tests/gates/test_orchestrator_env_file.py::test_a_missing_file_gives_nothing');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-026', 'tests/gates/test_orchestrator_env_file.py::test_without_a_password_anywhere_the_sandbox_refuses');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-026', 'tests/gates/test_orchestrator_env_file.py::test_the_password_in_the_file_is_enough');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-027', 'A stage queue line with - for sources has no sources, as for deps, so a ticket without sources starts', 'infra', 'tests/gates/test_orchestrator_stage_sources.py', 'active', 'tools/orchestrator/', 'C-20261118-0005');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-027', 'tests/gates/test_orchestrator_stage_sources.py::test_a_stage_queue_line_with_a_dash_has_no_sources');

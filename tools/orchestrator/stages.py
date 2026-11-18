@@ -58,7 +58,7 @@ def read_stage_queue(path: Path) -> list[StageItem]:
         deps = () if parts[2] == "-" else tuple(d for d in parts[2].split(",") if d)
         sources = tuple(
             p if p.is_absolute() else path.parent / p
-            for p in (Path(s) for s in parts[3].split(",") if s)
+            for p in (Path(s) for s in parts[3].split(",") if s and s != "-")
         )
         items.append(StageItem(parts[0], parts[1], deps, sources, " ".join(parts[4:])))
     return items
