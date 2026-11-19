@@ -2734,3 +2734,6 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-043', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-043', 'tests/gates/test_orchestrator_docfix.py::test_the_planner_lists_every_place_and_passes_it_to_vp_rnd');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-043', 'tests/gates/test_orchestrator_docfix.py::test_an_unknown_card_is_refused');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-043', 'tests/gates/test_orchestrator_docfix.py::test_drift_finds_a_card_that_differs_between_card_file_and_versions');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-044', 'vp-rnd answers an ask from DECISIONS.md only when the decision heading names the task or card; a passing mention is no answer', 'infra', 'tests/gates/test_orchestrator_vprnd.py', 'active', 'tools/orchestrator/', 'C-20261119-0005');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-044', 'tests/gates/test_orchestrator_vprnd.py::test_a_passing_mention_in_a_decision_body_is_no_answer');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-044', 'tests/gates/test_orchestrator_vprnd.py::test_a_decision_naming_the_task_gives_the_owners_words');

@@ -51,6 +51,12 @@ def test_a_card_id_in_the_text_finds_the_decision(cfg: config.Config) -> None:
     assert "keep the old provider order" in vprnd.answer(cfg, _ask(cfg, "T-1", "see LP-02"))
 
 
+def test_a_passing_mention_in_a_decision_body_is_no_answer(cfg: config.Config) -> None:
+    body = "**D-08 where a dispute goes**\nOwner: send it to the planner (as for GR-10).\n"
+    (cfg.cards_dir.parent / "DECISIONS.md").write_text(body)
+    assert vprnd.answer(cfg, _ask(cfg, "GR-10", "fix the card")) == "escalated to the owner"
+
+
 def test_without_a_decision_the_owner_inbox_gets_the_question(cfg: config.Config) -> None:
     (cfg.cards_dir.parent / "DECISIONS.md").write_text(DECISIONS)
     assert vprnd.answer(cfg, _ask(cfg, "GR-06", "unclear")) == "escalated to the owner"

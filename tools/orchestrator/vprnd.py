@@ -1,8 +1,9 @@
 """The vp-rnd role in the autonomous flow: answer an ``ask`` move from DECISIONS.md or escalate.
 
 No model call. A decision block of ``DECISIONS.md`` (``**D-nn ...**``) that mentions the task or a
-card id of the question and carries an ``Owner:`` line gives the owner's words; otherwise the
-question goes to the owner inbox.
+card id of the question in its heading and carries an ``Owner:`` line gives the owner's words (a
+passing mention in the body is no decision about the task); otherwise the question goes to the
+owner inbox.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ def answer(cfg: Config, move: moves.Move) -> str:
     ids = {move["task"], *_ID.findall(move["text"])}
     for block in re.split(r"\n(?=\*\*D-\d+)", text):
         owner = re.search(r"^Owner:[ \t]*(\S.*)$", block, re.MULTILINE)
-        if owner and ids & set(_ID.findall(block)):
+        if owner and ids & set(_ID.findall(block.splitlines()[0])):
             return f"owner words: {owner[0].strip()}"
     state.inbox_append(cfg, move["task"], "needs the owner", 2, move["text"])
     return "escalated to the owner"
