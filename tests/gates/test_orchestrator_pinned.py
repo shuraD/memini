@@ -244,3 +244,10 @@ def test_an_old_test_is_never_deleted_by_a_slice(enq_cfg: config.Config, tmp_pat
     assert names
     assert not sealed
     assert not files
+
+
+def test_every_role_prompt_that_judges_a_change_allows_updating_a_broken_old_test() -> None:
+    prompts = Path("tools/orchestrator/prompts")
+    for name in ("coder", "audit", "test_review"):
+        text = (prompts / f"{name}.txt").read_text(encoding="utf-8")
+        assert "existing test" in text, name
