@@ -63,6 +63,11 @@ EXPECTED_ROLES = {
         "embedding",
         "type",
         "level",
+        "name",
+        "dirty",
+        "score",
+        "embedding_code",
+        "code_score",
     },
     "statuses": {"active", "superseded", "deleted"},
 }

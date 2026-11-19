@@ -47,7 +47,7 @@ REPO_NODES = {
         "embedding_code",
         "status",
     ),
-    "Community": (*BASE, "id", "level", "summary", "embedding"),
+    "Community": (*BASE, "id", "level", "summary", "embedding", "dirty"),
     "RelationType": (*BASE, "name"),
 }
 REPO_RELATIONSHIPS = {

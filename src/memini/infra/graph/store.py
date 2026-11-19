@@ -260,14 +260,15 @@ def _vector_search(
     database: str | None,
 ) -> list[tuple[str, float]]:
     """Run a filtered VectorRetriever search; return ``(id, score)`` best first."""
-    key = _names().properties.id
+    p = _names().properties
+    key = p.id
     retriever = VectorRetriever(
         driver, index_name, return_properties=[key], neo4j_database=database
     )
     result = retriever.get_search_results(
         query_vector=[float(x) for x in vector], top_k=top_k, filters=filters
     )
-    hits = [(str(r["node"][key]), float(r["score"])) for r in result.records]
+    hits = [(str(r["node"][key]), float(r[p.score])) for r in result.records]
     hits.sort(key=lambda hit: hit[1], reverse=True)
     return hits[:top_k]
 
