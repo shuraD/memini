@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Every push: the CI test step runs here first, so a red CI is found locally (owner 2026-11-19).
+# The command is the one in .github/workflows/ci.yml (tests/gates/test_pre_push_hook.py keeps them equal).
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+env_file=()
+if [ -f deploy/.env ]; then env_file=(--env-file deploy/.env); fi
+echo "▶ the CI test step, locally"
+uv run ${env_file[@]+"${env_file[@]}"} python -P tools/ci/pytest_gate.py tests/sanity tests/unit tests/gates -- --cov --cov-report=term-missing:skip-covered
