@@ -24,5 +24,13 @@ def test_the_pre_push_hook_runs_the_ci_test_step() -> None:
     assert _ci_test_command() in hook
 
 
+def test_the_pre_push_hook_gives_the_neo4j_tests_the_settings_ci_gives_them() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    env = next(iter(workflow["jobs"].values()))["env"]
+    hook = (ROOT / ".githooks/pre-push").read_text(encoding="utf-8")
+    assert f'NEO4J_URI="${{NEO4J_URI:-{env["NEO4J_URI"]}}}"' in hook
+    assert f'NEO4J_USER="${{NEO4J_USER:-{env["NEO4J_USER"]}}}"' in hook
+
+
 def test_the_pre_push_hook_is_executable() -> None:
     assert (ROOT / ".githooks/pre-push").stat().st_mode & 0o111

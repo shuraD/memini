@@ -5,5 +5,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 env_file=()
 if [ -f deploy/.env ]; then env_file=(--env-file deploy/.env); fi
+# the server settings CI gives the Neo4j tests (the password comes from deploy/.env)
+export NEO4J_URI="${NEO4J_URI:-bolt://localhost:7687}" NEO4J_USER="${NEO4J_USER:-neo4j}"
 echo "▶ the CI test step, locally"
 uv run ${env_file[@]+"${env_file[@]}"} python -P tools/ci/pytest_gate.py tests/sanity tests/unit tests/gates -- --cov --cov-report=term-missing:skip-covered
