@@ -49,7 +49,46 @@ def drift(cfg: Config) -> list[str]:
     ]
 
 
-def post(cfg: Config, task: str, *, sender: str, card: str, text: str, why: str) -> str:
+def _rewrite(path: Path, key: str, edits: dict[int, str]) -> bool:
+    """Set cells of the table row whose first cell is ``key``; return True when the file changed."""
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    out = []
+    for line in lines:
+        cells = line.rstrip("\n").split("|")
+        if len(cells) > max(edits) and cells[1].strip() == key:
+            for col, value in edits.items():
+                cells[col] = f" {value} "
+            line = "|".join(cells) + ("\n" if line.endswith("\n") else "")  # noqa: PLW2901
+        out.append(line)
+    if out == lines:
+        return False
+    path.write_text("".join(out), encoding="utf-8")
+    return True
+
+
+def apply(cfg: Config, card: str, text: str, evidence: str = "") -> list[Path]:
+    """Set the card's text (and old-code evidence) in every document row; return files changed.
+
+    The squad card and ``VERSIONS.md`` hold the text in column 2; the capability table of the
+    area (``archrag.md``...) holds it in column 4 and the evidence in column 6, so a rebuild
+    of the cards from the tables writes the same text. Called only by vp-rnd's approval.
+    """
+    docs = cfg.cards_dir.parent
+    changed = [
+        p
+        for p in (*cfg.cards_dir.glob("*/CARD.md"), docs / "capabilities" / "VERSIONS.md")
+        if _rewrite(p, card, {2: text})
+    ]
+    table = docs / "capabilities" / f"{enqueue.CAPABILITY_FILES[card[0]]}.md"
+    edits = {4: text, **({6: f"`{evidence}`"} if evidence else {})}
+    if table.exists() and _rewrite(table, card[1:], edits):
+        changed.append(table)
+    return changed
+
+
+def post(
+    cfg: Config, task: str, *, sender: str, card: str, text: str, why: str, evidence: str = ""
+) -> str:
     """Send the proposed text of ``card`` to the Planner (nothing is edited)."""
     if card not in enqueue.cards(cfg):
         msg = f"{card} is not a baseline card line"
@@ -58,6 +97,7 @@ def post(cfg: Config, task: str, *, sender: str, card: str, text: str, why: str)
     return moves.post(
         cfg, task, sender=sender, to="planner", kind="doc_review",
         text=f'{card}: {why} Proposed: "{text}"', card=card, new_text=text, old_text=old,
+        evidence=evidence, cites=[int(n) for n in re.findall(r"\bL(\d+)\b", why)],
     )  # fmt: skip
 
 
@@ -71,5 +111,6 @@ def review(cfg: Config, move: moves.Move) -> str:
         cfg, move["task"], sender="planner", to="vp-rnd", kind="doc_review",
         text=f"{move['text']} Places to update: {'; '.join(found)}.",
         card=p["card"], new_text=p["new_text"], old_text=p["old_text"],
+        evidence=p["evidence"], cites=p["cites"],
     )  # fmt: skip
     return json.dumps({"approved": True, "reason": ""})

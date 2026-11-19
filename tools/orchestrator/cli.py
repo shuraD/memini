@@ -124,7 +124,11 @@ HANDLERS: dict[str, dict[str, moves.Handler]] = {
         "batch_failure": planner.batch_fix,
         "doc_review": docfix.review,
     },
-    "vp-rnd": {"ask": vprnd.answer, "stale_test_review": vprnd.review_stale},
+    "vp-rnd": {
+        "ask": vprnd.answer,
+        "stale_test_review": vprnd.review_stale,
+        "doc_review": vprnd.review_doc,
+    },
 }  # role -> move kind -> handler
 
 
@@ -353,7 +357,13 @@ def _cmd_move(cfg: config.Config, args: argparse.Namespace) -> int:
 
 def _cmd_doc_fix(cfg: config.Config, args: argparse.Namespace) -> int:
     move_id = docfix.post(
-        cfg, args.task_id, sender=args.sender, card=args.card, text=args.text, why=args.why
+        cfg,
+        args.task_id,
+        sender=args.sender,
+        card=args.card,
+        text=args.text,
+        why=args.why,
+        evidence=args.evidence,
     )
     print(f"{args.card}: proposed to the planner as {move_id}; no document was edited")
     return 0
@@ -761,6 +771,7 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     df.add_argument("card", help="the card ID, e.g. A75")
     df.add_argument("--text", required=True, help="the corrected card text")
     df.add_argument("--why", required=True, help="what the spec says and the card does not")
+    df.add_argument("--evidence", default="", help="the old-code evidence column, if it changes")
     df.add_argument("--from", dest="sender", default="devops")
     add("doc-drift", "list cards whose text differs between a squad card and VERSIONS.md")
     sm = add("serve-moves", "serve the open moves sent to a role once (the runner calls this)")

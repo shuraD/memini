@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 
-from tools.orchestrator import gitops, moves, state
+from tools.orchestrator import docfix, enqueue, gitops, moves, state
 from tools.orchestrator.config import Config
 
 _ID = re.compile(r"\b[A-Z]{1,3}-\d+[a-z]?\b")
@@ -64,3 +64,37 @@ def review_stale(cfg: Config, move: moves.Move) -> str:
         )
         return json.dumps({"approved": False, "reason": "heavy: " + "; ".join(reasons)})
     return json.dumps({"approved": True, "reason": ""})
+
+
+def review_doc(cfg: Config, move: moves.Move) -> str:
+    """Review a card fix (doc_review): light is applied to every document, heavy goes up.
+
+    Light: the fix cites SPEC lines (``SPEC L57``) that exist in the squad's ``SPEC.md``, so the
+    new text restates the spec. Anything else (no citation, a line that does not exist, an
+    unknown card) is heavy: the owner decides. After applying, the documents must agree.
+    """
+    p = move["payload"]
+    card = enqueue.cards(cfg).get(p["card"])
+    reasons = []
+    if card is None:
+        reasons.append(f"{p['card']} is not a baseline card line")
+    else:
+        spec = cfg.cards_dir / card.squad / "SPEC.md"
+        size = len(spec.read_text(encoding="utf-8").splitlines()) if spec.exists() else 0
+        if not p["cites"] or any(not 1 <= n <= size for n in p["cites"]):
+            reasons.append("the fix does not cite existing SPEC lines")
+    if reasons:
+        state.inbox_append(cfg, move["task"], "heavy card fix", 2, f"{move['text']} {reasons[0]}.")
+        return json.dumps({"approved": False, "reason": "heavy: " + "; ".join(reasons)})
+    changed = docfix.apply(cfg, p["card"], p["new_text"], p["evidence"])
+    state.ops_log(
+        cfg,
+        move["task"],
+        "doc_fixed",
+        f"{p['card']}: {p['new_text']}",
+        files=[str(c) for c in changed],
+    )
+    drift = docfix.drift(cfg)
+    if drift:
+        state.inbox_append(cfg, move["task"], "card fix left a difference", 2, "; ".join(drift))
+    return json.dumps({"approved": not drift, "reason": "; ".join(drift)})

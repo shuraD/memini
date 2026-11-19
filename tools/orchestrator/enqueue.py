@@ -31,7 +31,7 @@ _PATH = re.compile(r"(?<![\w/.-])((?:src|tests|config|deploy|tools)/[\w./-]+\.\w
 _ENV = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
 _TICK = re.compile(r"`([A-Za-z_][\w.]*)(?:\(\))?`")
 _CYPHER = re.compile(r"[(\[]\w*:`?([A-Za-z_]\w*)")
-_CAPABILITY_FILES = {"A": "archrag", "I": "ingestion", "Q": "query", "T": "tools"}
+CAPABILITY_FILES = {"A": "archrag", "I": "ingestion", "Q": "query", "T": "tools"}
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,7 @@ def cards(cfg: Config) -> dict[str, Card]:
 
 def evidence(cfg: Config, card_id: str) -> str:
     """Return the old code's ``file:line`` evidence of a card, from ``capabilities/<area>.md``."""
-    name = _CAPABILITY_FILES[card_id[0]]
+    name = CAPABILITY_FILES[card_id[0]]
     path = cfg.cards_dir.parent / "capabilities" / f"{name}.md"
     if not path.exists():
         return ""
