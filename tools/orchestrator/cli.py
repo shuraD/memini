@@ -18,6 +18,7 @@ from typing import Any
 from tools.orchestrator import (
     ci_watch,
     config,
+    docfix,
     dockerexec,
     enqueue,
     gates,
@@ -118,7 +119,11 @@ def _deps(entry: state.QueueEntry) -> tuple[str, ...]:
 
 HANDLERS: dict[str, dict[str, moves.Handler]] = {
     "qa": {"test_review": pipeline.review_move},
-    "planner": {"dispute": planner.reissue, "batch_failure": planner.batch_fix},
+    "planner": {
+        "dispute": planner.reissue,
+        "batch_failure": planner.batch_fix,
+        "doc_review": docfix.review,
+    },
     "vp-rnd": {"ask": vprnd.answer, "stale_test_review": vprnd.review_stale},
 }  # role -> move kind -> handler
 
@@ -344,6 +349,21 @@ def _cmd_move(cfg: config.Config, args: argparse.Namespace) -> int:
     )
     print(f"{args.task_id}: moved to {args.to} as {move_id}")
     return 0
+
+
+def _cmd_doc_fix(cfg: config.Config, args: argparse.Namespace) -> int:
+    move_id = docfix.post(
+        cfg, args.task_id, sender=args.sender, card=args.card, text=args.text, why=args.why
+    )
+    print(f"{args.card}: proposed to the planner as {move_id}; no document was edited")
+    return 0
+
+
+def _cmd_doc_drift(cfg: config.Config, args: argparse.Namespace) -> int:
+    del args
+    found = docfix.drift(cfg)
+    print("\n".join(found) or "card files and VERSIONS.md agree")
+    return 1 if found else 0
 
 
 def _cmd_serve_moves(cfg: config.Config, args: argparse.Namespace) -> int:
@@ -736,6 +756,13 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     mv.add_argument("--text", required=True, help="why it moves")
     mv.add_argument("--from", dest="sender", default="devops")
     mv.add_argument("--owner-words", help="the owner's words, dated (a dispute needs them)")
+    df = add("doc-fix", "propose the fix of a wrong card line (planner, vp-rnd, owner if hard)")
+    df.add_argument("task_id")
+    df.add_argument("card", help="the card ID, e.g. A75")
+    df.add_argument("--text", required=True, help="the corrected card text")
+    df.add_argument("--why", required=True, help="what the spec says and the card does not")
+    df.add_argument("--from", dest="sender", default="devops")
+    add("doc-drift", "list cards whose text differs between a squad card and VERSIONS.md")
     sm = add("serve-moves", "serve the open moves sent to a role once (the runner calls this)")
     sm.add_argument("role")
     md = add("move-done", "close a tool move: the tool is fixed, the waiting task is released")
@@ -775,6 +802,8 @@ _COMMANDS = {
     "land": _cmd_land,
     "move": _cmd_move,
     "move-done": _cmd_move_done,
+    "doc-fix": _cmd_doc_fix,
+    "doc-drift": _cmd_doc_drift,
     "ci-check": _cmd_ci_check,
     "ci-wait": _cmd_ci_wait,
     "serve-moves": _cmd_serve_moves,

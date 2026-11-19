@@ -26,6 +26,9 @@ $test_rule
     which old tests your change breaks. You own that fix: update such a test to the new correct
     behavior, in the same slice. Never delete a test or check less than before. QA, then vp-rnd,
     review the diff; a heavy change goes to the owner.
+  - a card line that contradicts the spec (the card asks for more or less than SPEC.md or the
+    ticket): never code around it and never edit the card files. Propose the corrected line:
+    `uv run python -m tools.orchestrator doc-fix <task> <card> --text "<line>" --why "<spec line>"`
   - the security gate is bandit: a finding you made safe (e.g. a URL scheme checked before
     urlopen) is marked on the line bandit reports with "# nosec <id>" plus the reason; ruff's
     "# noqa" does not silence bandit.

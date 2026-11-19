@@ -2729,3 +2729,8 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-041', 'te
 INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-042', 'A push runs the CI test step locally first', 'infra', 'git push is refused while sanity, unit or gates tests fail locally', 'active', 'tools/orchestrator/', 'C-20261119-0003');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-042', 'tests/gates/test_pre_push_hook.py::test_the_pre_push_hook_runs_the_ci_test_step');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-042', 'tests/gates/test_pre_push_hook.py::test_the_pre_push_hook_is_executable');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-043', 'A squad proposes a card fix as a doc_review move; the Planner lists every document that carries the card and passes it to vp-rnd; nothing edits the gold docs', 'infra', 'tests/gates/test_orchestrator_docfix.py', 'active', 'tools/orchestrator/', 'C-20261119-0004');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-043', 'tests/gates/test_orchestrator_docfix.py::test_a_proposal_edits_nothing_and_goes_to_the_planner');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-043', 'tests/gates/test_orchestrator_docfix.py::test_the_planner_lists_every_place_and_passes_it_to_vp_rnd');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-043', 'tests/gates/test_orchestrator_docfix.py::test_an_unknown_card_is_refused');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-043', 'tests/gates/test_orchestrator_docfix.py::test_drift_finds_a_card_that_differs_between_card_file_and_versions');
