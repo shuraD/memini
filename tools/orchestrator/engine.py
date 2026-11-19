@@ -104,6 +104,26 @@ def private_paths(cfg: Config) -> list[tuple[Path, bool]]:
     ]
 
 
+def carve(protected: Sequence[str], writable: Sequence[str], root: Path) -> list[str]:
+    """Return ``protected`` without what the step may write (protected wins over writable).
+
+    A protected directory that holds a writable path is replaced by its other children, so
+    ``tests/`` stays protected except for ``tests/unit/`` when that is writable.
+    """
+    out: list[str] = []
+    for entry in protected:
+        inside = entry.endswith("/") and any(w.startswith(entry) for w in writable)
+        if not inside:
+            out.append(entry)
+            continue
+        for child in sorted((root / entry).iterdir()):
+            rel = entry + child.name + ("/" if child.is_dir() else "")
+            if any(rel.startswith(w) for w in writable):
+                continue
+            out += carve([rel], writable, root) if child.is_dir() else [rel]
+    return out
+
+
 def settings(
     cfg: Config,
     worktree: Path,

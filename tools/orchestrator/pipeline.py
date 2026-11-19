@@ -711,7 +711,8 @@ class _Run:
                 forbidden_names=", ".join(cfg.forbidden_names),
                 graph_paths=", ".join(cfg.graph_name_paths),
             )
-            res = self._agent("coder", prompt, self.wt, writable, protected)  # watched
+            tool_protected = engine.carve(protected, writable, self.wt) if edits else protected
+            res = self._agent("coder", prompt, self.wt, writable, tool_protected)  # watched
             for item in engine.follow_ups(res.stdout):
                 state.inbox_append(cfg, self.task_id, "follow-up proposal (not queued)", 1, item)
             # leftovers, snapshot and anti-cheat checks come before a dispute is accepted
