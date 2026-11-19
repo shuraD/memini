@@ -31,6 +31,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from tools.orchestrator import gitops
 from tools.orchestrator.config import Config
 from tools.orchestrator.executor import NO_REPLACE, Result, allowed_env
 
@@ -341,5 +342,6 @@ def build_executor(cfg: Config, env_allow: Sequence[str]) -> DockerExecutor:
         network=cfg.sandbox_network,
         neo4j_uri=cfg.sandbox_neo4j_uri,
         neo4j_user=cfg.sandbox_neo4j_user,
-        env_file=cfg.repo / "deploy" / ".env",
+        # the main checkout holds deploy/.env: a slice worktree (the coder's cwd) does not
+        env_file=gitops.common_dir(cfg.repo).parent / "deploy" / ".env",
     )

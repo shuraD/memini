@@ -696,7 +696,7 @@ class _Run:
                 "coder",
                 task_id=self.task_id,
                 spec=self.sp.text(with_reference=True),
-                allowed_paths=", ".join(self.paths),
+                allowed_paths=", ".join(writable),
                 allowed_args=" ".join(self.paths),
                 protected_paths=", ".join(cfg.protected),
                 test_files=" ".join(files),

@@ -20,6 +20,7 @@ from tests.gates.test_orchestrator import (  # noqa: F401  (env is a fixture)
     _coder,
     _git,
     _plan,
+    _prompts,
     _task,
     env,
 )
@@ -227,6 +228,10 @@ def test_the_coder_fixes_an_old_test_its_change_broke_and_it_is_reviewed(
     assert out.status == "merged", out.reason
     assert [m["kind"] for m in moves._read(cfg)] == ["test_review", "stale_test_review"]
     assert _git(env["repo"], "show", f"main:{OLD}") == OLD_AFTER.rstrip("\n")
+    assert (
+        "tests/unit/"
+        in _prompts(env, "coder")[0].split("You may change files only under:")[1][:200]
+    )
 
 
 def test_an_old_test_is_never_deleted_by_a_slice(enq_cfg: config.Config, tmp_path: Path) -> None:

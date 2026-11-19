@@ -1,11 +1,15 @@
 """The sandbox password comes from the env file, never from the coder's agent environment."""
 
+# ruff: noqa: F811
 from __future__ import annotations
 
+import dataclasses
+import subprocess
 from pathlib import Path
 
 import pytest
-from tools.orchestrator import dockerexec
+from tests.gates.test_orchestrator_enqueue import cfg  # noqa: F401  (cfg is a fixture)
+from tools.orchestrator import config, dockerexec
 
 
 def test_the_value_is_read_from_a_key_value_file(tmp_path: Path) -> None:
@@ -55,3 +59,15 @@ def test_the_password_in_the_file_is_enough(
     monkeypatch.setattr(dockerexec, "docker_run_argv", stop)
     with pytest.raises(RuntimeError, match="past the password check"):
         _executor(tmp_path, env).run(["true"], cwd=tmp_path)
+
+
+def test_a_slice_worktree_finds_the_main_checkouts_env_file(
+    cfg: config.Config, tmp_path: Path
+) -> None:
+    wt = tmp_path / "slice-wt"
+    subprocess.run(  # noqa: S603
+        ["git", "-C", str(cfg.repo), "worktree", "add", "-q", "-b", "orch/x", str(wt)],  # noqa: S607
+        check=True,
+    )
+    ex = dockerexec.build_executor(dataclasses.replace(cfg, repo=wt), [])
+    assert ex.env_file == cfg.repo.resolve() / "deploy" / ".env"
