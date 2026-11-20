@@ -121,7 +121,8 @@ def resolve(cfg: Config, move_id: str, result: str, by: str) -> None:
     with state.locked(cfg.state_dir / "moves.lock"):
         rows = _read(cfg)
         row = next(r for r in rows if r["id"] == move_id)
-        row.update(status="done", result=result, by=by)
+        done_at = datetime.now(UTC).isoformat(timespec="seconds")
+        row.update(status="done", result=result, by=by, done_at=done_at)
         _write(cfg, rows)
     state.ops_log(cfg, row["task"], "move_done", f"{by} -> {row['from']}: {result}", move=move_id)
     agent_inbox.notify(
@@ -184,6 +185,44 @@ def finish_tool(cfg: Config, move_id: str, result: str, by: str) -> str:
     if st.task(move["task"]) is not None:
         st.update(move["task"], "released", reason=why)
     return str(move["task"])
+
+
+def release_answered(cfg: Config) -> list[str]:
+    """Release the blocked tasks whose doc review was answered after the block; return their ids.
+
+    A task that a card or SPEC line stopped (the Verifier's partial) waits for the doc-fix flow:
+    its ``doc_review`` moves. When the last one is answered the line is fixed, so the task runs
+    again by itself: nobody types ``release``. A run that is still going keeps its lock and waits.
+    """
+    rows = _read(cfg)
+    st = state.State(cfg)
+    freed = []
+    for task, rec in st.tasks().items():
+        mine = [r for r in rows if r["task"] == task]
+        since = str(rec["history"][-1]["at"])
+        if rec["status"] not in ("rejected", "disputed", "failed"):
+            continue
+        if any(r["status"] == "open" for r in mine):
+            continue
+        answered = [r for r in mine if r["kind"] == "doc_review" and r.get("done_at", "") >= since]
+        if not answered:
+            continue
+        why = f"doc review answered ({answered[-1]['id']})"
+        try:
+            with state.run_lock(cfg, task):
+                if state.State(cfg).tasks()[task]["status"] not in (
+                    "rejected",
+                    "disputed",
+                    "failed",
+                ):
+                    continue  # another runner released it first
+                st.update(task, "released", reason=why)
+        except state.BusyError:
+            continue
+        gitops.set_aside(cfg.repo, cfg.worktrees_dir, cfg.branch_prefix, task, answered[-1]["id"])
+        state.ops_log(cfg, task, "released", why)
+        freed.append(task)
+    return freed
 
 
 def parse_verdict(result: str) -> tuple[bool, str]:

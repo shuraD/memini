@@ -378,7 +378,10 @@ def _cmd_doc_drift(cfg: config.Config, args: argparse.Namespace) -> int:
 
 def _cmd_serve_moves(cfg: config.Config, args: argparse.Namespace) -> int:
     done = moves.serve(cfg, args.role, HANDLERS.get(args.role, {}), once=True)
-    print(f"{args.role}: {done} move(s) served")
+    freed = moves.release_answered(cfg)
+    print(
+        f"{args.role}: {done} move(s) served" + (f"; released {', '.join(freed)}" if freed else "")
+    )
     return 0
 
 

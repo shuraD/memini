@@ -107,15 +107,18 @@ def test_a_rejected_task_posts_one_planner_dispute_with_the_reason(
 def test_a_failed_task_posts_one_planner_dispute_with_the_reason(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A task that ends FAILED without a tool crash (stale branch) posts one planner dispute."""
+    """A task that ends FAILED by a stop (not a crash) posts one planner dispute, none to devops."""
+
+    def stop(self: Any) -> Any:
+        raise pipeline._Stop(pipeline.FAILED, "the repository has no ledgers/schema.sql")
+
     _plan(env, monkeypatch)
+    monkeypatch.setattr(pipeline._Run, "_go", stop)
     cfg = _cfg(env)
-    _git(env["repo"], "branch", cfg.branch_prefix + TASK)
-    out = pipeline.run_task(cfg, _task(env))
-    assert out.status == "failed"
+    assert pipeline.run_task(cfg, _task(env)).status == "failed"
     (move,) = moves.open_for(cfg, "planner")
     assert (move["task"], move["kind"]) == (TASK, "dispute")
-    assert "exists from an earlier run" in move["text"]
+    assert "no ledgers/schema.sql" in move["text"]
     assert moves.open_for(cfg, "devops") == []
 
 

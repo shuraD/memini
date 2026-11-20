@@ -22,6 +22,7 @@ import dataclasses
 import re
 import shlex
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
 from tools.orchestrator import (
@@ -155,8 +156,16 @@ class _Job:
     def go(self) -> None:
         cfg = self.cfg
         self.preflight()
-        if self.wt.exists():
-            raise _Stop(FAILED, f"{self.wt} exists from an earlier run: inspect and remove it")
+        if self.wt.exists():  # an earlier run's worktree is renamed, never deleted
+            aside = self.wt.with_name(f"{self.wt.name}-rerun{datetime.now(UTC):%H%M%S%f}")
+            gitops.git(cfg.repo, "worktree", "move", str(self.wt), str(aside))
+            state.ops_log(
+                cfg,
+                self.item.task_id,
+                "set_aside",
+                "leftover spec worktree renamed",
+                moved=[aside.name],
+            )
         self.run_dir.mkdir(parents=True, exist_ok=True)
         cfg.worktrees_dir.mkdir(parents=True, exist_ok=True)
         base = gitops.rev(cfg.repo, cfg.main_branch)

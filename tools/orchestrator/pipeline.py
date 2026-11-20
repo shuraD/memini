@@ -24,6 +24,7 @@ import tempfile
 import time
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from tools import ledger
@@ -326,13 +327,14 @@ class _Run:
     def _go(self) -> Outcome:
         cfg = self.cfg
         base = gitops.rev(self.repo, cfg.main_branch)
-        for path in (self.wt, self.gate_wt, self.merge_wt):
-            if path.exists():
-                raise _Stop(FAILED, f"{path} exists from an earlier run: inspect and remove it")
-        if gitops.git(
-            self.repo, "rev-parse", "--verify", "--quiet", self.branch, check=False
-        ).stdout:
-            raise _Stop(FAILED, f"branch {self.branch} exists from an earlier run")
+        # a run that reaches here is not running (the caller holds its lock): what an earlier run
+        # left is renamed, never deleted, and no person has to release the task first
+        tag = "rerun" + datetime.now(UTC).strftime("%H%M%S%f")
+        moved = gitops.set_aside(self.repo, cfg.worktrees_dir, cfg.branch_prefix, self.task_id, tag)
+        if moved:
+            state.ops_log(
+                cfg, self.task_id, "set_aside", "leftovers of an earlier run renamed", moved=moved
+            )
         self.run_dir.mkdir(parents=True, exist_ok=True)
         cfg.worktrees_dir.mkdir(parents=True, exist_ok=True)
         gitops.git(

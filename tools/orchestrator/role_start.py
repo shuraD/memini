@@ -6,7 +6,8 @@ already set): dev1..dev4, qa, planner, devops. It starts one detached supervisor
 once (a session that was open before the hook existed starts it on its next prompt): the
 supervisor runs the role's queue (``run-queue --role``) again and again and serves the moves
 sent to the role, so work that arrives later is picked up without anyone typing a command. A
-role that is not in ``[roles]`` (vp-rnd, say) starts nothing.
+role that is not in ``[roles]`` starts nothing. Every supervisor also restarts a dead peer on
+each cycle (``start_all``), so one live runner keeps all of them alive.
 """
 
 from __future__ import annotations
@@ -46,10 +47,16 @@ def start(cfg: Config, role: str, trigger: str = "hook") -> str:
     """Start the role's supervisor unless it runs; return what happened."""
     if role not in cfg.roles:
         return f"{role}: not a runner role"
+    from tools.orchestrator import state  # noqa: PLC0415
+
     pid_file = _pid_file(cfg, role)
+    with state.locked(pid_file.with_suffix(".lock")):  # two callers at once start one runner
+        return _start_locked(cfg, role, trigger, pid_file)
+
+
+def _start_locked(cfg: Config, role: str, trigger: str, pid_file: Path) -> str:
     if _alive(pid_file):
         return ""  # already running: say nothing on every prompt
-    pid_file.parent.mkdir(parents=True, exist_ok=True)
     log = cfg.state_dir / f"runner-{role}.log"
     with log.open("a", encoding="utf-8") as out:
         proc = subprocess.Popen(  # noqa: S603 — our own module, no shell
@@ -70,7 +77,7 @@ def start(cfg: Config, role: str, trigger: str = "hook") -> str:
         pid=proc.pid,
         trigger=trigger,
     )
-    how = "a hook" if trigger == "hook" else "the autonomous command"
+    how = {"hook": "a hook", "peer": "another runner"}.get(trigger, "the autonomous command")
     return (
         f"[runner] A background program for the {role} role was started automatically by {how} "
         f"(pid {proc.pid}, log {log}). It is not this session and you did not start it: it runs "
@@ -78,13 +85,14 @@ def start(cfg: Config, role: str, trigger: str = "hook") -> str:
     )
 
 
-def start_all(cfg: Config) -> list[str]:
+def start_all(cfg: Config, trigger: str = "command") -> list[str]:
     """Autonomous mode: start the supervisor of every role that has a queue or moves.
 
     The same programs the hook starts, started by one command instead of by sessions opening
-    (devops has neither a queue nor handlers: a person closes its moves).
+    (devops has neither a queue nor handlers: a person closes its moves). It starts only what
+    is dead, so a machine may call it as often as it likes.
     """
-    return [m for r in cfg.roles if r != "devops" and (m := start(cfg, r, trigger="command"))]
+    return [m for r in cfg.roles if r != "devops" and (m := start(cfg, r, trigger=trigger))]
 
 
 def supervise(cfg: Config, role: str, poll_s: float = _POLL_S) -> None:
@@ -94,6 +102,7 @@ def supervise(cfg: Config, role: str, poll_s: float = _POLL_S) -> None:
     """
     base = [*_python(cfg), "-m", "tools.orchestrator"]
     while True:
+        start_all(cfg, trigger="peer")  # a runner that died is started again by the ones alive
         subprocess.run([*base, "serve-moves", role], cwd=cfg.repo, check=False)  # noqa: S603
         if role == "devops":
             subprocess.run([*base, "ci-check"], cwd=cfg.repo, check=False)  # noqa: S603
