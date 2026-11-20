@@ -21,6 +21,9 @@ Rules:
   The tests run in a sandbox container; any other command is refused.
 - Follow AGENTS.md in the repository.
 
+Card lines this task builds (the same text every agent and the Verifier reads):
+$cards
+
 Specification:
 -----
 $spec

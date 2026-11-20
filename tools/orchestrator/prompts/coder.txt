@@ -40,6 +40,9 @@ $dispute_rule
 Reference (read-only context, never copied wholesale):
 $reference
 
+Card lines this task builds (the same text every agent and the Verifier reads):
+$cards
+
 Specification:
 -----
 $spec

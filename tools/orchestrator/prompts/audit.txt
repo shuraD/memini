@@ -14,6 +14,9 @@ Answer with exactly one JSON object and nothing else:
 {"verdict": "pass" or "reject", "findings": ["<one finding per string>"]}
 Reject when any rule is broken; list why in findings.
 
+Card lines this task builds (the same text every agent and the Verifier reads):
+$cards
+
 Specification:
 -----
 $spec

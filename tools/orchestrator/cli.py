@@ -389,7 +389,8 @@ def _cmd_move_done(cfg: config.Config, args: argparse.Namespace) -> int:
 
 
 def _cmd_ci_wait(cfg: config.Config, args: argparse.Namespace) -> int:
-    lines = ci_watch.wait(cfg, args.sha, timeout_s=args.timeout)
+    # gh finds a run only by the full sha: a short one lists nothing and the wait times out
+    lines = ci_watch.wait(cfg, gitops.rev(cfg.repo, args.sha), timeout_s=args.timeout)
     print("\n".join(lines))
     return 0 if lines and all("RED" not in x and "no finished" not in x for x in lines) else 1
 

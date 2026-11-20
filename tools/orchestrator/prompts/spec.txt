@@ -9,6 +9,10 @@ Your job: write the slice spec for this task AND its hidden acceptance tests, BE
 implementation exists. A coder you never meet implements the spec; your tests are kept hidden
 from that coder and decide whether the work is accepted.
 
+Card lines this task builds (the same text every agent and the Verifier reads). The spec and the
+tests must cover every one of them:
+$cards
+
 Read first (they are copied into this checkout; read nothing else outside it):
 $sources
 Files under .sources/deps/ are the specs of the tasks this one depends on: use their
@@ -44,6 +48,10 @@ size: <estimated lines and hours>
    - paths lie inside $module and inside the allowed code paths ($allow).
    - Generic code only: no business names, no provider or customer names in the interface.
    - Everything a test checks must be stated in interface or acceptance.
+   - Every card line the task text names (an id like A14) needs two lines in the acceptance
+     list: `- A14: Given ..., Then ...` (the criteria) and `- A14 done: <the observable end
+     state that means the card line is finished>`. Name the id in a test name or a comment of
+     the hidden test that proves each. A spec or test set missing any of these is refused.
 
 2. Write the hidden tests: NEW files named test_*.py under: $qa_allow
    - They test the observable behaviour of the spec, not an implementation you imagine.

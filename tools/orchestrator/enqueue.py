@@ -91,6 +91,17 @@ def cards(cfg: Config) -> dict[str, Card]:
     return found
 
 
+def card_text(cfg: Config, ticket_text: str) -> tuple[list[str], str]:
+    """Return the ticket's card ids and the one text every agent reads for them.
+
+    The spec QA, the QA, the coder, the audit and the Verifier all get this exact text.
+    """
+    known = cards(cfg)
+    ids = [i for i in card_ids(ticket_text, known) if i in known]
+    lines = [f"{i}: {known[i].text} (old code: {evidence(cfg, i)})" for i in ids]
+    return ids, "\n".join(lines)
+
+
 def evidence(cfg: Config, card_id: str) -> str:
     """Return the old code's ``file:line`` evidence of a card, from ``capabilities/<area>.md``."""
     name = CAPABILITY_FILES[card_id[0]]

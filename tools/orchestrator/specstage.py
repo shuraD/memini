@@ -19,11 +19,12 @@ never overwritten: an existing hold-out or spec stops the task for the owner.
 from __future__ import annotations
 
 import dataclasses
+import re
 import shlex
 import shutil
 from pathlib import Path
 
-from tools.orchestrator import dockerexec, engine, gates, gitops, spec, stages, state
+from tools.orchestrator import dockerexec, engine, enqueue, gates, gitops, spec, stages, state
 from tools.orchestrator.config import CODE_STAGE, Config, StageSpec
 from tools.orchestrator.executor import Executor, executor_for
 
@@ -203,6 +204,7 @@ class _Job:
             depends_on=", ".join(item.depends_on) or "(no dependencies: leave the field empty)",
             task=item.title,
             sources="\n".join(f"  {s}" for s in sources) or "  none",
+            cards=enqueue.card_text(cfg, item.title)[1] or "  none",
             qa_allow=", ".join(cfg.qa_allow),
             deny_patterns=self.deny_for_tests(),
             allow=", ".join(cfg.allow),
@@ -284,10 +286,38 @@ class _Job:
             for d in item.depends_on
             if d not in sp.depends_on
         ]
+        accepted = str(sp.header.get("acceptance", ""))
+        for (
+            card
+        ) in self._card_lines():  # per card line: an acceptance line and a definition of done
+            if not re.search(rf"^\s*-\s*{card}:", accepted, re.MULTILINE):
+                problems.append(
+                    f"acceptance has no line for card line {card}: start one with '- {card}:'"
+                )
+            if not re.search(rf"^\s*-\s*{card} done:", accepted, re.MULTILINE):
+                problems.append(
+                    f"acceptance has no definition of done for {card}: '- {card} done:'"
+                )
         return problems + spec.check(self.cfg, sp, item.task_id, known_ids(self.cfg))
+
+    def _card_lines(self) -> list[str]:
+        """Return the card lines the task text names (baseline lines only)."""
+        known = enqueue.cards(self.cfg)
+        return [c for c in enqueue.card_ids(self.item.title, known) if c in known]
+
+    def _uncovered(self, tests: list[str]) -> list[str]:
+        """Return a problem per card line that no hidden test names (the id, any case)."""
+        text = "\n".join((self.wt / t).read_text(encoding="utf-8") for t in tests)
+        return [
+            f"no hidden test covers card line {card}: name it in a test name or comment"
+            for card in self._card_lines()
+            if not re.search(rf"(?<![A-Za-z0-9]){card}(?!\d)", text, re.IGNORECASE)
+        ]
 
     def _test_problems(self, tests: list[str]) -> list[str]:
         cfg = self.cfg
+        if uncovered := self._uncovered(tests):
+            return uncovered
         if not gates.defines_tests(self.wt, tests):
             return ["the test files define no test function"]
         lint = self._lint(tests)

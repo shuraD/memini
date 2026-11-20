@@ -559,6 +559,7 @@ class _Run:
                 "qa",
                 task_id=self.task_id,
                 spec=self.sp.text(),
+                cards=self._ticket_cards()[1],
                 qa_allow=", ".join(cfg.qa_allow),
                 deny_patterns="  ".join(p for p in cfg.deny_patterns if p != r"\bpytest\b"),
                 failures=failures,
@@ -696,6 +697,7 @@ class _Run:
                 "coder",
                 task_id=self.task_id,
                 spec=self.sp.text(with_reference=True),
+                cards=self._ticket_cards()[1],
                 allowed_paths=", ".join(writable),
                 allowed_args=" ".join(self.paths),
                 protected_paths=", ".join(cfg.protected),
@@ -1040,10 +1042,7 @@ class _Run:
         ticket = next((t for t in tickets if t.id == self.task_id), None)
         if ticket is None:
             return [], ""
-        known = enqueue.cards(cfg)
-        ids = [i for i in enqueue.card_ids(ticket.text, known) if i in known]
-        lines = [f"{i}: {known[i].text} (old code: {enqueue.evidence(cfg, i)})" for i in ids]
-        return ids, "\n".join(lines)
+        return enqueue.card_text(cfg, ticket.text)
 
     def _verify(self, attempt: int, qa_sha: str, snap: str, files: list[str]) -> list[str]:
         """Run the Verifier (D8); return the coder's failures. A missing test stops for QA."""
@@ -1091,6 +1090,7 @@ class _Run:
             "audit",
             task_id=self.task_id,
             spec=self.sp.text(),
+            cards=self._ticket_cards()[1],
             test_files=" ".join(files),
             diff=diff,
         )
