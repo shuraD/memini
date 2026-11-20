@@ -151,9 +151,21 @@ def precheck(
     return problems
 
 
+def _waits(problem: str) -> bool:
+    """Return True for a refusal that only means "not yet".
+
+    Another task holds the paths, or a dependency is not merged: the task stays queued and runs
+    later, so it is no dead end.
+    """
+    return problem.startswith("paths overlap the active task") or problem.endswith(
+        "is not merged yet"
+    )
+
+
 def _refuse(cfg: Config, task_id: str, problems: list[str]) -> Outcome:
     state.inbox_append(cfg, task_id, "spec rejected before dispatch", 1, "; ".join(problems))
-    _dead_end(cfg, task_id, REJECTED, "; ".join(problems))
+    if not all(_waits(p) for p in problems):
+        _dead_end(cfg, task_id, REJECTED, "; ".join(problems))
     return Outcome(task_id, REJECTED, "; ".join(problems))
 
 
