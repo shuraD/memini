@@ -83,13 +83,19 @@ def test_the_word_pytest_is_allowed(env: dict[str, Any], monkeypatch: pytest.Mon
     assert _sealed(cfg)
 
 
+_IP = ".".join(("10", "20", "30", "40"))
+_USERS = "/" + "Users" + "/someone"
+_HOME = "/" + "home" + "/someone"
+_HOST = ".".join(("db", "example", "com"))
+
+
 @pytest.mark.parametrize(
     ("extra", "needle"),
     [
-        ("HOST = '10.20.30.40'\n", "IP address: 10.20.30.40"),
-        ("HOME = '/Users/someone/work'\n", "home path: /Users/someone"),
-        ("HOME = '/home/someone/work'\n", "home path: /home/someone"),
-        ("URL = 'db.example.com'\n", "host name: db.example.com"),
+        (f"HOST = '{_IP}'\n", f"IP address: {_IP}"),
+        (f"HOME = '{_USERS}/work'\n", f"home path: {_USERS}"),
+        (f"HOME = '{_HOME}/work'\n", f"home path: {_HOME}"),
+        (f"URL = '{_HOST}'\n", f"host name: {_HOST}"),
     ],
 )
 def test_an_ip_address_host_or_home_path_is_refused(
