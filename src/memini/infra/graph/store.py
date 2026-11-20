@@ -9,7 +9,8 @@ in one ``UNWIND`` batch per call (``MERGE`` on ``(scope, id)``, skipping an alre
 
 The module-level functions work on a plain :class:`neo4j.Driver`: :func:`write_vectors`
 (through ``neo4j_graphrag``'s ``upsert_vectors``), soft or hard :func:`delete`, vector search
-(:func:`search_entities`, :func:`search_communities`, through ``VectorRetriever``) and
+(:func:`search_entities`, :func:`search_communities`, through ``VectorRetriever``; a level
+or domain filter on a graph path through a Cypher ``SEARCH ... VECTOR INDEX``) and
 :func:`stats` of one scope.
 
 The design follows the old memini's ``connect``/``remember``; the code is new.
@@ -273,6 +274,54 @@ def _vector_search(
     return hits[:top_k]
 
 
+def _cypher_search(
+    driver: neo4j.Driver,
+    index_name: str,
+    label: str,
+    vector: Sequence[float],
+    *,
+    where: str,
+    params: dict[str, Any],
+    top_k: int,
+    database: str | None,
+) -> list[tuple[str, float]]:
+    """Run a ``SEARCH ... VECTOR INDEX`` filtered by the Cypher predicate ``where`` on ``n``.
+
+    The index cannot pre-filter on a graph path, so the search widens its candidate count
+    until ``top_k`` candidates pass ``where`` or the index has no more nodes: the result is
+    the ``top_k`` nearest among the matching nodes, best first.
+    """
+    p = _names().properties
+    query = (
+        f"MATCH (n:`{label}`) SEARCH n IN (VECTOR INDEX `{index_name}` FOR $vector "
+        f"LIMIT $fetch) SCORE AS score "
+        f"WITH collect([n, score]) AS hits "
+        f"CALL (hits) {{ UNWIND hits AS hit WITH hit[0] AS n, hit[1] AS score "
+        f"WHERE {where} WITH n, score ORDER BY score DESC LIMIT $top "
+        f"RETURN collect([n.`{p.id}`, score]) AS found }} "
+        f"RETURN size(hits) AS seen, found"
+    )
+    fetch = max(top_k, 1)
+    while True:
+        params.update(vector=[float(x) for x in vector], fetch=fetch, top=top_k)
+        records, _, _ = driver.execute_query(query, params, database_=database)
+        seen, found = int(records[0]["seen"]), list(records[0]["found"])
+        if len(found) >= top_k or seen < fetch:
+            return [(str(key), float(score)) for key, score in found]
+        fetch *= 4
+
+
+def _domain_path(entity: str) -> str:
+    """Return the Cypher path from a ``$domain`` Domain node of ``$part`` to ``entity``."""
+    names = _names()
+    lab, rel, p = names.labels, names.relationships, names.properties
+    return (
+        f"(:`{lab.domain}` {{`{p.scope}`: $part, `{p.name}`: $domain}})"
+        f"-[:`{rel.contains}`]->(:`{lab.artifact}`)-[:`{rel.has_chunk}`]->(:`{lab.chunk}`)"
+        f"-[:`{rel.has_entity}`]->{entity}"
+    )
+
+
 def search_entities(
     driver: neo4j.Driver,
     index_name: str,
@@ -280,13 +329,44 @@ def search_entities(
     vector: Sequence[float],
     *,
     top_k: int = 10,
+    level: int | None = None,
+    domain: str | None = None,
     database: str | None = None,
 ) -> list[tuple[str, float]]:
-    """Return the active nodes of ``scope`` nearest to ``vector`` in ``index_name``."""
+    """Return the active entities of ``scope`` nearest to ``vector`` in ``index_name``.
+
+    ``level``: only direct members of a community of that level; ``domain``: only entities
+    reached from that domain's chunks. Without them the search runs through VectorRetriever.
+    """
     names = _names()
     p = names.properties
-    filters = {p.scope: {"$eq": scope}, p.status: {"$eq": names.statuses.active}}
-    return _vector_search(driver, index_name, vector, filters, top_k=top_k, database=database)
+    if level is None and domain is None:
+        filters = {p.scope: {"$eq": scope}, p.status: {"$eq": names.statuses.active}}
+        return _vector_search(driver, index_name, vector, filters, top_k=top_k, database=database)
+    where = [f"n.`{p.scope}` = $part", f"n.`{p.status}` = $live"]
+    if level is not None:
+        where.append(
+            f"EXISTS {{ (n)-[:`{names.relationships.member_of}`]->(c:`{names.labels.community}`) "
+            f"WHERE c.`{p.scope}` = $part AND c.`{p.level}` = $level }}"
+        )
+    if domain is not None:
+        where.append(f"EXISTS {{ {_domain_path('(n)')} }}")
+    params: dict[str, Any] = {
+        "part": scope,
+        "live": names.statuses.active,
+        "level": level,
+        "domain": domain,
+    }
+    return _cypher_search(
+        driver,
+        index_name,
+        names.labels.entity,
+        vector,
+        where=" AND ".join(where),
+        params=params,
+        top_k=top_k,
+        database=database,
+    )
 
 
 def search_communities(
@@ -297,18 +377,43 @@ def search_communities(
     *,
     top_k: int = 10,
     level: int | None = None,
+    domain: str | None = None,
     database: str | None = None,
 ) -> list[tuple[str, float]]:
-    """Return the communities of ``scope`` (only ``level`` when given) nearest to ``vector``."""
-    p = _names().properties
-    filters: dict[str, Any] = {p.scope: {"$eq": scope}}
+    """Return the communities of ``scope`` nearest to ``vector`` in ``index_name``.
+
+    ``level``: only communities of that level; ``domain``: only communities with a member
+    entity of that domain, directly or through lower communities. Without a domain the
+    search runs through VectorRetriever.
+    """
+    names = _names()
+    p = names.properties
+    if domain is None:
+        filters: dict[str, Any] = {p.scope: {"$eq": scope}}
+        if level is not None:
+            filters[p.level] = {"$eq": level}
+        return _vector_search(driver, index_name, vector, filters, top_k=top_k, database=database)
+    member = f"(:`{names.labels.entity}`)-[:`{names.relationships.member_of}`*1..]->(n)"
+    where = [f"n.`{p.scope}` = $part", f"EXISTS {{ {_domain_path(member)} }}"]
     if level is not None:
-        filters[p.level] = {"$eq": level}
-    return _vector_search(driver, index_name, vector, filters, top_k=top_k, database=database)
+        where.append(f"n.`{p.level}` = $level")
+    return _cypher_search(
+        driver,
+        index_name,
+        names.labels.community,
+        vector,
+        where=" AND ".join(where),
+        params={"part": scope, "level": level, "domain": domain},
+        top_k=top_k,
+        database=database,
+    )
 
 
 def stats(driver: neo4j.Driver, scope: str, *, database: str | None = None) -> dict[str, Any]:
-    """Count one scope: entities per status and type, relationships, coverage, communities."""
+    """Count one scope: entities per status and type, relationships, coverage, communities.
+
+    ``dirty_ratio`` is the share of the scope's communities marked dirty (0.0 without any).
+    """
 
     def rows(query: str) -> list[neo4j.Record]:
         records, _, _ = driver.execute_query(query, {"part": scope}, database_=database)
@@ -340,7 +445,8 @@ def stats(driver: neo4j.Driver, scope: str, *, database: str | None = None) -> d
         f"MATCH (n:`{names.labels.community}`) {in_scope} "
         f"OPTIONAL MATCH ()-[m:`{names.relationships.member_of}`]->(n) "
         f"WITH n, count(m) AS size "
-        f"RETURN count(n) AS c, sum(size) AS members, collect(DISTINCT n.`{p.level}`) AS levels"
+        f"RETURN count(n) AS c, sum(size) AS members, collect(DISTINCT n.`{p.level}`) AS levels, "
+        f"count(CASE WHEN n.`{p.dirty}` = true THEN 1 END) AS dirty"
     )[0]
     total, communities = int(cov["t"]), int(comm["c"])
     return {
@@ -351,4 +457,5 @@ def stats(driver: neo4j.Driver, scope: str, *, database: str | None = None) -> d
         "communities": communities,
         "levels": sorted(int(x) for x in comm["levels"]),
         "avg_community_size": int(comm["members"] or 0) / communities if communities else 0.0,
+        "dirty_ratio": int(comm["dirty"]) / communities if communities else 0.0,
     }
