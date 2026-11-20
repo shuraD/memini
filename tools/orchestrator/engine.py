@@ -183,6 +183,41 @@ def render(cfg: Config, name: str, **values: str) -> str:
     return Template(text).safe_substitute(values)
 
 
+def test_deny(cfg: Config) -> list[str]:
+    """Return the patterns a QA test may not contain (the word pytest is allowed in tests)."""
+    return [p for p in cfg.deny_patterns if p != r"\bpytest\b"]
+
+
+def rules_text(cfg: Config) -> str:
+    """Return the whole rule set as text, by who it binds: one source for every agent prompt."""
+
+    def join(items: Sequence[str], sep: str = ", ") -> str:
+        return sep.join(items) or "none"
+
+    return "\n".join(
+        [
+            "Code (the coder; checked by the deny scan, the AST gate and the graph-name gate):",
+            f"- allowed paths: {join(cfg.allow)}",
+            f"- never changed, even under the allowed paths: {join(cfg.protected)}",
+            f"- denied regexes, comments and docstrings included: {join(cfg.deny_patterns, '  ')}"
+            " (the word pytest is denied in code but allowed in tests)",
+            f"- forbidden calls: {join(cfg.ast_forbidden_calls)}; getattr/setattr/delattr/hasattr "
+            "with a non-literal name",
+            f"- dunder attributes allowed: {join(cfg.ast_dunder_allow)}; others are refused",
+            f"- imports allowed: {join(cfg.import_allow)} (plus memini and the declared "
+            "dependencies)",
+            f"- forbidden names: {join(cfg.forbidden_names)}",
+            f"- in {join(cfg.graph_name_paths)} a NEW file may not hold a string literal equal to "
+            "a name of config/graph_schema.yaml; use the typed names",
+            "Tests (QA; hidden and visible, refused before sealing):",
+            f"- denied regexes: {join(test_deny(cfg), '  ')}",
+            f"- new test_*.py files only, under: {join(cfg.qa_allow)}",
+            f"- existing tests under {join(cfg.old_test_paths)} may be edited by the coder when "
+            "its change breaks them (reviewed, never deleted or weakened); QA changes no old file",
+        ]
+    )
+
+
 def agent_output(stdout: str) -> tuple[str, float | None]:
     """Return an agent's answer text and its cost in USD, if its CLI reported one.
 

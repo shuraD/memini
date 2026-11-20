@@ -589,8 +589,7 @@ class _Run:
                 task_id=self.task_id,
                 spec=self.sp.text(),
                 cards=self._ticket_cards()[1],
-                qa_allow=", ".join(cfg.qa_allow),
-                deny_patterns="  ".join(p for p in cfg.deny_patterns if p != r"\bpytest\b"),
+                rules=engine.rules_text(cfg),
                 failures=failures,
             )
             self._agent("qa", prompt, self.wt, cfg.qa_allow, protected)
@@ -649,7 +648,7 @@ class _Run:
 
     def _qa_text_check(self, qa_sha: str, files: Sequence[str]) -> None:
         """Run the ticket text checks on the visible and hidden tests before sealing (D11)."""
-        deny = [p for p in self.cfg.deny_patterns if p != r"\bpytest\b"]
+        deny = engine.test_deny(self.cfg)
         hidden = sorted(gates.holdout_dir(self.cfg, self.task_id).glob("test_*.py"))
         texts = {f: gitops.out(self.repo, "show", f"{qa_sha}:{f}") for f in files}
         texts |= {f"hold-out/{h.name}": h.read_text(encoding="utf-8") for h in hidden}
@@ -729,18 +728,12 @@ class _Run:
                 cards=self._ticket_cards()[1],
                 allowed_paths=", ".join(writable),
                 allowed_args=" ".join(self.paths),
-                protected_paths=", ".join(cfg.protected),
                 test_files=" ".join(files),
                 test_rule=_test_rule(edits, files),
                 dispute_rule=_dispute_rule(edits),
                 reference=reference,
                 failures="\n".join(f"- {f}" for f in failures) or "none (first attempt)",
-                deny_patterns="  ".join(cfg.deny_patterns),
-                ast_calls=", ".join(cfg.ast_forbidden_calls),
-                ast_dunders=", ".join(cfg.ast_dunder_allow),
-                imports=", ".join(cfg.import_allow),
-                forbidden_names=", ".join(cfg.forbidden_names),
-                graph_paths=", ".join(cfg.graph_name_paths),
+                rules=engine.rules_text(cfg),
             )
             tool_protected = engine.carve(protected, writable, self.wt) if edits else protected
             res = self._agent("coder", prompt, self.wt, writable, tool_protected)  # watched
@@ -1020,6 +1013,7 @@ class _Run:
                 spec=self.sp.text(),
                 test_diff=tests,
                 code_diff=code,
+                rules=engine.rules_text(cfg),
             )
             with tempfile.TemporaryDirectory(prefix="memini-review-") as tmp:
                 res = self._agent("review", prompt, Path(tmp), (), ())
@@ -1122,6 +1116,7 @@ class _Run:
             cards=self._ticket_cards()[1],
             test_files=" ".join(files),
             diff=diff,
+            rules=engine.rules_text(self.cfg),
         )
         with tempfile.TemporaryDirectory(prefix="memini-audit-") as tmp:
             res = self._agent("audit", prompt, Path(tmp), (), ())

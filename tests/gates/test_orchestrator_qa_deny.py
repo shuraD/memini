@@ -13,14 +13,17 @@ CFG = config.load_config(Path.cwd(), overrides={"state_dir": "/nonexistent-state
 
 @pytest.mark.parametrize("name", ["spec", "qa"])
 def test_qa_prompt_lists_the_denied_words(name: str) -> None:
-    text = engine.render(CFG, name, deny_patterns="importlib-marker")
-    assert "importlib-marker" in text
+    """Rule: QA is told every denied word (minus pytest) before writing, through $rules."""
+    text = engine.render(CFG, name, rules=engine.rules_text(CFG))
+    for pattern in engine.test_deny(CFG):
+        assert pattern in text
 
 
 def test_every_qa_render_passes_the_list() -> None:
+    """Rule: both renders of a QA prompt (spec stage, pipeline) pass the one rules text."""
     for module in ("specstage.py", "pipeline.py"):
         source = Path("tools/orchestrator", module).read_text(encoding="utf-8")
-        assert re.search(r"deny_patterns=", source)
+        assert re.search(r"rules=engine\.rules_text\(", source)
 
 
 def test_the_listed_words_are_the_ones_the_gate_refuses() -> None:
@@ -30,11 +33,12 @@ def test_the_listed_words_are_the_ones_the_gate_refuses() -> None:
 
 
 def test_coder_prompt_lists_the_ast_and_graph_name_rules() -> None:
-    text = engine.render(
-        CFG,
-        "coder",
-        ast_calls="ast-calls-marker",
-        imports="imports-marker",
-        graph_paths="graph-paths-marker",
-    )
-    assert all(m in text for m in ("ast-calls-marker", "imports-marker", "graph-paths-marker"))
+    """Rule: the coder sees the AST calls, imports, names and graph paths through $rules."""
+    text = engine.render(CFG, "coder", rules=engine.rules_text(CFG))
+    expected = [
+        *CFG.ast_forbidden_calls,
+        *CFG.import_allow,
+        *CFG.forbidden_names,
+        *CFG.graph_name_paths,
+    ]
+    assert all(m in text for m in expected)

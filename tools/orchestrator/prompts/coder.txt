@@ -5,7 +5,6 @@ Your job: implement the specification below so that the sealed acceptance tests 
 
 Rules:
 - You may change files only under: $allowed_paths
-- Never change these, even under the paths above: $protected_paths
 $test_rule
   Any change outside the allowed paths rejects the whole task.
 - Write the minimal, typed (mypy --strict), documented, generic code. No business names, no hardcoded vocabularies, no prompts in code. Follow AGENTS.md.
@@ -14,14 +13,7 @@ $test_rule
     uv run ruff check $allowed_args
     uv run mypy $allowed_args
   The tests run in a sandbox container; any other command is refused.
-- Gates you cannot run yourself also check your code (know them before you write):
-  - the deny scan refuses any match of these regexes in your changes, comments and docstrings
-    included: $deny_patterns
-  - the AST gate refuses: getattr/setattr/delattr/hasattr with a non-literal name; the calls
-    $ast_calls; dunder attributes other than $ast_dunders; imports outside the standard
-    allow-list $imports (plus memini and the declared dependencies); the names $forbidden_names
-  - the graph-name gate: in $graph_paths a NEW file may not hold a string literal equal to a
-    name of config/graph_schema.yaml; use the typed names
+- Gates you cannot run yourself also check your code (the rules below; know them before you write).
   - existing tests: run `uv run python -m tools.orchestrator sandbox-pytest tests/unit` to see
     which old tests your change breaks. You own that fix: update such a test to the new correct
     behavior, in the same slice. Never delete a test or check less than before. QA, then vp-rnd,
@@ -36,6 +28,9 @@ $dispute_rule
 - If you see work that should follow this task, print one line per item
   FOLLOW-UP: <what and why>
   (a proposal for the owner; it never becomes a task by itself).
+
+Rules every agent and gate applies (one list):
+$rules
 
 Reference (read-only context, never copied wholesale):
 $reference

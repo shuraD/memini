@@ -45,7 +45,7 @@ size: <estimated lines and hours>
    Rules for the spec:
    - One small slice: about 150 lines of code or less, one or two hours. If the task is bigger,
      write the first coherent part and say in the out_of_scope list what is left.
-   - paths lie inside $module and inside the allowed code paths ($allow).
+   - paths lie inside $module and inside the allowed code paths (rules below).
    - Generic code only: no business names, no provider or customer names in the interface.
    - Everything a test checks must be stated in interface or acceptance.
    - Every card line the task text names (an id like A14) needs two lines in the acceptance
@@ -58,7 +58,7 @@ size: <estimated lines and hours>
      observable end state of the `Done:` part>`. Name each id (AC1, AC2, ...) in a test name or
      a comment of the hidden test that proves it. A spec or test set missing any is refused.
 
-2. Write the hidden tests: NEW files named test_*.py under: $qa_allow
+2. Write the hidden tests: NEW files named test_*.py (where: see the rules below).
    - They test the observable behaviour of the spec, not an implementation you imagine.
      Each test states its expectation with an assert.
    - They must fail now (the code does not exist yet) and pass once the spec is implemented.
@@ -66,8 +66,6 @@ size: <estimated lines and hours>
    - Never replace or reassign interpreter-wide state (os.environ, sys.modules, builtins,
      sys.stdout): pytest itself uses it. To prove code does not read something, record the
      calls with monkeypatch only around the call under test.
-   - A test text with any of these regexes is refused before sealing (the word pytest is allowed
-     in tests): $deny_patterns
    - Do not change any existing file. Do not write any implementation code.
    - Contract first: from a task you depend on, use only its contract (types, protocols,
      errors, fakes named in its spec). Where its behaviour is needed, use the contract's
@@ -81,6 +79,9 @@ and keep them lint-clean (they are sealed after you; nobody can fix them later):
     uv run ruff check <your test files>
     uv run ruff format <your test files>
 Follow AGENTS.md in the repository.
+
+Rules every agent and gate applies (one list):
+$rules
 
 Result of the previous attempt:
 $failures

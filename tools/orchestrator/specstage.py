@@ -135,9 +135,9 @@ class _Job:
         """Return the paths the agent may write."""
         return [SPEC_FILE, *self.cfg.qa_allow]
 
-    def deny_for_tests(self) -> str:
-        """Return the words a QA test may not contain, as the gate applies them."""
-        return "  ".join(p for p in self.cfg.deny_patterns if p != r"\bpytest\b")
+    def _deny_hits(self, text: str) -> list[str]:
+        """Return the deny-list hits of a text, as the gate counts them."""
+        return gates.text_problems(text, engine.test_deny(self.cfg))
 
     def prompt_values(self) -> dict[str, str]:
         """Return extra prompt placeholders of this stage kind."""
@@ -238,9 +238,7 @@ class _Job:
             task=item.title,
             sources="\n".join(f"  {s}" for s in sources) or "  none",
             cards=enqueue.card_text(cfg, item.title)[1] or "  none",
-            qa_allow=", ".join(cfg.qa_allow),
-            deny_patterns=self.deny_for_tests(),
-            allow=", ".join(cfg.allow),
+            rules=engine.rules_text(cfg),
             failures=failures,
             **self.prompt_values(),
         )
@@ -334,6 +332,10 @@ class _Job:
                 )
         if not cards and not re.search(r"^\s*-\s*done:", accepted, re.MULTILINE):
             problems.append("acceptance has no definition of done: start one with '- done:'")
+        problems += [
+            f"{SPEC_FILE} interface: {h}: the coder may not write this, so the spec may not require it"  # noqa: E501
+            for h in self._deny_hits(str(sp.header.get("interface", "")))
+        ]
         return problems + spec.check(self.cfg, sp, item.task_id, known_ids(self.cfg))
 
     def _card_lines(self) -> list[str]:
@@ -362,6 +364,12 @@ class _Job:
             return uncovered
         if not gates.defines_tests(self.wt, tests):
             return ["the test files define no test function"]
+        found: list[str] = []
+        for rel in tests:
+            text = (self.wt / rel).read_text(encoding="utf-8")
+            found += [f"{rel}: {p}: reword the test without it" for p in self._deny_hits(text)]
+        if found:
+            return found
         lint = self._lint(tests)
         if lint:
             return [f"the tests fail lint:\n{lint}"]
