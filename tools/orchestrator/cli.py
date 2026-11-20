@@ -286,7 +286,14 @@ def _cmd_enqueue(cfg: config.Config, args: argparse.Namespace) -> int:
     text = ""
     if fix:
         text = enqueue.fix_text(
-            cfg, args.change, args.remove_names, args.rename, args.owner_words or ""
+            cfg,
+            args.change,
+            args.remove_names,
+            args.rename,
+            args.owner_words or "",
+            context=args.context or "",
+            acceptance=args.acceptance,
+            done=args.done or "",
         )
     _, found = enqueue.enqueue(
         cfg,
@@ -750,6 +757,9 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     eq.add_argument("--remove-names", nargs="*", default=[], help="names the fix removes")
     eq.add_argument("--rename", nargs="*", default=[], help="old=new renames")
     eq.add_argument("--owner-words", help="the owner's words, quoted, with the date")
+    eq.add_argument("--context", help="a fix's Context: what failed (test ids, error text, file)")
+    eq.add_argument("--acceptance", nargs="*", default=[], help="a fix's Acceptance: items")
+    eq.add_argument("--done", help="a fix's Done: the observable end state")
     eq.add_argument("--deps", default="")
     eq.add_argument("--sources", default="")
     eq.add_argument("--needs", default="", help="graph names the ticket needs (must have roles)")

@@ -20,7 +20,13 @@ $owner_words
 Write the corrected change as a structured fix. Rules:
 - say only what the owner's words allow; add no other change, no refactor, no extra check;
 - keep what the ticket already asks for that the owner's words do not change;
-- name every identifier the change removes or renames.
+- name every identifier the change removes or renames;
+- write the three parts every ticket carries, from the text above only, never invented:
+  context = what failed: the failing test ids, the error text and the file;
+  acceptance = a list of short items (no semicolons): what must stay unchanged, and every other
+  observable condition (the failing tests themselves are added for you and pass under every
+  profile);
+  done = the observable end state, e.g. "the unit suite is green under every profile".
 
 Answer with exactly one JSON object and nothing else:
-{"change": "<one or two sentences: what changes and what stays out of scope>", "remove_names": ["<name>", ...], "renames": ["<old>=<new>", ...], "touches": ["<class or section the change adds to or extends>", ...]}
+{"change": "<one or two sentences: what changes and what stays out of scope>", "remove_names": ["<name>", ...], "renames": ["<old>=<new>", ...], "touches": ["<class or section the change adds to or extends>", ...], "context": "<what failed>", "acceptance": ["<item>", ...], "done": "<the observable end state>"}

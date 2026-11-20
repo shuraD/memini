@@ -17,15 +17,22 @@ FIX = json.dumps(
         "change": "Remove only the properties that now have a role.",
         "remove_names": [],
         "renames": [],
+        "context": "a test failed after the slice merged",
+        "acceptance": ["the other properties stay unchanged"],
+        "done": "the unit suite is green under every profile",
     }
 )
+PARTS = " Context: c. Acceptance: a. Done: d."
+FAILING = "tests/unit/test_x.py::test_y"
 
 
 def _dispute(cfg: config.Config, words: str = WORDS) -> moves.Move:
     st = state.State(cfg)
     st.claim("T-9", "w", [MODULE])
     st.update("T-9", "rejected", reason="audit")
-    enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text="Old text the spec line contradicts.")
+    enqueue.enqueue(
+        cfg, task_id="T-9", module=MODULE, text="Old text the spec line contradicts." + PARTS
+    )
     move_id = moves.post(
         cfg,
         "T-9",
@@ -104,8 +111,17 @@ def test_the_old_spec_and_hold_out_are_set_aside_not_deleted(
     assert (hold.with_name(f"T-9.superseded-{move['id']}") / "test_old.py").exists()
 
 
+def _commit_failing_test(cfg: config.Config) -> None:
+    """The failing test file exists on main (the ready gate checks every file a ticket names)."""
+    (cfg.repo / "tests" / "unit").mkdir(parents=True, exist_ok=True)
+    (cfg.repo / "tests/unit/test_x.py").write_text("def test_y():\n    assert True\n")
+    for args in (["add", "-A"], ["commit", "-qm", "an older test"]):
+        subprocess.run(["git", "-C", str(cfg.repo), *args], check=True)  # noqa: S603, S607
+
+
 def test_a_batch_failure_gets_a_new_fix_ticket_on_the_slices_module(cfg: config.Config) -> None:
-    ticket_text = f'The slice. Owner words: "{WORDS}".'
+    _commit_failing_test(cfg)
+    ticket_text = f'The slice. Owner words: "{WORDS}".{PARTS}'
     enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text=ticket_text)
     move_id = moves.post(
         cfg,
@@ -113,7 +129,7 @@ def test_a_batch_failure_gets_a_new_fix_ticket_on_the_slices_module(cfg: config.
         sender="dev4",
         to="planner",
         kind="batch_failure",
-        text="the unit suite failed: test_y",
+        text=f"the unit suite failed: {FAILING}",
     )
     result = planner.batch_fix(cfg, moves.get(cfg, move_id), lambda _p: FIX)
     assert result == "T-9x1: fix ticket queued for QA's ready review"
@@ -124,28 +140,27 @@ def test_a_batch_failure_gets_a_new_fix_ticket_on_the_slices_module(cfg: config.
 
 
 def test_a_batch_failure_without_any_owner_words_asks_vp_rnd(cfg: config.Config) -> None:
-    enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text="A card ticket with no quote.")
+    enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text="A card ticket with no quote." + PARTS)
     move_id = moves.post(
-        cfg, "T-9", sender="dev4", to="planner", kind="batch_failure", text="suite failed"
+        cfg, "T-9", sender="dev4", to="planner", kind="batch_failure", text=f"failed: {FAILING}"
     )
     result = planner.batch_fix(cfg, moves.get(cfg, move_id), lambda _p: FIX)
-    assert result == "no owner words: asked vp-rnd"
+    assert result == "no owner words or failing test ids: asked vp-rnd"
     assert len(moves.open_for(cfg, "vp-rnd")) == 1
 
 
 def test_a_batch_failure_lists_the_failing_test_files_as_pinned(cfg: config.Config) -> None:
-    (cfg.repo / "tests" / "unit").mkdir(parents=True, exist_ok=True)
-    (cfg.repo / "tests/unit/test_x.py").write_text("def test_y():\n    assert True\n")
-    for args in (["add", "-A"], ["commit", "-qm", "an older test"]):
-        subprocess.run(["git", "-C", str(cfg.repo), *args], check=True)  # noqa: S603, S607
-    enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text=f'The slice. Owner words: "{WORDS}".')
+    _commit_failing_test(cfg)
+    enqueue.enqueue(
+        cfg, task_id="T-9", module=MODULE, text=f'The slice. Owner words: "{WORDS}".{PARTS}'
+    )
     move_id = moves.post(
         cfg,
         "T-9",
         sender="dev4",
         to="planner",
         kind="batch_failure",
-        text="the unit suite failed: tests/unit/test_x.py::test_y",
+        text=f"the unit suite failed: {FAILING}",
     )
     planner.batch_fix(cfg, moves.get(cfg, move_id), lambda _p: FIX)
     tickets = {t.id: t for t in enqueue.read_tickets(cfg.stages[0].queue)}

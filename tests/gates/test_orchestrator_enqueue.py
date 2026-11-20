@@ -69,6 +69,9 @@ def cfg(tmp_path: Path) -> config.Config:
     )
 
 
+PARTS = " Context: c. Acceptance: a. Done: d."
+
+
 def _t(text: str, deps: str = "-", module: str = MODULE, task_id: str = "T-1") -> enqueue.Ticket:
     return enqueue.parse(f"{task_id} {module} {deps} - '{text}'")
 
@@ -85,7 +88,7 @@ def test_card_ranges_cover_the_known_lines_between_the_ends() -> None:
 
 
 def test_a_good_ticket_is_ready(cfg: config.Config) -> None:
-    assert enqueue.problems(cfg, _t("A1: write a node, as src/memini/mod.py does")) == []
+    assert enqueue.problems(cfg, _t("A1: write a node, as src/memini/mod.py does." + PARTS)) == []
 
 
 @pytest.mark.parametrize(
@@ -110,8 +113,8 @@ def test_each_refusal(cfg: config.Config, text: str, expect: str) -> None:
 
 
 def test_named_inputs_that_exist_pass(cfg: config.Config) -> None:
-    text = "A1 reads config/graph_schema.yaml, NEO4J_URI, `load_schema`, `names.properties.scope`"
-    assert enqueue.problems(cfg, _t(text)) == []
+    text = "A1 reads config/graph_schema.yaml, NEO4J_URI, `load_schema`, `names.properties.scope`."
+    assert enqueue.problems(cfg, _t(text + PARTS)) == []
 
 
 def test_needs_without_a_role_are_refused_and_go_to_devops(cfg: config.Config) -> None:
@@ -199,7 +202,9 @@ def test_the_hook_lets_everything_else_through(event: object) -> None:
 
 
 def test_a_role_without_a_typed_field_is_refused(cfg: config.Config) -> None:
-    found = enqueue.problems(cfg, _t("A1 reads `names.properties.scope`"), needs=["Project"])
+    found = enqueue.problems(
+        cfg, _t("A1 reads `names.properties.scope`." + PARTS), needs=["Project"]
+    )
     assert found == []
     found = enqueue.problems(cfg, _t("A1 reads (:Domain) and `names.properties.score`"))
     assert "role labels.domain is in names: but has no field in " in " ".join(found)
@@ -242,7 +247,16 @@ def test_a_fix_ticket_needs_the_owners_words_with_a_date_and_a_valid_rename(
 
 
 def test_a_fix_ticket_goes_through_the_ready_gate_and_is_queued(cfg: config.Config) -> None:
-    text = enqueue.fix_text(cfg, "Cover every role", [], [], "owner 2026-11-16: rule 2")
+    text = enqueue.fix_text(
+        cfg,
+        "Cover every role",
+        [],
+        [],
+        "owner 2026-11-16: rule 2",
+        context="role X has no test",
+        acceptance=["every role is covered"],
+        done="the unit suite is green",
+    )
     ticket, found = enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text=text)
     assert found == []
     assert [t.id for t in enqueue.read_tickets(cfg.stages[0].queue)] == ["T-9"]

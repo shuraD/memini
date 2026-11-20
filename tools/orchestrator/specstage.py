@@ -320,17 +320,20 @@ class _Job:
             if d not in sp.depends_on
         ]
         accepted = str(sp.header.get("acceptance", ""))
-        for (
-            card
-        ) in self._card_lines():  # per card line: an acceptance line and a definition of done
-            if not re.search(rf"^\s*-\s*{card}:", accepted, re.MULTILINE):
+        cards = self._card_lines()
+        for item_id in self._items():  # per card line or acceptance item: its acceptance line
+            if not re.search(rf"^\s*-\s*{item_id}:", accepted, re.MULTILINE):
                 problems.append(
-                    f"acceptance has no line for card line {card}: start one with '- {card}:'"
+                    f"acceptance has no line for {_what(item_id)}: start one with '- {item_id}:'"
                 )
-            if not re.search(rf"^\s*-\s*{card} done:", accepted, re.MULTILINE):
+            if item_id in cards and not re.search(
+                rf"^\s*-\s*{item_id} done:", accepted, re.MULTILINE
+            ):
                 problems.append(
-                    f"acceptance has no definition of done for {card}: '- {card} done:'"
+                    f"acceptance has no definition of done for {item_id}: '- {item_id} done:'"
                 )
+        if not cards and not re.search(r"^\s*-\s*done:", accepted, re.MULTILINE):
+            problems.append("acceptance has no definition of done: start one with '- done:'")
         return problems + spec.check(self.cfg, sp, item.task_id, known_ids(self.cfg))
 
     def _card_lines(self) -> list[str]:
@@ -338,13 +341,19 @@ class _Job:
         known = enqueue.cards(self.cfg)
         return [c for c in enqueue.card_ids(self.item.title, known) if c in known]
 
+    def _items(self) -> list[str]:
+        """Return the ids to cover: the card lines, else AC1.. for the ticket's acceptance items."""
+        return self._card_lines() or [
+            f"AC{n}" for n, _ in enumerate(enqueue.acceptance_items(self.item.title), 1)
+        ]
+
     def _uncovered(self, tests: list[str]) -> list[str]:
-        """Return a problem per card line that no hidden test names (the id, any case)."""
+        """Return a problem per card line or acceptance item no hidden test names (id, any case)."""
         text = "\n".join((self.wt / t).read_text(encoding="utf-8") for t in tests)
         return [
-            f"no hidden test covers card line {card}: name it in a test name or comment"
-            for card in self._card_lines()
-            if not re.search(rf"(?<![A-Za-z0-9]){card}(?!\d)", text, re.IGNORECASE)
+            f"no hidden test covers {_what(item_id)}: name it in a test name or comment"
+            for item_id in self._items()
+            if not re.search(rf"(?<![A-Za-z0-9]){item_id}(?!\d)", text, re.IGNORECASE)
         ]
 
     def _test_problems(self, tests: list[str]) -> list[str]:
@@ -410,3 +419,8 @@ def _cache(path: str, ignored_ok: tuple[str, ...]) -> bool:
     return any(
         path == d.rstrip("/") or path.startswith(d) or f"/{d}" in f"/{path}" for d in ignored_ok
     )
+
+
+def _what(item_id: str) -> str:
+    """Name an item in a message: a card line (``A14``) or a ticket acceptance item (``AC1``)."""
+    return f"card line {item_id}" if re.fullmatch(r"[AIQT]\d+", item_id) else item_id

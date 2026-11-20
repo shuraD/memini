@@ -5,7 +5,8 @@ A ticket is one line of a stage queue: ``<id> <module> <deps|-> <sources,...> '<
 word, an IP, a host or a home path, a card ID does not exist, is not baseline or belongs to
 another area than the target file, a named input does not exist on ``main``, a graph name has no
 role in ``names:`` of ``config/graph_schema.yaml`` (the missing roles go to DevOps' inbox), or the
-dependencies are not acyclic. ``enqueue`` writes the text from the cards and appends the line.
+dependencies are not acyclic, or the text lacks its ``Context:``, ``Acceptance:`` or ``Done:``
+part (every ticket carries all three). ``enqueue`` writes the text from the cards and queues it.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from typing import Any
 
 import yaml
 
-from tools.orchestrator import agent_inbox, gates, gitops, state
+from tools.orchestrator import agent_inbox, engine, gates, gitops, state
 from tools.orchestrator.config import Config
 
 _FIELDS = 5
@@ -31,6 +32,8 @@ _PATH = re.compile(r"(?<![\w/.-])((?:src|tests|config|deploy|tools)/[\w./-]+\.\w
 _ENV = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
 _TICK = re.compile(r"`([A-Za-z_][\w.]*)(?:\(\))?`")
 _CYPHER = re.compile(r"[(\[]\w*:`?([A-Za-z_]\w*)")
+_PARTS = ("Context", "Acceptance", "Done")
+_LABELS = r"Context|Acceptance|Done|Owner words|Existing tests that pin this|Consumers of \S+"
 CAPABILITY_FILES = {"A": "archrag", "I": "ingestion", "Q": "query", "T": "tools"}
 
 
@@ -52,6 +55,19 @@ class Card:
     id: str
     text: str
     squad: str
+
+
+def part(text: str, label: str) -> str:
+    """Return the text of a ticket's ``<label>:`` part (up to the next labelled part), or ``""``."""
+    found = re.search(
+        rf"(?<![\w-]){label}:\s*(.*?)\s*(?=(?<![\w-])(?:{_LABELS}):|$)", text, re.DOTALL
+    )
+    return found[1].strip().rstrip(".").strip() if found else ""
+
+
+def acceptance_items(text: str) -> list[str]:
+    """Return the items of a ticket's ``Acceptance:`` part, split on ``;``."""
+    return [i.strip() for i in part(text, "Acceptance").split(";") if i.strip()]
 
 
 def parse(line: str) -> Ticket:
@@ -266,6 +282,11 @@ def problems(
             out.append(
                 f"card {cid} belongs to {card.squad}, whose spec does not list {ticket.module}"
             )
+    out += [
+        f"the ticket has no {label}: part (it needs Context:, Acceptance: and Done:)"
+        for label in _PARTS
+        if not part(ticket.text, label)
+    ]
     out += inputs_problems(cfg, ticket)
     out += _names_problems(cfg, ticket, needs)
     cycle = _cycle([*earlier, ticket])
@@ -282,7 +303,7 @@ def tell_devops(cfg: Config, ticket: Ticket, found: Sequence[str]) -> None:
 
 
 def ticket_text(cfg: Config, ids: Sequence[str]) -> str:
-    """Write a ticket's text from its cards, with the old code's evidence."""
+    """Write a ticket's text from its cards, with the old code's evidence (ticket_cards.txt)."""
     known = cards(cfg)
     lines = []
     for cid in ids:
@@ -292,7 +313,7 @@ def ticket_text(cfg: Config, ids: Sequence[str]) -> str:
             raise ValueError(msg)
         ev = evidence(cfg, cid)
         lines.append(f"{cid}: {card.text}" + (f" (old code: {ev})" if ev else ""))
-    return " ".join(lines)
+    return engine.render(cfg, "ticket_cards", cards=" ".join(lines)).strip()
 
 
 def read_tickets(path: Path) -> list[Ticket]:
@@ -320,8 +341,15 @@ def fix_text(
     *,
     touches: Sequence[str] = (),
     pinned: Sequence[str] = (),
+    context: str = "",
+    acceptance: Sequence[str] = (),
+    done: str = "",
 ) -> str:
     """Write a structured fix ticket's text and append its consumer list (D3).
+
+    ``context`` (what failed: failing test ids, error text, file), ``acceptance`` (one item per
+    entry) and ``done`` (the observable end state) become the ``Context:``, ``Acceptance:`` and
+    ``Done:`` parts; the ready gate refuses a ticket without all three.
 
     ``touches`` are names the change adds to or extends and ``pinned`` are test files already
     known to pin it: every existing test that mentions a touched name, or a removed or renamed
@@ -337,7 +365,8 @@ def fix_text(
     if bad:
         msg = f"rename must be old=new: {', '.join(bad)}"
         raise ValueError(msg)
-    parts = [change.strip().rstrip(".") + ".", f'Owner words: "{owner_words.strip()}".']
+    parts = [f"Context: {context.strip().rstrip('.')}."] if context.strip() else []
+    parts += [change.strip().rstrip(".") + ".", f'Owner words: "{owner_words.strip()}".']
     if remove_names:
         parts.append("Remove: " + ", ".join(remove_names) + ".")
     if renames:
@@ -352,6 +381,11 @@ def fix_text(
         tests |= {f for f in consumers(cfg, name) if f.startswith("tests/")}
     if tests:
         parts.append("Existing tests that pin this: " + ", ".join(sorted(tests)) + ".")
+    items = "; ".join(i.strip().rstrip(".").replace(";", ",") for i in acceptance if i.strip())
+    if items:
+        parts.append(f"Acceptance: {items}.")
+    if done.strip():
+        parts.append(f"Done: {done.strip().rstrip('.')}.")
     return " ".join(parts)
 
 

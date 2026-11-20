@@ -1,0 +1,1 @@
+Context: build these baseline card lines as the old code does them: $cards Acceptance: each card line above holds as written; every card line gets an acceptance criterion and a hidden test; nothing outside the card lines changes. Done: every card line above is implemented, its hidden tests pass under every profile, and nothing else changed.

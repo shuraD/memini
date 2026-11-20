@@ -247,6 +247,9 @@ def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = No
             list(fix.get("renames", [])),
             words,
             touches=list(fix.get("touches", [])),
+            context=str(fix["context"]),
+            acceptance=[str(a) for a in fix["acceptance"]],
+            done=str(fix["done"]),
         )
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         return f"the Planner answer is not a usable fix: {exc}"
@@ -271,6 +274,7 @@ def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = No
 
 
 _OWNER_WORDS = re.compile(r'Owner words: "(.*?)"')
+_TEST_ID = re.compile(r"tests/[\w/.\-]+\.py::[\w\[\]./\-]+")
 
 
 def batch_fix(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = None) -> str:
@@ -286,14 +290,15 @@ def batch_fix(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = 
     found_words = _OWNER_WORDS.search(slice_ticket.text) if slice_ticket else None
     words = str(p.get("owner_words", "")).strip() or (found_words[1] if found_words else "")
     module = str(p.get("module", "")) or (slice_ticket.module if slice_ticket else "")
-    if not words or not module:
+    failing = list(dict.fromkeys(_TEST_ID.findall(move["text"])))
+    if not words or not module or not failing:
         why = (
             f"{task}: the batch suite failed ({move['text'][:300]}); "
-            "a fix ticket needs the owner's words"
+            "a fix ticket needs the owner's words, a module and the failing test ids"
         )
         agent_inbox.notify(cfg, "vp-rnd", why, "planner")
         moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=why)
-        return "no owner words: asked vp-rnd"
+        return "no owner words or failing test ids: asked vp-rnd"
     prompt = engine.render(
         cfg,
         "planner_fix",
@@ -312,6 +317,12 @@ def batch_fix(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = 
             list(fix.get("renames", [])),
             words,
             touches=list(fix.get("touches", [])),
+            context=str(fix["context"]),
+            acceptance=[
+                f"{', '.join(failing)} pass again under every profile",
+                *(str(a) for a in fix["acceptance"]),
+            ],
+            done=str(fix["done"]),
             pinned=sorted(set(re.findall(r"tests/[\w/.\-]+\.py", move["text"]))),
         )
     except (ValueError, KeyError, IndexError, TypeError) as exc:

@@ -52,6 +52,11 @@ size: <estimated lines and hours>
      list: `- A14: Given ..., Then ...` (the criteria) and `- A14 done: <the observable end
      state that means the card line is finished>`. Name the id in a test name or a comment of
      the hidden test that proves each. A spec or test set missing any of these is refused.
+   - A task text with no card line has an `Acceptance:` part and a `Done:` part. Write one
+     acceptance line per item of the `Acceptance:` part (items are separated by `;`), numbered
+     in order: `- AC1: Given ..., Then ...`, `- AC2: ...`; add one line `- done: <the
+     observable end state of the `Done:` part>`. Name each id (AC1, AC2, ...) in a test name or
+     a comment of the hidden test that proves it. A spec or test set missing any is refused.
 
 2. Write the hidden tests: NEW files named test_*.py under: $qa_allow
    - They test the observable behaviour of the spec, not an implementation you imagine.

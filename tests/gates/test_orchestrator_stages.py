@@ -42,7 +42,7 @@ def _spec_md(task_id: str = ID, **fields: Any) -> str:
         "flag": "",
         "behavior": "add(a, b) returns the sum",
         "interface": "memini.core.calc.add(a: int, b: int) -> int",
-        "acceptance": "- Given 1 and 2, Then add returns 3.",
+        "acceptance": "- Given 1 and 2, Then add returns 3.\n- done: add is exported.",
         "out_of_scope": "subtraction",
         "size": "S",
         **fields,

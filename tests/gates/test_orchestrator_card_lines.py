@@ -186,16 +186,20 @@ def test_a_done_line_for_a_card_prefix_does_not_satisfy_a_longer_id(
     assert "A12" in reason
 
 
-def test_a_ticket_naming_no_card_needs_no_card_lines(
+def test_a_ticket_naming_no_card_needs_the_done_line_and_ac_items(
     env: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No card named, nothing extra required (the ordinary acceptance still passes)."""
+    """No card named: no card lines, but one `- done:` line and `- AC<n>:` per Acceptance item."""
+    text = "Add two numbers. Context: c. Acceptance: add returns 3. Done: add is exported."
     code, reason = _run_spec(
         env,
         monkeypatch,
-        "Add two numbers",
-        {"SPEC.md": _spec_md(), "tests/unit/test_calc_hidden.py": FAILING},
+        text,
+        {
+            "SPEC.md": _spec_md(acceptance="- AC1: Given 1 and 2, Then 3.\n- done: exported."),
+            "tests/unit/test_calc_hidden.py": FAILING + "\n\n# AC1\n",
+        },
     )
     assert code == 0, reason
 
