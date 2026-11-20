@@ -347,14 +347,14 @@ def search_entities(
     if level is not None:
         where.append(
             f"EXISTS {{ (n)-[:`{names.relationships.member_of}`]->(c:`{names.labels.community}`) "
-            f"WHERE c.`{p.scope}` = $part AND c.`{p.level}` = $level }}"
+            f"WHERE c.`{p.scope}` = $part AND c.`{p.level}` = $tier }}"
         )
     if domain is not None:
         where.append(f"EXISTS {{ {_domain_path('(n)')} }}")
     params: dict[str, Any] = {
         "part": scope,
         "live": names.statuses.active,
-        "level": level,
+        "tier": level,
         "domain": domain,
     }
     return _cypher_search(
@@ -396,14 +396,14 @@ def search_communities(
     member = f"(:`{names.labels.entity}`)-[:`{names.relationships.member_of}`*1..]->(n)"
     where = [f"n.`{p.scope}` = $part", f"EXISTS {{ {_domain_path(member)} }}"]
     if level is not None:
-        where.append(f"n.`{p.level}` = $level")
+        where.append(f"n.`{p.level}` = $tier")
     return _cypher_search(
         driver,
         index_name,
         names.labels.community,
         vector,
         where=" AND ".join(where),
-        params={"part": scope, "level": level, "domain": domain},
+        params={"part": scope, "tier": level, "domain": domain},
         top_k=top_k,
         database=database,
     )
@@ -446,7 +446,7 @@ def stats(driver: neo4j.Driver, scope: str, *, database: str | None = None) -> d
         f"OPTIONAL MATCH ()-[m:`{names.relationships.member_of}`]->(n) "
         f"WITH n, count(m) AS size "
         f"RETURN count(n) AS c, sum(size) AS members, collect(DISTINCT n.`{p.level}`) AS levels, "
-        f"count(CASE WHEN n.`{p.dirty}` = true THEN 1 END) AS dirty"
+        f"count(CASE WHEN n.`{p.dirty}` = true THEN 1 END) AS stale"
     )[0]
     total, communities = int(cov["t"]), int(comm["c"])
     return {
@@ -457,5 +457,5 @@ def stats(driver: neo4j.Driver, scope: str, *, database: str | None = None) -> d
         "communities": communities,
         "levels": sorted(int(x) for x in comm["levels"]),
         "avg_community_size": int(comm["members"] or 0) / communities if communities else 0.0,
-        "dirty_ratio": int(comm["dirty"]) / communities if communities else 0.0,
+        "dirty_ratio": int(comm["stale"]) / communities if communities else 0.0,
     }

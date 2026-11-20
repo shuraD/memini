@@ -2893,3 +2893,15 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-004', 'tests/unit/test_hold_graph_store_filters.py::test_a14_filter_the_retriever_cannot_express_still_exact');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-004', 'tests/unit/test_hold_graph_store_filters.py::test_a75_stats_dirty_ratio');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-004', 'tests/unit/test_hold_graph_store_filters.py::test_a75_stats_empty_scope_dirty_ratio_zero');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-src/memini/infra/graph/store.py-005', 'store.py spells no graph name from config/graph_schema.yaml as a string ', 'infra', 'slice spec GR-10x1; acceptance tests sealed at 2d029da658', 'active', 'src/memini/infra/graph/store.py', 'C-20261120-0005');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_name_literals.py::test_no_str_constant_equals_a_graph_name');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_name_literals.py::test_no_level_or_dirty_literal');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_name_literals.py::test_no_str_constant_contains_label_or_relationship_as_word');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_name_literals.py::test_scan_sees_fstring_parts');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_name_literals.py::test_search_entities_filtered');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_name_literals.py::test_search_entities_filtered_passes_database');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_name_literals.py::test_search_communities_with_domain');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_names.py::test_store_has_no_string_constant_equal_to_a_graph_name');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_names.py::test_store_has_no_label_or_relationship_inside_a_string_constant');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_names.py::test_search_entities_filtered_binds_every_query_parameter');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-src/memini/infra/graph/store.py-005', 'tests/unit/test_gr10x1_store_names.py::test_search_communities_domain_binds_every_query_parameter');
