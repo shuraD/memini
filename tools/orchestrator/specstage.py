@@ -24,7 +24,17 @@ import shlex
 import shutil
 from pathlib import Path
 
-from tools.orchestrator import dockerexec, engine, enqueue, gates, gitops, spec, stages, state
+from tools.orchestrator import (
+    dockerexec,
+    engine,
+    enqueue,
+    gates,
+    gitops,
+    moves,
+    spec,
+    stages,
+    state,
+)
 from tools.orchestrator.config import CODE_STAGE, Config, StageSpec
 from tools.orchestrator.executor import Executor, executor_for
 
@@ -76,12 +86,14 @@ def run(cfg: Config, stage_spec: StageSpec, task_id: str, job: type[_Job] | None
                 state.inbox_append(
                     cfg, task_id, f"{stage_spec.name} stage {stop.status}", 1, stop.reason
                 )
+                _dead_end(cfg, stage_spec, task_id, stop.status, stop.reason)
                 print(f"{stage_spec.name}/{task_id}: {stop.status}: {stop.reason}")
                 return 1
             except Exception as exc:  # any crash must leave the task blocked, not active
                 reason = f"unexpected error {type(exc).__name__}: {exc}"
                 rec.set(task_id, FAILED, reason)
                 state.inbox_append(cfg, task_id, f"{stage_spec.name} stage error", 1, reason)
+                _dead_end(cfg, stage_spec, task_id, FAILED, reason)
                 print(f"{stage_spec.name}/{task_id}: {FAILED}: {reason}")
                 return 1
             rec.set(task_id, stages.DONE, f"handed to {stage_spec.next}")
@@ -90,6 +102,18 @@ def run(cfg: Config, stage_spec: StageSpec, task_id: str, job: type[_Job] | None
     except state.BusyError as exc:
         print(f"{stage_spec.name}/{task_id}: {exc}")
         return 1
+
+
+def _dead_end(cfg: Config, stage_spec: StageSpec, task_id: str, status: str, reason: str) -> None:
+    """Send a task whose stage ends rejected or failed to the planner (no person relays it)."""
+    moves.post_once(
+        cfg,
+        task_id,
+        sender=stage_spec.name,
+        to="planner",
+        kind="dispute",
+        text=f"{task_id} {stage_spec.name} stage {status}: {reason[:1500]}",
+    )
 
 
 class _Job:

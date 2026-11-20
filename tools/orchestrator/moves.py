@@ -87,6 +87,22 @@ def post(
     return move_id
 
 
+def post_once(
+    cfg: Config, task: str, *, sender: str, to: str, kind: str, text: str, **payload: object
+) -> str | None:
+    """Like ``post``, but nothing is posted while a move of this kind for ``task`` is open."""
+    if has_open(cfg, task, kind):
+        return None
+    return post(cfg, task, sender=sender, to=to, kind=kind, text=text, **payload)
+
+
+def has_open(cfg: Config, task: str, kind: str) -> bool:
+    """Return True when a move of ``kind`` for ``task`` is open."""
+    return any(
+        r["task"] == task and r["kind"] == kind and r["status"] == "open" for r in _read(cfg)
+    )
+
+
 def get(cfg: Config, move_id: str) -> Move:
     """Return the move ``move_id`` (KeyError when unknown)."""
     for row in _read(cfg):

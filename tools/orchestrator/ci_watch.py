@@ -1,7 +1,8 @@
 """CI watch: after a push to main, a red GitHub Actions run posts a move so someone fixes it.
 
 Uses the ``gh`` CLI. Every completed run is seen once (``<state_dir>/ci-seen.json``): green is
-a ledger row, red is a ledger row plus one move to devops carrying the failing tests and errors.
+a ledger row, red is a ledger row plus one batch_failure move to the planner carrying the
+failing tests and errors.
 """
 
 from __future__ import annotations
@@ -70,7 +71,7 @@ def check(cfg: Config, runner: Runner = _gh) -> list[str]:
             f"Errors: {' | '.join(errors) or 'none found'}"
         )
         state.ops_log(cfg, sha, "ci_red", text)
-        moves.post(cfg, sha, sender="ci", to="devops", kind="ci", text=text)
+        moves.post_once(cfg, sha, sender="ci", to="planner", kind="batch_failure", text=text)
         lines.append(f"{sha}: CI RED, move posted ({title})")
     cfg.state_dir.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(seen), encoding="utf-8")

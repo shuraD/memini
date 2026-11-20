@@ -1,4 +1,4 @@
-"""CI watch: a red GitHub run posts one move with the failing tests; nothing is seen twice."""
+"""CI watch: a red GitHub run posts one batch_failure move to the planner; nothing is seen twice."""
 
 from __future__ import annotations
 
@@ -57,8 +57,9 @@ def test_a_green_run_is_recorded_once(cfg: config.Config) -> None:
 
 def test_a_red_run_posts_one_move_with_the_failing_tests(cfg: config.Config) -> None:
     ci_watch.check(cfg, _runner([_run(2, "failure")]))
-    (move,) = moves.open_for(cfg, "devops")
-    assert move["kind"] == "ci" and move["task"] == "abcdef1"
+    (move,) = moves.open_for(cfg, "planner")
+    assert move["kind"] == "batch_failure" and move["task"] == "abcdef1"
+    assert moves.open_for(cfg, "devops") == []
     assert move["text"].count("tests/a.py::test_one") == 1
     assert "test_two" in move["text"]
     assert move["text"].count("KeyError") == 1
@@ -76,7 +77,8 @@ def test_the_seen_file_makes_a_second_call_a_no_op(cfg: config.Config) -> None:
     runner = _runner([_run(4, "failure")])
     ci_watch.check(cfg, runner)
     ci_watch.check(cfg, runner)
-    assert len(moves.open_for(cfg, "devops")) == 1
+    assert len(moves.open_for(cfg, "planner")) == 1
+    assert moves.open_for(cfg, "devops") == []
     assert json.loads((cfg.state_dir / "ci-seen.json").read_text()) == [4]
 
 
@@ -84,7 +86,7 @@ def test_the_first_look_reports_only_the_newest_finished_run(cfg: config.Config)
     runs = [_run(3, "failure"), _run(2, "failure"), _run(1, "failure")]
     lines = ci_watch.check(cfg, _runner(runs))
     assert len(lines) == 1
-    assert len(moves.open_for(cfg, "devops")) == 1
+    assert len(moves.open_for(cfg, "planner")) == 1
 
 
 def test_a_timestamp_before_the_line_is_ignored() -> None:
@@ -96,7 +98,7 @@ def test_wait_returns_when_the_run_of_the_commit_has_finished(cfg: config.Config
     runs = [_run(5, "failure")]
     lines = ci_watch.wait(cfg, "abcdef1234", _runner(runs), timeout_s=5, poll_s=0)
     assert lines and "RED" in lines[0]
-    assert len(moves.open_for(cfg, "devops")) == 1
+    assert len(moves.open_for(cfg, "planner")) == 1
 
 
 def test_wait_gives_up_when_the_run_never_finishes(cfg: config.Config) -> None:

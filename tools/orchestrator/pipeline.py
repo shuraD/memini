@@ -152,6 +152,7 @@ def precheck(
 
 def _refuse(cfg: Config, task_id: str, problems: list[str]) -> Outcome:
     state.inbox_append(cfg, task_id, "spec rejected before dispatch", 1, "; ".join(problems))
+    _dead_end(cfg, task_id, REJECTED, "; ".join(problems))
     return Outcome(task_id, REJECTED, "; ".join(problems))
 
 
@@ -210,9 +211,23 @@ def _run_locked(cfg: Config, task: Task, sp: spec.Spec, known_ids: Collection[st
         worktree=str(outcome.worktree or ""),
         commit=outcome.commit or "",
     )
+    _dead_end(cfg, task.task_id, outcome.status, outcome.reason)
     if role := config.role_for_module(cfg, sp.module):
         agent_inbox.notify(cfg, role, f"{task.task_id}: {outcome.status}: {outcome.reason[:300]}")
     return outcome
+
+
+def _dead_end(cfg: Config, task_id: str, status: str, reason: str) -> None:
+    """Send a task that ends rejected, failed or disputed to the planner (no person relays it)."""
+    if status in (REJECTED, FAILED, DISPUTED) and not moves.has_open(cfg, task_id, "tool"):
+        moves.post_once(
+            cfg,
+            task_id,
+            sender=cfg.worker or "squad",
+            to="planner",
+            kind="dispute",
+            text=f"{task_id} {status}: {reason[:1500]}",
+        )
 
 
 def _tool_broke(cfg: Config, task_id: str, reason: str) -> None:
