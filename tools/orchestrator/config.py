@@ -150,6 +150,8 @@ class Config:
     merge_retries: int
     max_parallel: int
     engine_timeout_s: int
+    standing_reissue_words: str
+    max_rounds: int
     gate_timeout_s: int
     max_budget_usd: str
     forbid_output: str
@@ -382,6 +384,14 @@ def _default_executor(raw: Mapping[str, Any]) -> str:
     return "docker" if ok else "local"
 
 
+def _at_least_one(raw: Mapping[str, Any], key: str, default: int | None) -> int:
+    value = raw[key] if default is None else raw.get(key, default)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        msg = f"{key} must be an integer of at least 1, not {value!r}"
+        raise ConfigError(msg)
+    return value
+
+
 def load_config(
     repo: Path,
     *,
@@ -439,10 +449,8 @@ def load_config(
             msg = f"unknown engine {name!r} (configured: {sorted(engines)})"
             raise ConfigError(msg)
     executor = str(raw.get("executor", "") or _default_executor(raw))
-    max_parallel = int(raw.get("max_parallel", 1))
-    if max_parallel < 1:
-        msg = f"max_parallel must be at least 1, not {max_parallel}"
-        raise ConfigError(msg)
+    max_parallel = _at_least_one(raw, "max_parallel", 1)
+    max_rounds = _at_least_one(raw, "max_rounds", None)
     if executor not in ("local", "docker"):
         msg = f"executor {executor!r} is not available (use 'local' or 'docker')"
         raise ConfigError(msg)
@@ -497,6 +505,8 @@ def load_config(
         merge_retries=int(raw["merge_retries"]),
         max_parallel=max_parallel,
         engine_timeout_s=int(raw["engine_timeout_s"]),
+        standing_reissue_words=str(raw["standing_reissue_words"]),
+        max_rounds=max_rounds,
         gate_timeout_s=int(raw["gate_timeout_s"]),
         max_budget_usd=str(raw["max_budget_usd"]),
         forbid_output=str(raw["forbid_output"]),

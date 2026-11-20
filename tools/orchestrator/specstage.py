@@ -114,6 +114,7 @@ def _dead_end(cfg: Config, stage_spec: StageSpec, task_id: str, status: str, rea
         to="planner",
         kind="dispute",
         text=f"{task_id} {stage_spec.name} stage {status}: {reason[:1500]}",
+        owner_words=cfg.standing_reissue_words,
     )
 
 

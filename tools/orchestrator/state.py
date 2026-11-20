@@ -260,6 +260,15 @@ def read_queue(path: Path) -> list[QueueEntry]:
 OPS_LEDGER = "ops-ledger.jsonl"
 
 
+def ops_count(cfg: Config, task_id: str, action: str) -> int:
+    """Return how many ops-ledger rows of ``action`` target ``task_id``."""
+    path = cfg.state_dir / OPS_LEDGER
+    if not path.exists():
+        return 0
+    rows = (json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x)
+    return sum(1 for r in rows if r["action"] == action and r["target"] == task_id)
+
+
 def ops_log(cfg: Config, task_id: str, action: str, reason: str, **details: object) -> None:
     """Append one line to the ops ledger (``<state_dir>/ops-ledger.jsonl``): who, what, why."""
     record = {

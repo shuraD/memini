@@ -103,6 +103,11 @@ def has_open(cfg: Config, task: str, kind: str) -> bool:
     )
 
 
+def for_task(cfg: Config, task: str, kind: str) -> list[Move]:
+    """Return every move of ``kind`` for ``task``, oldest first."""
+    return [r for r in _read(cfg) if r["task"] == task and r["kind"] == kind]
+
+
 def get(cfg: Config, move_id: str) -> Move:
     """Return the move ``move_id`` (KeyError when unknown)."""
     for row in _read(cfg):

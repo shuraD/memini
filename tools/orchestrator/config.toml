@@ -188,6 +188,12 @@ merge_retries = 3
 # agents, so the cost rate grows with this number.
 max_parallel = 8  # 2 squads x 4 (owner 2026-11-15: dev squads)
 engine_timeout_s = 1800
+# the owner's standing words for an ordinary failure: a dead end carries them, so the Planner
+# reissues without a person
+standing_reissue_words = "Owner 2026-11-20: 'if we see the same fixes in the same slice, ticket + code -> test -> ticket, the second round is allowed, on the third round we stop and wait for me'; the pipeline reissues a ticket after a refused QA test, a gate failure or a Verifier finding, with the same card lines and scope, using the failure text; a change of scope or of a card line is still the owner's"
+# rounds per slice: round 1 is the first run, every further round is one automatic reissue; when
+# a slice would start round max_rounds + 1 the pipeline stops and waits for the owner
+max_rounds = 2
 gate_timeout_s = 1800
 max_budget_usd = "3"
 # a test gate whose output matches this fails: zero skips

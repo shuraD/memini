@@ -229,6 +229,19 @@ def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = No
         agent_inbox.notify(cfg, "vp-rnd", why, "planner")
         moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=why)
         return "no owner words: asked vp-rnd"
+    done = state.ops_count(cfg, task, "reissued")
+    if words == cfg.standing_reissue_words and done >= cfg.max_rounds - 1:
+        rounds = [
+            f"round {i}: {m['text'][:200]}"
+            for i, m in enumerate(moves.for_task(cfg, task, "dispute"), 1)
+        ]
+        why = (
+            f"{task}: round {done + 2} of max_rounds {cfg.max_rounds}, no ticket written; "
+            "it now waits for the owner. Failures so far: " + " | ".join(rounds)
+        )
+        agent_inbox.notify(cfg, "vp-rnd", why, "planner")
+        moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=why)
+        return "round limit reached: asked vp-rnd, waits for the owner"
     queue = cfg.stages[0].queue
     old = next((t for t in enqueue.read_tickets(queue) if t.id == task), None)
     if old is None:

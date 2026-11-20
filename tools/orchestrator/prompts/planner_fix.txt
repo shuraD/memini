@@ -23,9 +23,9 @@ Write the corrected change as a structured fix. Rules:
 - name every identifier the change removes or renames;
 - write the three parts every ticket carries, from the text above only, never invented:
   context = what failed: the failing test ids, the error text and the file;
-  acceptance = a list of short items (no semicolons): what must stay unchanged, and every other
-  observable condition (the failing tests themselves are added for you and pass under every
-  profile);
+  acceptance = a list of short items (no semicolons): the check that failed now passes, what
+  must stay unchanged, and every other observable condition (a failing test id, when one is
+  named, is added for you and passes under every profile);
   done = the observable end state, e.g. "the unit suite is green under every profile".
 
 Answer with exactly one JSON object and nothing else:

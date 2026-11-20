@@ -240,6 +240,7 @@ def _dead_end(cfg: Config, task_id: str, status: str, reason: str) -> None:
             to="planner",
             kind="dispute",
             text=f"{task_id} {status}: {reason[:1500]}",
+            owner_words=cfg.standing_reissue_words,
         )
 
 
@@ -758,6 +759,7 @@ class _Run:
                     to="planner",
                     kind="dispute",
                     text=f"the coder disputes the ticket: {reason}",
+                    owner_words=cfg.standing_reissue_words,
                 )
                 raise _Stop(DISPUTED, f"the coder disputes the tests: {reason}")
             if snap == qa_sha:
