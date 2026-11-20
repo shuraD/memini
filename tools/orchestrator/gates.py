@@ -16,6 +16,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -358,29 +359,55 @@ def graph_names(schema_text: str) -> set[str]:
 
 
 def graph_literal_problems(
-    repo: Path, rev: str, files: Iterable[str], roots: Sequence[str]
+    repo: Path,
+    base: str,
+    rev: str,
+    changes: Iterable[tuple[str, str]],
+    roots: Sequence[str],
 ) -> list[str]:
-    """Refuse a string literal equal to a graph name in the changed graph modules (D12).
+    """Refuse a graph-name string literal that the change adds in the graph modules (D12).
 
     Owner rule 2: code takes graph names from the typed names of ``config/graph_schema.yaml``.
-    A Cypher parameter name is a literal too. Only ``.py`` files under ``roots`` are scanned.
+    A Cypher parameter name is a literal too. ``changes`` are ``(status, path)`` pairs of
+    ``base..rev`` (``gitops.name_status``; a rename comes as delete + add). An added ``.py`` file
+    under ``roots`` counts every literal; a modified one counts each literal value beyond the
+    occurrences it had in ``base``; a deleted one is a problem, never a way to pass the gate.
     """
-    paths = [f for f in files if f.endswith(".py") and any(matches(r, f) for r in roots)]
-    if not paths:
-        return []
-    names = graph_names(gitops.out(repo, "show", f"{rev}:config/graph_schema.yaml"))
     out: list[str] = []
-    for path in paths:
-        try:
-            tree = ast.parse(gitops.out(repo, "show", f"{rev}:{path}"))
-        except (SyntaxError, ValueError):
-            continue  # the lint gates report broken syntax
-        out += [
-            f"graph name literal {n.value!r} at {path}:{n.lineno}: use the typed name"
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in names
-        ]
+    todo: list[tuple[str, str]] = []
+    for status, path in changes:
+        if not path.endswith(".py") or not any(matches(r, path) for r in roots):
+            continue
+        if status == "D":
+            out.append(f"deleted file in a graph module: {path}")
+        else:
+            todo.append((status, path))
+    if not todo:
+        return out
+    names = graph_names(gitops.out(repo, "show", f"{rev}:config/graph_schema.yaml"))
+    for status, path in todo:
+        new = _name_literals(repo, rev, path, names)
+        old = _name_literals(repo, base, path, names) if status == "M" else []
+        spare = Counter(v for v, _ in old)
+        for value, line in new:
+            if spare[value] > 0:
+                spare[value] -= 1  # the file already had this occurrence
+            else:
+                out.append(f"graph name literal {value!r} at {path}:{line}: use the typed name")
     return out
+
+
+def _name_literals(repo: Path, rev: str, path: str, names: set[str]) -> list[tuple[str, int]]:
+    """Return ``(value, line)`` of each graph-name string literal of ``path`` at ``rev``."""
+    try:
+        tree = ast.parse(gitops.out(repo, "show", f"{rev}:{path}"))
+    except (SyntaxError, ValueError):
+        return []  # the lint gates report broken syntax
+    return [
+        (n.value, n.lineno)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in names
+    ]
 
 
 def log_line(log: Path, label: str) -> None:

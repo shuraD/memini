@@ -56,7 +56,9 @@ def test_graph_names_cover_labels_relationships_properties_and_values() -> None:
 def test_a_graph_name_literal_is_refused_including_a_cypher_parameter(tmp_path: Path) -> None:
     code = 'LABEL = "Entity"\nparams = {"scope": 1}\nquery = "MATCH (n) RETURN n"\n'
     repo = _repo(tmp_path, {"src/memini/infra/graph/store.py": code})
-    found = gates.graph_literal_problems(repo, "HEAD", ["src/memini/infra/graph/store.py"], ROOTS)
+    found = gates.graph_literal_problems(
+        repo, "HEAD", "HEAD", [("A", "src/memini/infra/graph/store.py")], ROOTS
+    )
     assert len(found) == 2
     assert "'Entity'" in found[0] and "'scope'" in found[1]
 
@@ -64,16 +66,16 @@ def test_a_graph_name_literal_is_refused_including_a_cypher_parameter(tmp_path: 
 def test_typed_names_and_other_strings_pass(tmp_path: Path) -> None:
     code = 'names = load()\nq = f"MATCH (n:`{names.entity}`) RETURN n"\nx = "not a graph name"\n'
     repo = _repo(tmp_path, {"src/memini/infra/graph/store.py": code})
-    assert (
-        gates.graph_literal_problems(repo, "HEAD", ["src/memini/infra/graph/store.py"], ROOTS) == []
-    )
+    changes = [("A", "src/memini/infra/graph/store.py")]
+    assert gates.graph_literal_problems(repo, "HEAD", "HEAD", changes, ROOTS) == []
 
 
 def test_only_changed_files_under_the_graph_paths_are_scanned(tmp_path: Path) -> None:
     bad = 'x = "Entity"\n'
     repo = _repo(tmp_path, {"src/memini/other.py": bad, "src/memini/infra/graph/old.py": bad})
-    assert gates.graph_literal_problems(repo, "HEAD", ["src/memini/other.py"], ROOTS) == []
-    assert gates.graph_literal_problems(repo, "HEAD", [], ROOTS) == []
+    other = [("A", "src/memini/other.py"), ("M", "src/memini/other.py")]
+    assert gates.graph_literal_problems(repo, "HEAD", "HEAD", other, ROOTS) == []
+    assert gates.graph_literal_problems(repo, "HEAD", "HEAD", [], ROOTS) == []
 
 
 def test_the_shipped_config_lists_the_graph_paths() -> None:
