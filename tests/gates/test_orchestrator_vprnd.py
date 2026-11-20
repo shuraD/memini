@@ -30,7 +30,12 @@ def cfg(tmp_path: Path) -> config.Config:
     squads = tmp_path / "mvp" / "squads"
     squads.mkdir(parents=True)
     return config.load_config(
-        ROOT, overrides={"state_dir": str(tmp_path / "state"), "cards_dir": str(squads)}
+        ROOT,
+        overrides={
+            "state_dir": str(tmp_path / "state"),
+            "cards_dir": str(squads),
+            "inbox": str(tmp_path / "inbox" / "OWNER_INBOX.md"),  # never the real owner inbox
+        },
     )
 
 

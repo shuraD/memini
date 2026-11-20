@@ -1,9 +1,10 @@
-"""The vp-rnd role in the autonomous flow: answer an ``ask`` move from DECISIONS.md or escalate.
+"""The vp-rnd role in the autonomous flow: answer an ``ask`` move, decide Tier 1, or escalate.
 
-No model call. A decision block of ``DECISIONS.md`` (``**D-nn ...**``) that mentions the task or a
-card id of the question in its heading and carries an ``Owner:`` line gives the owner's words (a
-passing mention in the body is no decision about the task); otherwise the question goes to the
-owner inbox.
+A decision block of ``DECISIONS.md`` (``**D-nn ...**``) that mentions the task or a card id of
+the question in its heading and carries an ``Owner:`` line gives the owner's words (a passing
+mention in the body is no decision about the task); no model call. Otherwise one model run (the
+Planner's one-shot, no tools; prompt ``vprnd.txt``) decides a Tier 1 question or sends it up to
+the owner inbox and tells the vp-rnd session.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 
-from tools.orchestrator import docfix, enqueue, gitops, moves, state
+from tools.orchestrator import agent_inbox, docfix, engine, enqueue, gitops, moves, planner, state
 from tools.orchestrator.config import Config
 
 _ID = re.compile(r"\b[A-Z]{1,3}-\d+[a-z]?\b")
@@ -26,7 +27,69 @@ def answer(cfg: Config, move: moves.Move) -> str:
         owner = re.search(r"^Owner:[ \t]*(\S.*)$", block, re.MULTILINE)
         if owner and ids & set(_ID.findall(block.splitlines()[0])):
             return f"owner words: {owner[0].strip()}"
-    state.inbox_append(cfg, move["task"], "needs the owner", 2, move["text"])
+    return _decide(cfg, move, text)
+
+
+_DECISIONS_CHARS = 6000
+_FAILURE = re.compile(
+    r"cannot be built as written \((.*)\); a ticket needs|\| failure: (.*)", re.DOTALL
+)
+
+
+def _decide(cfg: Config, move: moves.Move, decisions: str) -> str:
+    """Ask the model once; approve a Tier 1 answer, else escalate to the owner and tell vp-rnd."""
+    task = move["task"]
+    if move["text"].startswith("scope: "):
+        return _escalate(cfg, move)
+    if state.ops_count(cfg, task, "reissued") >= cfg.max_rounds - 1:
+        return _escalate(cfg, move, history=True)
+    try:
+        ticket = next((t for t in enqueue.read_tickets(cfg.stages[0].queue) if t.id == task), None)
+        prompt = engine.render(
+            cfg,
+            "vprnd",
+            task=task,
+            kind=move["kind"],
+            text=move["text"],
+            cards=enqueue.card_text(cfg, ticket.text)[1] if ticket else "none",
+            decisions=decisions[-_DECISIONS_CHARS:] or "none",
+        )
+        found = re.findall(r"\{.*\}", planner._ask(cfg, prompt), re.DOTALL)
+        verdict = json.loads(found[0])
+        reason = str(verdict["reason"]).strip()
+        if verdict["decision"] == "approve" and verdict["tier"] == 1 and reason:
+            state.ops_log(cfg, task, "vprnd_decided", reason)
+            words = f"vp-rnd decision (tier 1) {state._now()[:10]}: {reason}"
+            found_failure = _FAILURE.search(move["text"])
+            failure = (found_failure[1] or found_failure[2]) if found_failure else None
+            if failure:
+                moves.post_once(
+                    cfg,
+                    task,
+                    sender="vp-rnd",
+                    to="planner",
+                    kind="dispute",
+                    text=failure,
+                    owner_words=words,
+                    validated=move["text"].startswith("slicing: "),
+                )
+            return f"owner words: {words}"
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        pass
+    return _escalate(cfg, move)
+
+
+def _escalate(cfg: Config, move: moves.Move, *, history: bool = False) -> str:
+    """Write the owner inbox entry (with the failures so far at the round limit), tell vp-rnd."""
+    task, text = move["task"], move["text"]
+    if history:
+        rounds = [
+            f"round {i}: {m['text'][:200]}"
+            for i, m in enumerate(moves.for_task(cfg, task, "dispute"), 1)
+        ]
+        text += " Failures so far: " + " | ".join(rounds)
+    state.inbox_append(cfg, task, "needs the owner", 2, text)
+    agent_inbox.notify(cfg, "vp-rnd", f"{task}: escalated to the owner (tier 2): {text}")
     return "escalated to the owner"
 
 

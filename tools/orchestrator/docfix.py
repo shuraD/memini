@@ -38,6 +38,19 @@ def places(cfg: Config, card: str) -> list[str]:
     ]
 
 
+def versions(cfg: Config) -> dict[str, str]:
+    """Return each ``VERSIONS.md`` line id mapped to its version (the ``##`` section it sits in)."""
+    path = cfg.cards_dir.parent / "capabilities" / "VERSIONS.md"
+    found: dict[str, str] = {}
+    section = ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            section = line[3:].strip()
+        elif row := _ROW.match(line):
+            found[row[1]] = section
+    return found
+
+
 def drift(cfg: Config) -> list[str]:
     """Return the cards whose text differs between a squad ``CARD.md`` and ``VERSIONS.md``."""
     path = cfg.cards_dir.parent / "capabilities" / "VERSIONS.md"

@@ -1,0 +1,30 @@
+You are the Planner. You work once and stop. Use no tools: judge only the text below.
+A ticket failed in the pipeline. Check whether its definition is wrong before it is corrected.
+
+The ticket:
+-----
+$ticket
+-----
+
+The failure:
+-----
+$failure
+-----
+
+The card lines of the ticket (the one text every agent reads):
+-----
+$cards
+-----
+
+The version and squad of each card line:
+-----
+$versions
+-----
+
+Answer with one verdict:
+- "ok": the ticket matches its version and its cards; the failure is something else.
+- "slicing": the cards and the version are right but the slice cut is wrong: a card's behaviour cannot be built or reached inside the slice, cards that belong together are split, or one slice holds cards of different layers. A re-cut within the same cards and the same version fixes it.
+- "scope": a card, the version split or the scope itself would have to change.
+
+Answer with exactly one JSON object and nothing else:
+{"verdict": "ok" or "slicing" or "scope", "reason": "<one or two sentences>"}

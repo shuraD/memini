@@ -19,6 +19,7 @@ from pathlib import Path
 
 from tools.orchestrator import (
     agent_inbox,
+    docfix,
     engine,
     enqueue,
     gates,
@@ -214,7 +215,52 @@ def _supersede(cfg: Config, old: enqueue.Ticket, reason: str, move_id: str) -> N
     gitops.set_aside(cfg.repo, cfg.worktrees_dir, cfg.branch_prefix, task_id, f"sup-{move_id}")
 
 
-def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = None) -> str:
+def _validate(
+    cfg: Config, move: moves.Move, old: enqueue.Ticket, ask: Callable[[str], str] | None
+) -> str:
+    """Check the ticket against its version and cards; on slicing or scope ask vp-rnd.
+
+    Returns the verdict (``ok`` on any error or unusable answer, so the reissue goes on).
+    """
+    task = move["task"]
+    try:
+        ids, card_lines = enqueue.card_text(cfg, old.text)
+        try:
+            version = docfix.versions(cfg)
+        except OSError:
+            version = {}
+        known = enqueue.cards(cfg)
+        where = "\n".join(
+            f"{i}: version {version.get(i, 'unknown (VERSIONS.md could not be read)')}, "
+            f"squad {known[i].squad}"
+            for i in ids
+        )
+        prompt = engine.render(
+            cfg,
+            "planner_validate",
+            ticket=old.text,
+            failure=move["text"],
+            cards=card_lines or "none",
+            versions=where or "none",
+        )
+        found = re.findall(r"\{.*\}", (ask or (lambda q: _ask(cfg, q)))(prompt), re.DOTALL)
+        verdict = json.loads(found[0])
+        kind, reason = verdict["verdict"], str(verdict["reason"]).strip()
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return "ok"
+    if kind not in ("slicing", "scope"):
+        kind = "ok"
+    state.ops_log(cfg, task, "ticket_validated", f"{kind}: {reason}")
+    if kind != "ok":
+        text = f"{kind}: {reason} | failure: {move['text']}"
+        agent_inbox.notify(cfg, "vp-rnd", f"{task}: {text}", "planner")
+        moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=text)
+    return str(kind)
+
+
+def reissue(  # noqa: PLR0911
+    cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = None
+) -> str:
     """Serve a ``dispute`` move: write the D3 change ticket and send it to QA's ready review.
 
     The owner's words come with the move; without them nothing is written and vp-rnd is asked.
@@ -230,7 +276,8 @@ def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = No
         moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=why)
         return "no owner words: asked vp-rnd"
     done = state.ops_count(cfg, task, "reissued")
-    if words == cfg.standing_reissue_words and done >= cfg.max_rounds - 1:
+    machine = words == cfg.standing_reissue_words or words.startswith("vp-rnd decision")
+    if machine and done >= cfg.max_rounds - 1:
         rounds = [
             f"round {i}: {m['text'][:200]}"
             for i, m in enumerate(moves.for_task(cfg, task, "dispute"), 1)
@@ -246,6 +293,10 @@ def reissue(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = No
     old = next((t for t in enqueue.read_tickets(queue) if t.id == task), None)
     if old is None:
         return f"{task} has no ticket in {queue.name}"
+    if machine and not p.get("validated"):
+        verdict = _validate(cfg, move, old, ask)
+        if verdict in ("slicing", "scope"):
+            return f"validated: {verdict}, asked vp-rnd"
     prompt = engine.render(
         cfg, "planner_fix", ticket=old.text, reason=move["text"], owner_words=words
     )
