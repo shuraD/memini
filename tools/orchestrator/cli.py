@@ -31,6 +31,7 @@ from tools.orchestrator import (
     planstage,
     reconcile,
     schedule,
+    skeleton,
     spec,
     specstage,
     stages,
@@ -385,6 +386,26 @@ def _cmd_doc_drift(cfg: config.Config, args: argparse.Namespace) -> int:
     found = docfix.drift(cfg)
     print("\n".join(found) or "card files and VERSIONS.md agree")
     return 1 if found else 0
+
+
+def _cmd_skeleton_check(cfg: config.Config, args: argparse.Namespace) -> int:
+    doc = args.doc or cfg.cards_dir.parent / "capabilities" / f"SKELETON-{args.version}.md"
+    rows, bad = skeleton.read(doc)
+    squads = {c.id: c.squad for c in enqueue.cards(cfg).values()}
+    report = skeleton.check(rows, args.version, docfix.versions(cfg), squads)
+    report.problems[:0] = bad
+    print(f"skeleton {doc} against version {args.version}")
+    print(skeleton.render(report))
+    differs: list[str] = []
+    if args.repo:
+
+        def source(file: str) -> str | None:
+            res = gitops.git(cfg.repo, "show", f"HEAD:{file}", check=False)
+            return res.stdout if res.returncode == 0 else None
+
+        differs = skeleton.compare(rows, source)
+        print("\n".join([f"code at HEAD of {cfg.repo} ({len(differs)}):", *differs]))
+    return 0 if report.ok and not differs else 1
 
 
 def _cmd_serve_moves(cfg: config.Config, args: argparse.Namespace) -> int:
@@ -797,6 +818,10 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     df.add_argument("--evidence", default="", help="the old-code evidence column, if it changes")
     df.add_argument("--from", dest="sender", default="devops")
     add("doc-drift", "list cards whose text differs between a squad card and VERSIONS.md")
+    sk = add("skeleton-check", "check a version's skeleton document against its cards (and code)")
+    sk.add_argument("version", help="the version section of VERSIONS.md, e.g. baseline")
+    sk.add_argument("--doc", type=Path, help="the skeleton document (default: next to VERSIONS.md)")
+    sk.add_argument("--repo", action="store_true", help="also compare with the code at HEAD")
     sm = add("serve-moves", "serve the open moves sent to a role once (the runner calls this)")
     sm.add_argument("role")
     md = add("move-done", "close a tool move: the tool is fixed, the waiting task is released")
@@ -838,6 +863,7 @@ _COMMANDS = {
     "move-done": _cmd_move_done,
     "doc-fix": _cmd_doc_fix,
     "doc-drift": _cmd_doc_drift,
+    "skeleton-check": _cmd_skeleton_check,
     "ci-check": _cmd_ci_check,
     "ci-wait": _cmd_ci_wait,
     "serve-moves": _cmd_serve_moves,
