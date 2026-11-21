@@ -20,6 +20,8 @@ _ID = re.compile(r"\b[A-Z]{1,3}-\d+[a-z]?\b")
 
 def answer(cfg: Config, move: moves.Move) -> str:
     """Return ``owner words: <line>`` when a decision covers the move, else escalate."""
+    if state.ops_count(cfg, move["task"], "reissued") >= cfg.max_rounds - 1:
+        return _escalate(cfg, move, history=True)  # the limit binds before any decision lookup
     path = cfg.cards_dir.parent / "DECISIONS.md"
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     ids = {move["task"], *_ID.findall(move["text"])}
@@ -41,8 +43,6 @@ def _decide(cfg: Config, move: moves.Move, decisions: str) -> str:
     task = move["task"]
     if move["text"].startswith("scope: "):
         return _escalate(cfg, move)
-    if state.ops_count(cfg, task, "reissued") >= cfg.max_rounds - 1:
-        return _escalate(cfg, move, history=True)
     try:
         ticket = next((t for t in enqueue.read_tickets(cfg.stages[0].queue) if t.id == task), None)
         prompt = engine.render(
@@ -82,7 +82,7 @@ def _decide(cfg: Config, move: moves.Move, decisions: str) -> str:
 def _escalate(cfg: Config, move: moves.Move, *, history: bool = False) -> str:
     """Write the owner inbox entry (with the failures so far at the round limit), tell vp-rnd."""
     task, text = move["task"], move["text"]
-    if history:
+    if history and "Failures so far:" not in text:  # the Planner's ask may carry them already
         rounds = [
             f"round {i}: {m['text'][:200]}"
             for i, m in enumerate(moves.for_task(cfg, task, "dispute"), 1)

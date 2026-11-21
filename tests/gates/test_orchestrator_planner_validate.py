@@ -3,9 +3,11 @@
 Rules (owner order 2026-11-20): only a machine dispute (the standing words, or words starting
 ``vp-rnd decision``) is validated, and only when the payload is not ``validated``; verdict ok, an
 error or an unusable answer lets the reissue go on; verdict slicing / scope asks vp-rnd with
-``<kind>: <reason> | failure: <failure>``, writes no ticket and logs ``ticket_validated``; a task
-at its round limit never reaches validation. ``docfix.versions`` maps a card id to its version.
-The chain with vp-rnd is bounded by ``max_rounds``.
+``<kind>: <reason> | failure: <failure>``, writes no ticket and logs ``ticket_validated``. A task
+at its round limit (owner 2026-11-21, F-orchestrator-069) is validated once, gets no fix and no
+ticket, and its verdict travels in the one ask as ``Planner validation: <verdict>: <reason>.``
+(details in ``test_orchestrator_limit_validation.py``). ``docfix.versions`` maps a card id to its
+version. The chain with vp-rnd is bounded by ``max_rounds``.
 """
 
 # ruff: noqa: F811
@@ -215,13 +217,16 @@ def test_a_falsy_validated_flag_is_still_validated(cfg: config.Config, flag: obj
     assert len(model.validate_prompts) == 1
 
 
-def test_a_task_at_its_round_limit_never_reaches_validation(cfg: config.Config) -> None:
-    """Rule: the gate runs first: at the limit no model call at all, an ask with the history."""
+def test_a_task_at_its_round_limit_is_validated_once_and_gets_no_fix(cfg: config.Config) -> None:
+    """Rule: at the limit one validation call, no fix call; the ask carries verdict and history."""
     state.ops_log(cfg, "T-9", "reissued", "earlier")
-    model = Model(_verdict("ok"))
+    model = Model(_verdict("ok", "the ticket matches its cards"))
     result = planner.reissue(cfg, _dispute(cfg), model)
-    assert result.startswith("round limit reached")
-    assert model.validate_prompts == [] and model.fix_prompts == []
+    assert result == "round limit reached: asked vp-rnd, waits for the owner"
+    assert len(model.validate_prompts) == 1 and model.fix_prompts == []
+    (ask,) = _asks(cfg)
+    assert "Planner validation: ok: the ticket matches its cards. Failures so far: " in ask["text"]
+    assert f"round 1: {FAILURE}" in ask["text"]
 
 
 def test_a_vp_rnd_decision_is_bound_by_the_round_gate(cfg: config.Config) -> None:
@@ -380,7 +385,7 @@ def test_a_vp_rnd_decision_becomes_a_ticket(cfg: config.Config) -> None:
 def test_the_chain_ends_in_the_owner_inbox_at_max_rounds(
     cfg: config.Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Rule: after one reissue the next dispute is asked, then escalated to the owner (bounded)."""
+    """Rule: after one reissue the next dispute is validated, asked, then escalated (bounded)."""
     cfg = dataclasses.replace(cfg, inbox=cfg.state_dir.parent / "owner-inbox" / "INBOX.md")
     model = Model(_verdict("ok"))
     _dispute(cfg, text="round one failure")
@@ -388,8 +393,11 @@ def test_the_chain_ends_in_the_owner_inbox_at_max_rounds(
     assert state.ops_count(cfg, "T-9", "reissued") == 1
     _dispute(cfg, text="round two failure")  # the reissued ticket fails again
     model.validation = _verdict("slicing")
-    _serve_planner(cfg, model)  # at the limit: an ask with the history, no ticket, no validation
-    assert len(model.validate_prompts) == 1  # only round one was validated
+    _serve_planner(cfg, model)  # at the limit: validated, one ask with verdict and history
+    assert len(model.validate_prompts) == 2  # round one and the limit round, once each
+    assert len(model.fix_prompts) == 1  # no fix at the limit
+    (ask,) = _asks(cfg)  # no separate 'slicing: ... | failure: ...' ask
+    assert "| failure:" not in ask["text"]
     queue_before = _queue(cfg)
     calls: list[str] = []
 
@@ -402,6 +410,7 @@ def test_the_chain_ends_in_the_owner_inbox_at_max_rounds(
     assert calls == []  # vp-rnd does not ask the model at the limit
     text = cfg.inbox.read_text()
     assert "round one failure" in text and "round two failure" in text
+    assert "Planner validation: slicing: the cut splits one behaviour. " in text
     assert moves.open_for(cfg, "planner") == []
     assert _queue(cfg) == queue_before
     assert state.ops_count(cfg, "T-9", "reissued") == 1

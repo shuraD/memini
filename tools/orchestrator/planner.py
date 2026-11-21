@@ -215,6 +215,41 @@ def _supersede(cfg: Config, old: enqueue.Ticket, reason: str, move_id: str) -> N
     gitops.set_aside(cfg.repo, cfg.worktrees_dir, cfg.branch_prefix, task_id, f"sup-{move_id}")
 
 
+def _verdict(
+    cfg: Config, move: moves.Move, old: enqueue.Ticket, ask: Callable[[str], str] | None
+) -> tuple[str, str]:
+    """Ask the model once whether the ticket matches its version and cards; log the verdict.
+
+    Returns ``(verdict, reason)``; raises on a model error or an unusable answer.
+    """
+    ids, card_lines = enqueue.card_text(cfg, old.text)
+    try:
+        version = docfix.versions(cfg)
+    except OSError:
+        version = {}
+    known = enqueue.cards(cfg)
+    where = "\n".join(
+        f"{i}: version {version.get(i, 'unknown (VERSIONS.md could not be read)')}, "
+        f"squad {known[i].squad}"
+        for i in ids
+    )
+    prompt = engine.render(
+        cfg,
+        "planner_validate",
+        ticket=old.text,
+        failure=move["text"],
+        cards=card_lines or "none",
+        versions=where or "none",
+    )
+    found = re.findall(r"\{.*\}", (ask or (lambda q: _ask(cfg, q)))(prompt), re.DOTALL)
+    verdict = json.loads(found[0])
+    kind, reason = verdict["verdict"], str(verdict["reason"]).strip()
+    if kind not in ("slicing", "scope"):
+        kind = "ok"
+    state.ops_log(cfg, move["task"], "ticket_validated", f"{kind}: {reason}")
+    return str(kind), reason
+
+
 def _validate(
     cfg: Config, move: moves.Move, old: enqueue.Ticket, ask: Callable[[str], str] | None
 ) -> str:
@@ -224,38 +259,17 @@ def _validate(
     """
     task = move["task"]
     try:
-        ids, card_lines = enqueue.card_text(cfg, old.text)
-        try:
-            version = docfix.versions(cfg)
-        except OSError:
-            version = {}
-        known = enqueue.cards(cfg)
-        where = "\n".join(
-            f"{i}: version {version.get(i, 'unknown (VERSIONS.md could not be read)')}, "
-            f"squad {known[i].squad}"
-            for i in ids
-        )
-        prompt = engine.render(
-            cfg,
-            "planner_validate",
-            ticket=old.text,
-            failure=move["text"],
-            cards=card_lines or "none",
-            versions=where or "none",
-        )
-        found = re.findall(r"\{.*\}", (ask or (lambda q: _ask(cfg, q)))(prompt), re.DOTALL)
-        verdict = json.loads(found[0])
-        kind, reason = verdict["verdict"], str(verdict["reason"]).strip()
+        kind, reason = _verdict(cfg, move, old, ask)
     except (OSError, ValueError, KeyError, IndexError, TypeError):
         return "ok"
-    if kind not in ("slicing", "scope"):
-        kind = "ok"
-    state.ops_log(cfg, task, "ticket_validated", f"{kind}: {reason}")
     if kind != "ok":
         text = f"{kind}: {reason} | failure: {move['text']}"
         agent_inbox.notify(cfg, "vp-rnd", f"{task}: {text}", "planner")
         moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=text)
-    return str(kind)
+    return kind
+
+
+_CHECKED_CHARS = 300
 
 
 def reissue(  # noqa: PLR0911
@@ -264,6 +278,8 @@ def reissue(  # noqa: PLR0911
     """Serve a ``dispute`` move: write the D3 change ticket and send it to QA's ready review.
 
     The owner's words come with the move; without them nothing is written and vp-rnd is asked.
+    At the round limit no ticket is written either: the ticket is validated first and the
+    verdict goes to vp-rnd (and on to the owner) with the ask.
     Returns the move's result line.
     """
     task, p = move["task"], move["payload"]
@@ -277,20 +293,29 @@ def reissue(  # noqa: PLR0911
         return "no owner words: asked vp-rnd"
     done = state.ops_count(cfg, task, "reissued")
     machine = words == cfg.standing_reissue_words or words.startswith("vp-rnd decision")
+    queue = cfg.stages[0].queue
+    old = next((t for t in enqueue.read_tickets(queue) if t.id == task), None)
     if machine and done >= cfg.max_rounds - 1:
+        # the Planner looks at the cause first; an error there never opens the round gate
+        try:
+            if old is None:
+                raise ValueError(f"{task} has no ticket in {queue.name}")
+            checked = ": ".join(_verdict(cfg, move, old, ask))
+        except Exception as exc:
+            checked = f"failed: {exc}"
+        checked = " ".join(checked.split())[:_CHECKED_CHARS].rstrip(".")
         rounds = [
             f"round {i}: {m['text'][:200]}"
             for i, m in enumerate(moves.for_task(cfg, task, "dispute"), 1)
         ]
         why = (
             f"{task}: round {done + 2} of max_rounds {cfg.max_rounds}, no ticket written; "
-            "it now waits for the owner. Failures so far: " + " | ".join(rounds)
+            f"it now waits for the owner. Planner validation: {checked}. "
+            "Failures so far: " + " | ".join(rounds)
         )
         agent_inbox.notify(cfg, "vp-rnd", why, "planner")
         moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=why)
         return "round limit reached: asked vp-rnd, waits for the owner"
-    queue = cfg.stages[0].queue
-    old = next((t for t in enqueue.read_tickets(queue) if t.id == task), None)
     if old is None:
         return f"{task} has no ticket in {queue.name}"
     if machine and not p.get("validated"):
