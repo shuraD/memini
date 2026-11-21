@@ -374,7 +374,8 @@ modules = ["src/memini/core/units/", "src/memini/infra/ingest/", "src/memini/cor
 
 # Role sessions (D-10): each role runs its own queue with its own workers, started by its own
 # session (MEMINI_ROLE). A role's queue is one of the code_queues above or a stage; the
-# planner and devops have none: they work through the moves of tasks sent to them.
+# planner, architect, vp-rnd and devops have none: they work through the moves of tasks sent
+# to them. The architect answers a slicing question about a ticket that crosses squads.
 [roles.dev1]
 queue = "llm-providers"
 workers = 4
@@ -396,6 +397,9 @@ queue = "spec"
 workers = 2
 
 [roles.planner]
+workers = 1
+
+[roles.architect]
 workers = 1
 
 [roles.vp-rnd]

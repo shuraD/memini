@@ -38,10 +38,21 @@ _FAILURE = re.compile(
 )
 
 
+def one_line(reason: object) -> str:
+    """Return a model's reason as one line of text; anything that is not text gives ``""``.
+
+    The reason ends up in owner words and in a ticket line: a line break in it would forge
+    words or split the ticket.
+    """
+    return " ".join(reason.split()) if isinstance(reason, str) else ""
+
+
 def _decide(cfg: Config, move: moves.Move, decisions: str) -> str:
     """Ask the model once; approve a Tier 1 answer, else escalate to the owner and tell vp-rnd."""
     task = move["task"]
-    if move["text"].startswith("scope: "):
+    # an ask the architect passed on carries its finding first: "architect: <finding> | <ask>"
+    asked = move["text"].split(" | ", 1)[-1] if move["from"] == "architect" else move["text"]
+    if asked.startswith("scope: "):
         return _escalate(cfg, move)
     try:
         ticket = next((t for t in enqueue.read_tickets(cfg.stages[0].queue) if t.id == task), None)
@@ -56,27 +67,35 @@ def _decide(cfg: Config, move: moves.Move, decisions: str) -> str:
         )
         found = re.findall(r"\{.*\}", planner._ask(cfg, prompt), re.DOTALL)
         verdict = json.loads(found[0])
-        reason = str(verdict["reason"]).strip()
+        reason = one_line(verdict["reason"])
         if verdict["decision"] == "approve" and verdict["tier"] == 1 and reason:
             state.ops_log(cfg, task, "vprnd_decided", reason)
             words = f"vp-rnd decision (tier 1) {state._now()[:10]}: {reason}"
-            found_failure = _FAILURE.search(move["text"])
-            failure = (found_failure[1] or found_failure[2]) if found_failure else None
-            if failure:
-                moves.post_once(
-                    cfg,
-                    task,
-                    sender="vp-rnd",
-                    to="planner",
-                    kind="dispute",
-                    text=failure,
-                    owner_words=words,
-                    validated=move["text"].startswith("slicing: "),
-                )
+            hand_back(cfg, task, "vp-rnd", asked, words)
             return f"owner words: {words}"
     except (OSError, ValueError, KeyError, TypeError, IndexError):
         pass
     return _escalate(cfg, move)
+
+
+def hand_back(cfg: Config, task: str, sender: str, asked: str, words: str) -> None:
+    """Send the failure an ask quotes back to the Planner as a dispute that carries ``words``.
+
+    A ``slicing: `` ask was validated by the Planner already, so the dispute says so.
+    """
+    found = _FAILURE.search(asked)
+    failure = (found[1] or found[2]) if found else None
+    if failure:
+        moves.post_once(
+            cfg,
+            task,
+            sender=sender,
+            to="planner",
+            kind="dispute",
+            text=failure,
+            owner_words=words,
+            validated=asked.startswith("slicing: "),
+        )
 
 
 def _escalate(cfg: Config, move: moves.Move, *, history: bool = False) -> str:

@@ -2,12 +2,12 @@
 
 A SessionStart and UserPromptSubmit hook runs ``python -m tools.orchestrator.role_start`` in a
 session started with ``MEMINI_ROLE=<role>`` (or ``MEMINI_SQUAD``, which the squad sessions
-already set): dev1..dev4, qa, planner, devops. It starts one detached supervisor for the role,
-once (a session that was open before the hook existed starts it on its next prompt): the
-supervisor runs the role's queue (``run-queue --role``) again and again and serves the moves
-sent to the role, so work that arrives later is picked up without anyone typing a command. A
-role that is not in ``[roles]`` starts nothing. Every supervisor also restarts a dead peer on
-each cycle (``start_all``), so one live runner keeps all of them alive.
+already set): dev1..dev4, qa, planner, architect, vp-rnd, devops. It starts one detached
+supervisor for the role, once (a session that was open before the hook existed starts it on its
+next prompt): the supervisor runs the role's queue (``run-queue --role``) again and again and
+serves the moves sent to the role, so work that arrives later is picked up without anyone typing
+a command. A role that is not in ``[roles]`` starts nothing. Every supervisor also restarts a
+dead peer on each cycle (``start_all``), so one live runner keeps all of them alive.
 """
 
 from __future__ import annotations

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.orchestrator import (
+    architect,
     ci_watch,
     config,
     docfix,
@@ -124,6 +125,7 @@ HANDLERS: dict[str, dict[str, moves.Handler]] = {
         "batch_failure": planner.batch_fix,
         "doc_review": docfix.review,
     },
+    "architect": {"ask": architect.answer},
     "vp-rnd": {
         "ask": vprnd.answer,
         "stale_test_review": vprnd.review_stale,

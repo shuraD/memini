@@ -270,23 +270,34 @@ def _verdict(
     return str(kind), reason
 
 
+def _crosses_squads(cfg: Config, ticket: enqueue.Ticket) -> bool:
+    """Return True when the cards the ticket names belong to more than one squad."""
+    known = enqueue.cards(cfg)
+    return len({known[i].squad for i in enqueue.card_ids(ticket.text, known) if i in known}) > 1
+
+
 def _validate(
     cfg: Config, move: moves.Move, old: enqueue.Ticket, ask: Callable[[str], str] | None
 ) -> str:
-    """Check the ticket against its version and cards; on slicing or scope ask vp-rnd.
+    """Check the ticket against its version and cards; on slicing or scope ask a deciding role.
 
-    Returns the verdict (``ok`` on any error or unusable answer, so the reissue goes on).
+    A slicing fault of a ticket that crosses squads goes to the architect, every other one to
+    vp-rnd. Returns ``<verdict>, asked <role>``, or ``""`` when the reissue goes on (the verdict
+    is ok, or there was an error or an unusable answer).
     """
     task = move["task"]
     try:
         kind, reason = _verdict(cfg, move, old, ask)
     except (OSError, ValueError, KeyError, IndexError, TypeError):
-        return "ok"
-    if kind != "ok":
-        text = f"{kind}: {reason} | failure: {move['text']}"
-        agent_inbox.notify(cfg, "vp-rnd", f"{task}: {text}", "planner")
-        moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=text)
-    return kind
+        return ""
+    if kind == "ok":
+        return ""
+    cut = kind == "slicing" and "architect" in cfg.roles and _crosses_squads(cfg, old)
+    to = "architect" if cut else "vp-rnd"
+    text = f"{kind}: {reason} | failure: {move['text']}"
+    agent_inbox.notify(cfg, to, f"{task}: {text}", "planner")
+    moves.post(cfg, task, sender="planner", to=to, kind="ask", text=text)
+    return f"{kind}, asked {to}"
 
 
 _CHECKED_CHARS = 300
@@ -312,7 +323,9 @@ def reissue(  # noqa: PLR0911
         moves.post(cfg, task, sender="planner", to="vp-rnd", kind="ask", text=why)
         return "no owner words: asked vp-rnd"
     done = state.ops_count(cfg, task, "reissued")
-    machine = words == cfg.standing_reissue_words or words.startswith("vp-rnd decision")
+    machine = words == cfg.standing_reissue_words or words.startswith(
+        ("vp-rnd decision", "architect decision")
+    )
     queue = cfg.stages[0].queue
     old = next((t for t in enqueue.read_tickets(queue) if t.id == task), None)
     if machine and done >= cfg.max_rounds - 1:
@@ -339,9 +352,9 @@ def reissue(  # noqa: PLR0911
     if old is None:
         return f"{task} has no ticket in {queue.name}"
     if machine and not p.get("validated"):
-        verdict = _validate(cfg, move, old, ask)
-        if verdict in ("slicing", "scope"):
-            return f"validated: {verdict}, asked vp-rnd"
+        asked = _validate(cfg, move, old, ask)
+        if asked:
+            return f"validated: {asked}"
     prompt = engine.render(
         cfg, "planner_fix", ticket=old.text, reason=move["text"], owner_words=words
     )

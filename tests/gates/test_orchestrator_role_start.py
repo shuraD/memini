@@ -103,7 +103,16 @@ def test_autonomous_mode_starts_every_role_but_devops_once(
 
     monkeypatch.setattr(subprocess, "Popen", popen)
     first = role_start.start_all(cfg)
-    assert sorted(started) == ["dev1", "dev2", "dev3", "dev4", "planner", "qa", "vp-rnd"]
+    assert sorted(started) == [
+        "architect",
+        "dev1",
+        "dev2",
+        "dev3",
+        "dev4",
+        "planner",
+        "qa",
+        "vp-rnd",
+    ]
     assert all("autonomous command" in m for m in first)
     ledger = [json.loads(x) for x in (cfg.state_dir / "ops-ledger.jsonl").read_text().splitlines()]
     assert {r["details"]["trigger"] for r in ledger if r["action"] == "runner_started"} == {
