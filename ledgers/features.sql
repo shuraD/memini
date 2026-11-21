@@ -3054,3 +3054,8 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-056', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-056', 'tests/gates/test_orchestrator_planner_validate.py::test_versions_maps_each_card_to_its_section');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-056', 'tests/gates/test_orchestrator_planner_validate.py::test_versions_of_a_missing_file_raises_oserror');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-056', 'tests/gates/test_orchestrator_planner_validate.py::test_vprnd_module_attribute_the_model_seam_exists');
+INSERT INTO feature (id, description, layer, proof, status, owner_module, added_in) VALUES ('F-orchestrator-057', 'one supervisor per role: it holds a lock on the role''s run file for its whole life and a second supervisor of the same role exits at once', 'infra', 'owner 2026-11-20: the flow must run without duplicate runners double-serving moves (84 supervisors found)', 'active', 'tools/orchestrator/', 'C-20261120-0014');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-057', 'tests/unit/test_orchestrator_supervisor_lock.py::test_second_supervisor_returns_at_once_and_starts_nothing');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-057', 'tests/unit/test_orchestrator_supervisor_lock.py::test_free_lock_enters_loop_and_holds_the_lock_while_looping');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-057', 'tests/unit/test_orchestrator_supervisor_lock.py::test_locks_of_different_roles_are_independent');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-057', 'tests/unit/test_orchestrator_supervisor_lock.py::test_lock_is_per_role_file');

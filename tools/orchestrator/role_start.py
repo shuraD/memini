@@ -12,6 +12,7 @@ each cycle (``start_all``), so one live runner keeps all of them alive.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import subprocess
 import sys
@@ -98,8 +99,16 @@ def start_all(cfg: Config, trigger: str = "command") -> list[str]:
 def supervise(cfg: Config, role: str, poll_s: float = _POLL_S) -> None:
     """Serve the role's moves and run its queue, each in a fresh process, until stopped.
 
-    Fresh processes pick up code that landed after the supervisor started.
+    Fresh processes pick up code that landed after the supervisor started. One supervisor per
+    role: it holds a lock for its whole life and a second one exits at once.
     """
+    lock_dir = cfg.state_dir / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    run_lock = (lock_dir / f"runner-{role}.run").open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # held until this process ends
+    except OSError:
+        return  # a supervisor of this role already runs: a second one would double-serve moves
     base = [*_python(cfg), "-m", "tools.orchestrator"]
     while True:
         start_all(cfg, trigger="peer")  # a runner that died is started again by the ones alive
