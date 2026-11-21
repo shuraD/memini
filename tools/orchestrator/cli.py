@@ -408,6 +408,19 @@ def _cmd_skeleton_check(cfg: config.Config, args: argparse.Namespace) -> int:
     return 0 if report.ok and not differs else 1
 
 
+def _cmd_cards_done(cfg: config.Config, args: argparse.Namespace) -> int:
+    del args
+    heads = (
+        "done and proven by a merge",
+        "marked done, no proof",
+        "proven by a merge, not marked done",
+    )
+    for head, lines in zip(heads, docfix.cards_done(cfg), strict=True):
+        print(f"{head} ({len(lines)}):")
+        print("\n".join(f"  {x}" for x in lines) or "  none")
+    return 0
+
+
 def _cmd_serve_moves(cfg: config.Config, args: argparse.Namespace) -> int:
     done = moves.serve(cfg, args.role, HANDLERS.get(args.role, {}), once=True)
     freed = moves.release_answered(cfg)
@@ -822,6 +835,7 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     sk.add_argument("version", help="the version section of VERSIONS.md, e.g. baseline")
     sk.add_argument("--doc", type=Path, help="the skeleton document (default: next to VERSIONS.md)")
     sk.add_argument("--repo", action="store_true", help="also compare with the code at HEAD")
+    add("cards-done", "report: the cards VERSIONS.md marks done against the merges that prove them")
     sm = add("serve-moves", "serve the open moves sent to a role once (the runner calls this)")
     sm.add_argument("role")
     md = add("move-done", "close a tool move: the tool is fixed, the waiting task is released")
@@ -864,6 +878,7 @@ _COMMANDS = {
     "doc-fix": _cmd_doc_fix,
     "doc-drift": _cmd_doc_drift,
     "skeleton-check": _cmd_skeleton_check,
+    "cards-done": _cmd_cards_done,
     "ci-check": _cmd_ci_check,
     "ci-wait": _cmd_ci_wait,
     "serve-moves": _cmd_serve_moves,

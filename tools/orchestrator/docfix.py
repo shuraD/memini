@@ -13,7 +13,7 @@ import json
 import re
 from pathlib import Path
 
-from tools.orchestrator import enqueue, moves
+from tools.orchestrator import enqueue, moves, state
 from tools.orchestrator.config import Config
 
 _ROW = re.compile(r"^\|\s*([AIQT]\d+)\s*\|\s*([^|]+?)\s*\|", re.MULTILINE)
@@ -49,6 +49,38 @@ def versions(cfg: Config) -> dict[str, str]:
         elif row := _ROW.match(line):
             found[row[1]] = section
     return found
+
+
+def marked_done(cfg: Config) -> dict[str, str]:
+    """Return each ``VERSIONS.md`` line marked done mapped to what the file says did it."""
+    path = cfg.cards_dir.parent / "capabilities" / "VERSIONS.md"
+    found: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if _ROW.match(line) and cells[3:4] == ["done"]:
+            found[cells[0]] = " ".join(cells[4:6])
+    return found
+
+
+def cards_done(cfg: Config) -> tuple[list[str], list[str], list[str]]:
+    """Compare the done marks of ``VERSIONS.md`` with the ``cards_done`` rows of the ops ledger.
+
+    Returns three lists of lines: done and proven by a merge, marked done without proof, proven
+    by a merge but not marked done. A proof is a merge whose Verifier found every card line met.
+    """
+    path = cfg.state_dir / state.OPS_LEDGER
+    rows = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    proof: dict[str, str] = {}
+    for row in (json.loads(x) for x in rows if x):
+        if row["action"] == "cards_done":
+            where = f"{row['target']} {row['details']['commit'][:10]}"
+            proof.update(dict.fromkeys(row["details"]["cards"], where))
+    marked = marked_done(cfg)
+    return (
+        [f"{c}: {proof[c]}" for c in marked if c in proof],
+        [f"{c}: the file says {said}" for c, said in marked.items() if c not in proof],
+        [f"{c}: {where}" for c, where in proof.items() if c not in marked],
+    )
 
 
 def drift(cfg: Config) -> list[str]:

@@ -288,6 +288,7 @@ class _Run:
         self.test_rejects = 0
         self.reject_reasons: list[str] = []
         self.pinned: list[str] = []
+        self.met: list[str] = []  # the card lines the Verifier found met in the last attempt
         self.gate_script = gates.PYTEST_GATE
         self.gate_env: dict[str, str] = {}
         # gate passes reused while their inputs stay the same (main unmoved: no second pass)
@@ -1072,6 +1073,7 @@ class _Run:
 
     def _verify(self, attempt: int, qa_sha: str, snap: str, files: list[str]) -> list[str]:
         """Run the Verifier (D8); return the coder's failures. A missing test stops for QA."""
+        self.met = []
         ids, card_text = self._ticket_cards()
         if not ids:
             state.ops_log(self.cfg, self.task_id, "verifier_skipped", "the task has no card lines")
@@ -1114,6 +1116,7 @@ class _Run:
             cards=ids,
             extras=len(found.extras),
         )
+        self.met = ids if found.ok else []
         if found.code_problems:
             return [f"verifier: {p}" for p in found.code_problems[:10]]
         if found.test_problems:
@@ -1170,6 +1173,15 @@ class _Run:
                     reason = "; ".join(f.summary() for f in fails)
                     raise _Stop(FAILED, "merge gates failed: " + reason[:1500])
                 if self._advance(squash, main_sha):
+                    if self.met:  # done by merge: the proof `cards-done` reads
+                        state.ops_log(
+                            cfg,
+                            self.task_id,
+                            "cards_done",
+                            f"merged as {squash[:10]}",
+                            cards=self.met,
+                            commit=squash,
+                        )
                     kept = self._cleanup(squash)
                     note = self._sandbox_note() + self._batch_suite(squash, main_sha, files)
                     return Outcome(
