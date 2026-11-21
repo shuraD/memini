@@ -10,6 +10,13 @@ ids it serves (``-`` for none), the top caller of its flow as ``<dotted.module>:
 row that names itself is a top caller; several callers are comma separated), and a note. A row
 with no card that is not a top caller is "extra": its note must say why it exists.
 
+A table may instead have the header
+
+    | Id | File | Function | Signature | Cards | Top caller | Used by | Note |
+
+where ``Id`` is a short unique id of the row (one token, e.g. ``F012``) and ``Used by`` is the
+comma separated ids of the rows that call the function (``-`` for none: a top caller only).
+
 ``check`` compares the rows with the cards of one version; ``compare`` compares them with code.
 """
 
@@ -22,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 HEADER = ("File", "Function", "Signature", "Cards", "Top caller", "Note")
+HEADER_IDS = ("Id", *HEADER[:5], "Used by", "Note")
 ROOT = "src"
 _CELL = re.compile(r"(?<!\\)\|")
 _NONE = ("", "-")
@@ -41,6 +49,13 @@ class Row:
     cards: tuple[str, ...]
     callers: tuple[str, ...]
     note: str
+    id: str = ""
+    used_by: tuple[str, ...] = ()
+
+    @property
+    def label(self) -> str:
+        """Return the row as a problem or a list names it: its id when it has one, file, name."""
+        return f"{self.id} {self.file} {self.name}".lstrip()
 
     @property
     def target(self) -> str:
@@ -85,20 +100,29 @@ def read(path: Path) -> tuple[list[Row], list[str]]:
     """Return the rows of the document, and the table rows that do not have its columns."""
     rows: list[Row] = []
     problems: list[str] = []
-    inside = False
+    header: tuple[str, ...] | None = None
     for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue  # a blank line does not end a table: rows after it are never dropped
         cells = _cells(line) if line.lstrip().startswith("|") else []
-        if [c.casefold() for c in cells] == [h.casefold() for h in HEADER] or not cells:
-            inside = bool(cells)
-        elif inside and not all(set(c) <= set("-: ") for c in cells):
-            if len(cells) != len(HEADER):
-                problems.append(f"line {n}: {len(cells)} cells, expected {len(HEADER)}")
+        folded = [c.casefold() for c in cells]
+        heads = [h for h in (HEADER, HEADER_IDS) if folded == [x.casefold() for x in h]]
+        if heads or not cells:
+            header = heads[0] if heads else None
+        elif header and not all(set(c) <= set("-: ") for c in cells):
+            if len(cells) != len(header):
+                problems.append(f"line {n}: {len(cells)} cells, expected {len(header)}")
                 continue
+            ident, used = "", ""
+            if header is HEADER_IDS:
+                ident, used = cells.pop(0), cells.pop(-2)
+                if ident in _NONE:
+                    problems.append(f"line {n}: empty id")
+                    ident = ""
             file, name, signature, cards, callers, note = cells
             note = "" if note in _NONE else note
-            rows.append(Row(n, file, name, signature, _items(cards), _items(callers), note))
+            cards_, callers_ = _items(cards), _items(callers)
+            rows.append(Row(n, file, name, signature, cards_, callers_, note, ident, _items(used)))
     return rows, problems
 
 
@@ -123,9 +147,10 @@ def _row_problems(rows: Sequence[Row]) -> list[str]:
     """Return what is inconsistent inside the document itself."""
     found: list[str] = []
     targets = {r.target for r in rows}
+    ids = [r.id for r in rows if r.id]
     seen: set[tuple[str, str]] = set()
     for r in rows:
-        where = f"line {r.line} {r.file} {r.name}"
+        where = f"line {r.line} {r.label}"
         path = PurePosixPath(r.file)
         if path.parts[:1] != (ROOT,) or ".." in path.parts or path.suffix != ".py":
             found.append(f"{where}: the file is not a Python file under {ROOT}/")
@@ -148,6 +173,17 @@ def _row_problems(rows: Sequence[Row]) -> list[str]:
         ]
         if not r.cards and not r.top and not r.note:
             found.append(f"{where}: no card and no reason in the note")
+        if not r.id:
+            continue  # a row of the six-column table, or one already reported for its empty id
+        if ids.count(r.id) > 1:
+            found.append(f"{where}: duplicate id {r.id}")
+        found += [
+            f"{where}: used by {u} is not a row of the document" for u in r.used_by if u not in ids
+        ]
+        if r.id in r.used_by:
+            found.append(f"{where}: the row names itself in Used by")
+        if not r.top and not r.used_by:
+            found.append(f"{where}: nothing calls it (not a top caller, no Used by)")
     return found
 
 
@@ -173,14 +209,14 @@ def check(
         if card not in mapped:
             report.missing.append(card)
     for r in rows:
-        where = f"line {r.line} {r.file} {r.name}"
+        where = f"line {r.line} {r.label}"
         for card in r.cards:
             if card not in versions:
                 report.problems.append(f"{where}: card {card} is unknown or not built")
             elif versions[card] != version:
                 report.problems.append(f"{where}: card {card} is of version {versions[card]}")
         if not r.cards and not r.top:
-            report.extra.append(f"{r.file} {r.name}: {r.note or 'NO REASON'}")
+            report.extra.append(f"{r.label}: {r.note or 'NO REASON'}")
     return report
 
 
@@ -219,11 +255,11 @@ def compare(rows: Sequence[Row], source: Callable[[str], str | None]) -> list[st
         for name, row in mine.items():
             want = _parse(row.signature)
             if name not in defs:
-                found.append(f"{file} {name}: the function is missing")
+                found.append(f"{row.label}: the function is missing")
             elif want is not None and _contract(want) != _contract(defs[name]):
                 line = ast.get_source_segment(text, defs[name]) or ""
                 found.append(
-                    f"{file} {name}: the signature differs: document `{row.signature}`, "
+                    f"{row.label}: the signature differs: document `{row.signature}`, "
                     f"code line {defs[name].lineno} `{line.splitlines()[0].strip()}`"
                 )
         found += [

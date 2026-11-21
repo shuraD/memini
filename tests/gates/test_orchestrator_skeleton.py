@@ -1018,3 +1018,83 @@ def test_the_command_reports_a_file_at_head_that_does_not_parse(
     env.commit("def run(x: int -> int:\n    return x\n")
     assert env.run("baseline", "--repo") == 1
     assert FILE in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- ids and Used by (2026-11-21)
+
+HEAD_IDS = "| Id | File | Function | Signature | Cards | Top caller | Used by | Note |"
+RUN_ID = f"| F1 | {FILE} | run | `def run(x: int) -> int:` | A1 | {TOP} | - | the flow |"
+SAVE_ID = f"| F2 | {FILE} | Store.save | `def save(self, item: str) -> None:` | A2 | {TOP} | F1 | |"
+
+
+def _id_line(ident: str, used_by: str, name: str = "helper") -> str:
+    return f"| {ident} | {FILE} | {name} | `def {name}() -> None` | A1 | {TOP} | {used_by} | |"
+
+
+def test_a_document_with_ids_is_read_and_is_good(tmp_path: Path) -> None:
+    """The eight-column table gives every row its id and the ids of the rows that use it."""
+    text = _doc(RUN_ID, SAVE_ID, _id_line("F3", "F1, F2"), header=HEAD_IDS)
+    rows, bad = _read(tmp_path, text)
+    assert bad == []
+    assert [(r.id, r.name, r.used_by) for r in rows] == [
+        ("F1", "run", ()),
+        ("F2", "Store.save", ("F1",)),
+        ("F3", "helper", ("F1", "F2")),
+    ]
+    assert (rows[1].file, rows[1].cards, rows[1].callers) == (FILE, ("A2",), (TOP,))
+    report = _report(tmp_path, text)
+    assert report.ok
+    assert (report.missing, report.extra, report.problems) == ([], [], [])
+
+
+def test_an_empty_id_is_a_problem(tmp_path: Path) -> None:
+    """Every function row has an id: a blank cell or `-` is reported with its line."""
+    text = _doc(RUN_ID, _id_line("", "F1"), _id_line("-", "F1", name="other"), header=HEAD_IDS)
+    report = _report(tmp_path, text)
+    assert "line 6: empty id" in report.problems
+    assert "line 7: empty id" in report.problems
+    assert not report.ok
+
+
+def test_a_duplicate_id_is_a_problem_on_each_row(tmp_path: Path) -> None:
+    """An id names one row: both rows that share an id are reported."""
+    text = _doc(RUN_ID, SAVE_ID, _id_line("F2", "F1"), header=HEAD_IDS)
+    report = _report(tmp_path, text)
+    assert not report.ok
+    twice = [p for p in report.problems if "duplicate id F2" in p]
+    assert len(twice) == 2
+    assert "line 6" in twice[0]
+    assert "line 7" in twice[1]
+
+
+def test_a_used_by_that_is_not_another_row_is_a_problem(tmp_path: Path) -> None:
+    """Used by names other rows of the document: an unknown id and the row itself are reported."""
+    text = _doc(RUN_ID, _id_line("F2", "F9"), _id_line("F3", "F3", name="other"), header=HEAD_IDS)
+    report = _report(tmp_path, text)
+    assert not report.ok
+    assert any(
+        "line 6" in p and "used by F9 is not a row of the document" in p for p in report.problems
+    )
+    assert any("line 7" in p and "the row names itself in Used by" in p for p in report.problems)
+
+
+def test_a_row_nothing_calls_is_a_problem_unless_it_is_a_top_caller(tmp_path: Path) -> None:
+    """`-` in Used by is for a top caller only: any other row must show which rows use it."""
+    text = _doc(RUN_ID, _id_line("F2", "-"), header=HEAD_IDS)
+    report = _report(tmp_path, text)
+    assert not report.ok
+    nothing = [p for p in report.problems if "nothing calls it" in p]
+    assert len(nothing) == 1
+    assert "line 6" in nothing[0]
+    assert "nothing calls it (not a top caller, no Used by)" in nothing[0]
+    assert not any("line 5" in p for p in report.problems)
+
+
+def test_a_six_column_document_still_reads_without_ids(tmp_path: Path) -> None:
+    """The old header stays accepted: its rows have no id and get no id problem."""
+    rows, bad = _read(tmp_path, _doc(RUN, SAVE))
+    assert bad == []
+    assert [(r.id, r.used_by, r.name) for r in rows] == [("", (), "run"), ("", (), "Store.save")]
+    report = _report(tmp_path, _doc(RUN, SAVE))
+    assert report.ok
+    assert report.problems == []

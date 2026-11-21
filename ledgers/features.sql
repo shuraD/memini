@@ -3303,3 +3303,9 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-072', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-072', 'tests/gates/test_orchestrator_flow_plan.py::test_the_same_ticket_without_a_top_caller_is_refused_as_before');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-072', 'tests/gates/test_orchestrator_flow_plan.py::test_the_plan_command_builds_the_brief_and_queues_a_ready_ticket');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-072', 'tests/gates/test_orchestrator_flow_plan.py::test_a_spec_across_two_modules_needs_a_top_caller');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-071', 'tests/gates/test_orchestrator_skeleton.py::test_a_document_with_ids_is_read_and_is_good');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-071', 'tests/gates/test_orchestrator_skeleton.py::test_an_empty_id_is_a_problem');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-071', 'tests/gates/test_orchestrator_skeleton.py::test_a_duplicate_id_is_a_problem_on_each_row');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-071', 'tests/gates/test_orchestrator_skeleton.py::test_a_used_by_that_is_not_another_row_is_a_problem');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-071', 'tests/gates/test_orchestrator_skeleton.py::test_a_row_nothing_calls_is_a_problem_unless_it_is_a_top_caller');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-071', 'tests/gates/test_orchestrator_skeleton.py::test_a_six_column_document_still_reads_without_ids');
