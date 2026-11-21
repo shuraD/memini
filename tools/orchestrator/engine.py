@@ -188,12 +188,18 @@ def test_deny(cfg: Config) -> list[str]:
     return [p for p in cfg.deny_patterns if p != r"\bpytest\b"]
 
 
-def rules_text(cfg: Config) -> str:
-    """Return the whole rule set as text, by who it binds: one source for every agent prompt."""
+def rules_text(cfg: Config, top_caller: str = "") -> str:
+    """Return the whole rule set as text, by who it binds: one source for every agent prompt.
+
+    A task with a top caller adds the outside-in rules (``rules_top_caller.txt``).
+    """
 
     def join(items: Sequence[str], sep: str = ", ") -> str:
         return sep.join(items) or "none"
 
+    outside_in = (
+        [render(cfg, "rules_top_caller", top_caller=top_caller).rstrip()] if top_caller else []
+    )
     return "\n".join(
         [
             "Code (the coder; checked by the deny scan, the AST gate and the graph-name gate):",
@@ -214,6 +220,7 @@ def rules_text(cfg: Config) -> str:
             f"- new test_*.py files only, under: {join(cfg.qa_allow)}",
             f"- existing tests under {join(cfg.old_test_paths)} may be edited by the coder when "
             "its change breaks them (reviewed, never deleted or weakened); QA changes no old file",
+            *outside_in,
         ]
     )
 

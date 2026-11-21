@@ -18,7 +18,8 @@ $cards
 Group the card lines into slices that independent agents build in parallel:
 - one file per slice (the module is one path from the specification), about $slice_lines source lines;
 - cut for the most parallel work: a slice depends on another only when it needs that slice's code or file;
-- every card line of the list goes into exactly one slice; add no other line and change none.
+- every card line of the list goes into exactly one slice; add no other line and change none;
+- the brief names the top caller of the card lines (`Top caller: <dotted.module>:<function>`): copy the one that covers the slice exactly as written. Never invent one; leave it empty when the brief names none for the slice.
 
 Answer with exactly one JSON object and nothing else:
-{"slices": [{"module": "<path>", "cards": ["<card id>", ...], "deps": [<index of an earlier slice, from 0>, ...]}]}
+{"slices": [{"module": "<path>", "cards": ["<card id>", ...], "deps": [<index of an earlier slice, from 0>, ...], "top_caller": "<dotted.module>:<function>"}]}

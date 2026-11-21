@@ -3,8 +3,10 @@
 ``plan --brief <file>`` reads the brief the owner and vp-rnd wrote (``key: value`` lines:
 ``version``, ``squad``, ``prefix``, ``cards``, ``out``, ``decisions``), asks one model run to group
 the brief's baseline card lines into slices, and checks the answer: every card is in the brief,
-none twice, dependencies point backwards. Each slice then goes through ``enqueue`` (the ready
-gate, D1). A card outside the brief refuses the whole plan. The batch summary is kept under
+none twice, dependencies point backwards, a slice's top caller is written in the brief
+(``Top caller: <dotted.module>:<function>``, anywhere in its text). Each slice then goes through
+``enqueue`` (the ready gate, D1), which refuses a card slice with no top caller. A card
+outside the brief refuses the whole plan. The batch summary is kept under
 ``<state_dir>/plans/`` and posted to vp-rnd for approval.
 """
 
@@ -39,11 +41,12 @@ _SLICE_LINES = "150"
 
 @dataclass(frozen=True)
 class Slice:
-    """One planned slice: a module, its card lines, and the earlier slices it needs."""
+    """One planned slice: a module, its card lines, the earlier slices it needs, its top caller."""
 
     module: str
     cards: tuple[str, ...]
     deps: tuple[int, ...]
+    top_caller: str = ""
 
 
 @dataclass(frozen=True)
@@ -125,7 +128,13 @@ def parse_slices(answer: str, scope: set[str]) -> list[Slice]:
         if not all(isinstance(d, int) and 0 <= d < i for d in deps):
             msg = f"slice {i} depends on a slice that does not come before it"
             raise ValueError(msg)
-        out.append(Slice(s["module"], tuple(cards), tuple(deps)))
+        top = s.get("top_caller", "")
+        if top is None:
+            top = ""
+        if not isinstance(top, str):
+            msg = f"slice {i} has a top caller that is not text"
+            raise ValueError(msg)
+        out.append(Slice(s["module"], tuple(cards), tuple(deps), top.strip()))
     return out
 
 
@@ -158,17 +167,28 @@ def plan(cfg: Config, brief_path: Path, ask: Callable[[str], str] | None = None)
         slice_lines=_SLICE_LINES,
     )
     slices = parse_slices((ask or (lambda p: _ask(cfg, p)))(prompt), set(scope))
+    named = set(gates.TOP_CALLER.findall(brief.text))  # whole names, never a piece of one
+    invented = [s.top_caller for s in slices if s.top_caller and s.top_caller not in named]
+    if invented:
+        msg = f"a slice names a top caller that is not in the brief: {', '.join(invented)}"
+        raise ValueError(msg)
     first = _next_number(cfg, brief.prefix)
     ids = [f"{brief.prefix}-{first + i:02d}" for i in range(len(slices))]
     lines = [f"# Batch plan: {brief.squad} {brief.version} ({brief_path.name})", ""]
     for i, s in enumerate(slices):
         deps = [ids[d] for d in s.deps]
         _, refused = enqueue.enqueue(
-            cfg, task_id=ids[i], module=s.module, card_list=s.cards, deps=deps
+            cfg,
+            task_id=ids[i],
+            module=s.module,
+            card_list=s.cards,
+            deps=deps,
+            top_caller=s.top_caller,
         )
         lines.append(
             f"- {ids[i]} {s.module} cards {', '.join(s.cards)}"
             + (f" after {', '.join(deps)}" if deps else "")
+            + (f" top caller {s.top_caller}" if s.top_caller else "")
             + ("  REFUSED: " + "; ".join(refused) if refused else "")
         )
     planned = {c for s in slices for c in s.cards}
@@ -339,6 +359,7 @@ def reissue(  # noqa: PLR0911
             context=str(fix["context"]),
             acceptance=[str(a) for a in fix["acceptance"]],
             done=str(fix["done"]),
+            top_caller=enqueue.part(old.text, enqueue.TOP_CALLER),  # the original's, kept
         )
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         return f"the Planner answer is not a usable fix: {exc}"
@@ -413,6 +434,7 @@ def batch_fix(cfg: Config, move: moves.Move, ask: Callable[[str], str] | None = 
             ],
             done=str(fix["done"]),
             pinned=sorted(set(re.findall(r"tests/[\w/.\-]+\.py", move["text"]))),
+            top_caller=enqueue.part(slice_ticket.text, enqueue.TOP_CALLER) if slice_ticket else "",
         )
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         return f"the Planner answer is not a usable fix: {exc}"

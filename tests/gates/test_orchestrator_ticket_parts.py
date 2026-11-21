@@ -25,6 +25,7 @@ cfg = test_orchestrator_enqueue.cfg  # the shared fixtures
 env = test_orchestrator_stages.env
 
 PARTS = "Context: c. Acceptance: a. Done: d."
+TOP = " Top caller: memini.mod:load_schema."  # a card ticket names its top caller
 TWO = "Add two numbers. Context: c. Acceptance: add returns 3; add rejects text. Done: exported."
 GOOD = "- AC1: Given 1 and 2, Then 3.\n- AC2: Given text, Then it is refused.\n- done: exported."
 TESTS = HIDDEN + "\n\n# AC1 AC2\n"
@@ -54,7 +55,7 @@ def test_a_ticket_with_no_parts_or_empty_ones_is_refused(cfg: config.Config, tex
 
 def test_a_ticket_with_all_three_parts_is_ready(cfg: config.Config) -> None:
     """All three parts present and nothing else wrong: no problem."""
-    assert _problems(cfg, "A1: write a node. " + PARTS) == []
+    assert _problems(cfg, "A1: write a node. " + PARTS + TOP) == []
 
 
 def test_parts_are_read_between_their_labels() -> None:
@@ -232,10 +233,13 @@ def test_the_ready_command_refuses_an_old_format_queued_ticket(
     """An old-format queued ticket (no parts) is refused by `ready`; a complete one is ready."""
     q = cfg.stages[0].queue
     q.parent.mkdir(parents=True, exist_ok=True)
-    q.write_text(f"T-1 {MODULE} - - 'A1: write a node.'\nT-2 {MODULE} - - 'A1: write. {PARTS}'\n")
+    q.write_text(
+        f"T-1 {MODULE} - - 'A1: write a node.'\nT-2 {MODULE} - - 'A1: write. {PARTS}{TOP}'\n"
+    )
     monkeypatch.chdir(cfg.repo)
     over = {"cards_dir": str(cfg.cards_dir), "state_dir": str(cfg.state_dir)}
     code = cli.main(["ready", "--config-json", json.dumps(over)])
     out = capsys.readouterr().out
     assert code == 1
     assert "T-1: refused" in out and "no Done: part" in out and "T-2: ready" in out
+    assert "names card lines but has no Top caller: part" in out

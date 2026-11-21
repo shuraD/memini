@@ -410,6 +410,193 @@ def _name_literals(repo: Path, rev: str, path: str, names: set[str]) -> list[tup
     ]
 
 
+# ------------------------------------------------------------------ reachability
+TOP_CALLER = re.compile(r"[A-Za-z_][\w.]*:[A-Za-z_]\w*")  # <dotted.module>:<function>
+_SRC = "src/"
+_Scope = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+_Key = tuple[str, str]  # (file, qualified name); "" names the module's own top-level code
+
+
+def _scopes(node: ast.AST, prefix: str, out: dict[str, ast.AST]) -> dict[str, ast.AST]:
+    """Fill ``out`` with ``{qualified name: node}`` of every class, function and method."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, _Scope):
+            out[prefix + child.name] = child
+            _scopes(child, f"{prefix}{child.name}.", out)
+        else:
+            _scopes(child, prefix, out)
+    return out
+
+
+def _used_names(node: ast.AST) -> set[str]:
+    """Return the names ``node``'s own code reads (not the bodies of the scopes inside it)."""
+    out: set[str] = set()
+    todo = list(ast.iter_child_nodes(node))
+    while todo:
+        n = todo.pop()
+        if isinstance(n, _Scope):
+            continue
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+            out.add(n.id)
+        elif isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load):
+            out.add(n.attr)
+        todo += ast.iter_child_nodes(n)
+    return out
+
+
+_STUB = "NotImplementedError"
+
+
+def _stub_names(files: Mapping[str, Mapping[str, ast.AST]]) -> set[str]:
+    """Return the names that stand for ``NotImplementedError``: aliases, subclasses, variables."""
+    names = {_STUB}
+    for _ in range(3):  # an alias of an alias; a few rounds settle it
+        for scopes in files.values():
+            for n in (n for node in scopes.values() for n in ast.walk(node)):
+                if isinstance(n, ast.ClassDef) and _mentions(n.bases, names):
+                    names.add(n.name)
+                elif isinstance(n, ast.Assign) and _mentions([n.value], names):
+                    names.update(t.id for t in n.targets if isinstance(t, ast.Name))
+    return names
+
+
+def _mentions(nodes: Iterable[ast.AST], names: set[str]) -> bool:
+    return any(
+        (isinstance(n, ast.Name) and n.id in names)
+        or (isinstance(n, ast.Attribute) and n.attr in names)
+        for node in nodes
+        for n in ast.walk(node)
+    )
+
+
+def _not_implemented(node: ast.AST, names: set[str], stubs: set[str]) -> bool:
+    """Return True when the function still raises ``NotImplementedError``.
+
+    Also by another name of it (``names``), or when all it does is call a function that is
+    itself such a stub (``stubs``: their plain names).
+    """
+    if any(
+        isinstance(n, ast.Raise) and n.exc and _mentions([n.exc], names) for n in ast.walk(node)
+    ):
+        return True
+    body = [b for b in getattr(node, "body", []) if not _docstring(b)]
+    call = body[0].value if len(body) == 1 and isinstance(body[0], ast.Expr | ast.Return) else None
+    return isinstance(call, ast.Call) and _mentions([call.func], stubs)
+
+
+def _docstring(stmt: ast.stmt) -> bool:
+    return isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant)
+
+
+def _parsed(repo: Path, rev: str, paths: Iterable[str]) -> dict[str, dict[str, ast.AST]]:
+    """Return ``{file: {qualified name: node}}`` of the Python files ``paths`` at ``rev``."""
+    out: dict[str, dict[str, ast.AST]] = {}
+    for path in paths:
+        try:
+            tree = ast.parse(gitops.out(repo, "show", f"{rev}:{path}"))
+        except (SyntaxError, ValueError):
+            continue  # the lint gates report broken syntax
+        out[path] = _scopes(tree, "", {"": tree})
+    return out
+
+
+def _reached(files: Mapping[str, Mapping[str, ast.AST]], start: _Key) -> set[_Key]:
+    """Return every scope reached from ``start`` in the name-based call graph of ``files``."""
+    by_name: dict[str, list[_Key]] = {}
+    for path, scopes in files.items():
+        for qual in scopes:
+            by_name.setdefault(qual.rsplit(".", 1)[-1], []).append((path, qual))
+    seen: set[_Key] = set()
+    todo = [start]
+    while todo:
+        key = todo.pop()
+        if key in seen:
+            continue
+        seen.add(key)
+        path, qual = key
+        node = files[path][qual]
+        todo.append((path, ""))  # its module is imported: the module's top-level code runs
+        if isinstance(node, ast.ClassDef):  # the class is used: the methods Python calls itself
+            todo += [
+                (path, q)
+                for q in files[path]
+                if q.rpartition(".")[0] == qual and re.fullmatch(r"__\w+__", q.rpartition(".")[2])
+            ]
+        for name in _used_names(node):
+            todo += by_name.get(name, [])
+    return seen
+
+
+def reachability_problems(
+    repo: Path, base: str, rev: str, top_caller: str, root: str = _SRC
+) -> list[str]:
+    """Refuse changed code that the ticket's top caller does not reach, or that is still a stub.
+
+    ``top_caller`` is ``<dotted.module>:<function>`` (a module-level function under ``root``);
+    without one the gate is skipped, so a ticket that only creates stubs passes. Problems:
+
+    - ``top caller <top caller> does not exist``;
+    - ``<file>:<name> is not reachable from <top caller>`` for every function or method that
+      ``base..rev`` adds or changes under ``root`` and the top caller does not reach;
+    - ``<file>:<name> still raises not implemented`` for every added or changed one it does reach
+      whose body raises ``NotImplementedError``.
+
+    The call graph is built with ``ast`` only, by name, over every ``.py`` file under ``root`` at
+    ``rev``: a scope reaches every function, method or class whose name it reads (a call, an
+    attribute access or a reference; ``<name>`` is the qualified name, ``Class.method``). A
+    reached class reaches its base classes by name and its own ``__dunder__`` methods; a
+    reached scope reaches its module's top-level code. This over-approximates on purpose: two
+    functions of one name are both reached, and the gate never proves a call really happens.
+    It refuses only what no reached code names at all (registration through a decorator alone is
+    not seen).
+    """
+    if not top_caller:
+        return []
+    listed = gitops.out(repo, "ls-tree", "-r", "--name-only", rev, "--", root).splitlines()
+    files = _parsed(repo, rev, (p for p in listed if p.endswith(".py")))
+    module, _, function = top_caller.partition(":")
+    stem = root + module.replace(".", "/")
+    start = next(
+        (
+            (p, function)
+            for p in (f"{stem}.py", f"{stem}/__init__.py")
+            if isinstance(files.get(p, {}).get(function), ast.FunctionDef | ast.AsyncFunctionDef)
+        ),
+        None,
+    )
+    if start is None:
+        return [f"top caller {top_caller} does not exist"]
+    reached = _reached(files, start)
+    names = _stub_names(files)
+    changed = []
+    for status, path in gitops.name_status(repo, base, rev):
+        if status == "D" or path not in files:
+            continue
+        old = _parsed(repo, base, [path]).get(path, {}) if status == "M" else {}
+        for qual, node in sorted(files[path].items()):
+            if isinstance(node, ast.Module | ast.ClassDef):
+                continue
+            if qual in old and ast.dump(old[qual]) == ast.dump(node):
+                continue  # the change did not touch it
+            changed.append((path, qual, node))
+    touched = {(path, qual) for path, qual, _ in changed}
+    helpers = {  # stubs the change did not touch: a body that only calls one is a stub too
+        q.rpartition(".")[2]
+        for path, scopes in files.items()
+        for q, n in scopes.items()
+        if (path, q) not in touched
+        and isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+        and _not_implemented(n, names, set())
+    }
+    out = []
+    for path, qual, node in changed:
+        if (path, qual) not in reached:
+            out.append(f"{path}:{qual} is not reachable from {top_caller}")
+        elif _not_implemented(node, names, helpers):
+            out.append(f"{path}:{qual} still raises not implemented")
+    return out
+
+
 def log_line(log: Path, label: str) -> None:
     """Append one ``== label`` line to a gate log (timings the owner reads)."""
     _log(log, label, "")

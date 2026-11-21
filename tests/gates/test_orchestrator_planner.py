@@ -10,12 +10,17 @@ import pytest
 from tests.gates.test_orchestrator_enqueue import MODULE, cfg  # noqa: F401  (cfg is a fixture)
 from tools.orchestrator import config, enqueue, planner
 
+CALLER = (
+    "memini.mod:load_schema"  # the brief names it; a card slice carries it (F-orchestrator-068)
+)
+
 BRIEF = """version: v1
 squad: alpha
 prefix: PL
 cards: A1 to A2
 out: A9
 decisions: none
+  Top caller: memini.mod:load_schema
 """
 
 
@@ -43,7 +48,7 @@ def test_slices_become_ready_gated_tickets_and_a_summary(
 
     def ask(prompt: str) -> str:
         seen.append(prompt)
-        return _answer({"module": MODULE, "cards": ["A1", "A2"], "deps": []})
+        return _answer({"module": MODULE, "cards": ["A1", "A2"], "deps": [], "top_caller": CALLER})
 
     lines = planner.plan(cfg, _brief(tmp_path), ask)
     assert "A1: The store writes a node." in seen[0] and "A9" not in seen[0].split("-----")[5]
@@ -82,8 +87,12 @@ def test_ids_continue_after_the_ones_already_queued(
     cfg: config.Config,
     tmp_path: Path,
 ) -> None:
-    ask = lambda _p: _answer({"module": MODULE, "cards": ["A1"], "deps": []})  # noqa: E731
+    ask = lambda _p: _answer(  # noqa: E731
+        {"module": MODULE, "cards": ["A1"], "deps": [], "top_caller": CALLER}
+    )
     planner.plan(cfg, _brief(tmp_path), ask)
-    ask2 = lambda _p: _answer({"module": MODULE, "cards": ["A2"], "deps": []})  # noqa: E731
+    ask2 = lambda _p: _answer(  # noqa: E731
+        {"module": MODULE, "cards": ["A2"], "deps": [], "top_caller": CALLER}
+    )
     planner.plan(cfg, _brief(tmp_path), ask2)
     assert [t.id for t in enqueue.read_tickets(cfg.stages[0].queue)] == ["PL-01", "PL-02"]

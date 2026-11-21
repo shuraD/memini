@@ -590,7 +590,7 @@ class _Run:
                 task_id=self.task_id,
                 spec=self.sp.text(),
                 cards=self._ticket_cards()[1],
-                rules=engine.rules_text(cfg),
+                rules=engine.rules_text(cfg, self.sp.top_caller),
                 failures=failures,
             )
             self._agent("qa", prompt, self.wt, cfg.qa_allow, protected)
@@ -734,7 +734,7 @@ class _Run:
                 dispute_rule=_dispute_rule(edits),
                 reference=reference,
                 failures="\n".join(f"- {f}" for f in failures) or "none (first attempt)",
-                rules=engine.rules_text(cfg),
+                rules=engine.rules_text(cfg, self.sp.top_caller),
             )
             tool_protected = engine.carve(protected, writable, self.wt) if edits else protected
             res = self._agent("coder", prompt, self.wt, writable, tool_protected)  # watched
@@ -899,6 +899,7 @@ class _Run:
         # D12 checks the diff: literals the change adds, and graph modules it deletes
         status = gitops.name_status(self.repo, qa_sha, snap)
         hits += gates.graph_literal_problems(self.repo, qa_sha, snap, status, cfg.graph_name_paths)
+        hits += gates.reachability_problems(self.repo, qa_sha, snap, self.sp.top_caller)
         if changed:  # edited tests: the deny scan too, minus plain use of pytest itself
             tdiff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap, "--", *changed)
             relaxed = [p for p in cfg.deny_patterns if p != r"\bpytest\b"]
@@ -1015,7 +1016,7 @@ class _Run:
                 spec=self.sp.text(),
                 test_diff=tests,
                 code_diff=code,
-                rules=engine.rules_text(cfg),
+                rules=engine.rules_text(cfg, self.sp.top_caller),
             )
             with tempfile.TemporaryDirectory(prefix="memini-review-") as tmp:
                 res = self._agent("review", prompt, Path(tmp), (), ())
@@ -1079,8 +1080,23 @@ class _Run:
         tests = "\n\n".join(f"# {f}\n{gitops.out(self.repo, 'show', f'{snap}:{f}')}" for f in files)
         if len(diff) + len(tests) > _DIFF_LIMIT:  # never verify half a change
             return ["verifier: the change is too large for one verification"]
+        top = self.sp.top_caller
+        scope = "paths: " + ", ".join(self.paths)
+        if out_of_scope := str(self.sp.header.get("out_of_scope") or "").strip():
+            scope += f"\nout_of_scope:\n{out_of_scope}"
         prompt = engine.render(
-            self.cfg, "verifier", task_id=self.task_id, cards=card_text, diff=diff, tests=tests
+            self.cfg,
+            "verifier",
+            task_id=self.task_id,
+            cards=card_text,
+            diff=diff,
+            tests=tests,
+            scope=scope,
+            reachability=(
+                f"reachable from {top}: checked by the machine gate"
+                if top
+                else "no top caller on this ticket"
+            ),
         )
         with tempfile.TemporaryDirectory(prefix="memini-verify-") as tmp:
             res = self._agent("verify", prompt, Path(tmp), (), ())
@@ -1118,7 +1134,7 @@ class _Run:
             cards=self._ticket_cards()[1],
             test_files=" ".join(files),
             diff=diff,
-            rules=engine.rules_text(self.cfg),
+            rules=engine.rules_text(self.cfg, self.sp.top_caller),
         )
         with tempfile.TemporaryDirectory(prefix="memini-audit-") as tmp:
             res = self._agent("audit", prompt, Path(tmp), (), ())

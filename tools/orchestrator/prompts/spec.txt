@@ -28,6 +28,7 @@ module: $module
 paths: <the files or directories this slice creates or changes, all inside $module; paths only, no notes>
 depends_on: <task ids, keep every one of: $depends_on>
 flag: none
+top_caller: $top_caller
 behavior: |
   <one sentence: what the slice does>
 interface: |
@@ -47,6 +48,7 @@ size: <estimated lines and hours>
      write the first coherent part and say in the out_of_scope list what is left.
    - paths lie inside $module and inside the allowed code paths (rules below).
    - Generic code only: no business names, no provider or customer names in the interface.
+   - top_caller is copied exactly as shown above (the task's `Top caller:` part, or none).
    - Everything a test checks must be stated in interface or acceptance.
    - Every card line the task text names (an id like A14) needs two lines in the acceptance
      list: `- A14: Given ..., Then ...` (the criteria) and `- A14 done: <the observable end

@@ -1,7 +1,8 @@
 """Slice specs: a YAML header between ``---`` lines, then free text; and the $0 check.
 
 Header fields: ``id``, ``module``, ``paths``, ``depends_on``, ``flag``, ``reference``
-(optional), ``behavior``, ``interface``, ``acceptance``, ``out_of_scope``, ``size``.
+(optional), ``top_caller`` (optional: the ticket's ``Top caller:``), ``behavior``, ``interface``,
+``acceptance``, ``out_of_scope``, ``size``.
 :func:`check` runs before anything is dispatched (no engine, no cost): every required
 field is present, the paths lie inside one module, the dependencies exist and the
 reference branch exists. ``reference`` is coder-only context: :meth:`Spec.text` leaves it
@@ -35,7 +36,7 @@ REQUIRED = (
 )
 # present but allowed to be empty (no dependency, no flag, nothing out of scope)
 MAY_BE_EMPTY = frozenset({"depends_on", "flag", "out_of_scope"})
-ORDER = (*REQUIRED[:5], "reference", *REQUIRED[5:])
+ORDER = (*REQUIRED[:5], "reference", "top_caller", *REQUIRED[5:])
 
 
 class SpecError(ValueError):
@@ -75,6 +76,11 @@ class Spec:
         """Return the coder-only reference branch, if any."""
         ref = self.header.get("reference")
         return str(ref) if ref else None
+
+    @property
+    def top_caller(self) -> str:
+        """Return the ticket's top caller (``<dotted.module>:<function>``), or ``""``."""
+        return "".join(_list(self.header.get("top_caller"))[:1])
 
     @property
     def title(self) -> str:

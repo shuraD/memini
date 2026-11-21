@@ -294,6 +294,7 @@ def _cmd_enqueue(cfg: config.Config, args: argparse.Namespace) -> int:
             context=args.context or "",
             acceptance=args.acceptance,
             done=args.done or "",
+            top_caller=args.top_caller,
         )
     _, found = enqueue.enqueue(
         cfg,
@@ -304,6 +305,7 @@ def _cmd_enqueue(cfg: config.Config, args: argparse.Namespace) -> int:
         deps=[d for d in args.deps.split(",") if d],
         sources=[s for s in args.sources.split(",") if s],
         needs=[n for n in args.needs.split(",") if n],
+        top_caller=args.top_caller,
     )
     for problem in found:
         print(f"{args.task_id}: refused: {problem}")
@@ -760,6 +762,11 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     eq.add_argument("--context", help="a fix's Context: what failed (test ids, error text, file)")
     eq.add_argument("--acceptance", nargs="*", default=[], help="a fix's Acceptance: items")
     eq.add_argument("--done", help="a fix's Done: the observable end state")
+    eq.add_argument(
+        "--top-caller",
+        default="",
+        help="<dotted.module>:<function> the work is built down from (needed with card lines)",
+    )
     eq.add_argument("--deps", default="")
     eq.add_argument("--sources", default="")
     eq.add_argument("--needs", default="", help="graph names the ticket needs (must have roles)")

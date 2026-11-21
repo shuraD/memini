@@ -1,0 +1,5 @@
+Top caller $top_caller (every agent; checked by the reachability gate and the failing-test-first check):
+- the slice is one working path from $top_caller downwards: write the code from the top caller down, each function because the level above calls it
+- every function the change adds or changes under src/ is reached from $top_caller; one that nothing on that path calls is refused
+- a stub raises NotImplementedError and never returns fake data; a changed function on the path that still raises it is refused
+- the end-to-end test runs $top_caller and checks the real result (what is really stored or returned), never only that a function was called; it fails before the implementation exists

@@ -61,7 +61,10 @@ class Model:
         return self.fix
 
 
-def _ticket(cfg: config.Config, text: str = "Build A1 and A2." + PARTS) -> None:
+TOP = " Top caller: memini.mod:load_schema."  # a card ticket names its top caller
+
+
+def _ticket(cfg: config.Config, text: str = "Build A1 and A2." + PARTS + TOP) -> None:
     enqueue.enqueue(cfg, task_id="T-9", module=MODULE, text=text)
 
 

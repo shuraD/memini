@@ -70,6 +70,8 @@ def cfg(tmp_path: Path) -> config.Config:
 
 
 PARTS = " Context: c. Acceptance: a. Done: d."
+CALLER = "memini.mod:load_schema"  # a card ticket names its top caller (F-orchestrator-068)
+TOP = f" Top caller: {CALLER}."
 
 
 def _t(text: str, deps: str = "-", module: str = MODULE, task_id: str = "T-1") -> enqueue.Ticket:
@@ -88,7 +90,10 @@ def test_card_ranges_cover_the_known_lines_between_the_ends() -> None:
 
 
 def test_a_good_ticket_is_ready(cfg: config.Config) -> None:
-    assert enqueue.problems(cfg, _t("A1: write a node, as src/memini/mod.py does." + PARTS)) == []
+    assert (
+        enqueue.problems(cfg, _t("A1: write a node, as src/memini/mod.py does." + PARTS + TOP))
+        == []
+    )
 
 
 @pytest.mark.parametrize(
@@ -114,12 +119,17 @@ def test_each_refusal(cfg: config.Config, text: str, expect: str) -> None:
 
 def test_named_inputs_that_exist_pass(cfg: config.Config) -> None:
     text = "A1 reads config/graph_schema.yaml, NEO4J_URI, `load_schema`, `names.properties.scope`."
-    assert enqueue.problems(cfg, _t(text + PARTS)) == []
+    assert enqueue.problems(cfg, _t(text + PARTS + TOP)) == []
 
 
 def test_needs_without_a_role_are_refused_and_go_to_devops(cfg: config.Config) -> None:
     ticket, found = enqueue.enqueue(
-        cfg, task_id="T-2", module=MODULE, card_list=["A1"], needs=["dirty", "no_role_here"]
+        cfg,
+        task_id="T-2",
+        module=MODULE,
+        card_list=["A1"],
+        needs=["dirty", "no_role_here"],
+        top_caller=CALLER,
     )
     assert found == ["graph name no_role_here has no role in names: of config/graph_schema.yaml"]
     inbox = (cfg.state_dir / "agent-inbox" / "devops.md").read_text()
@@ -130,7 +140,12 @@ def test_needs_without_a_role_are_refused_and_go_to_devops(cfg: config.Config) -
 
 def test_enqueue_writes_the_text_from_the_cards_with_the_evidence(cfg: config.Config) -> None:
     _, found = enqueue.enqueue(
-        cfg, task_id="T-3", module=MODULE, card_list=["A1", "A2"], sources=["s.md"]
+        cfg,
+        task_id="T-3",
+        module=MODULE,
+        card_list=["A1", "A2"],
+        sources=["s.md"],
+        top_caller=CALLER,
     )
     assert found == []
     [ticket] = enqueue.read_tickets(cfg.stages[0].queue)
@@ -144,8 +159,13 @@ def test_enqueue_writes_the_text_from_the_cards_with_the_evidence(cfg: config.Co
 def test_a_ticket_is_queued_once_and_a_card_that_does_not_exist_is_an_error(
     cfg: config.Config,
 ) -> None:
-    enqueue.enqueue(cfg, task_id="T-4", module=MODULE, card_list=["A1"])
-    _, found = enqueue.enqueue(cfg, task_id="T-4", module=MODULE, card_list=["A1"])
+    _, first = enqueue.enqueue(
+        cfg, task_id="T-4", module=MODULE, card_list=["A1"], top_caller=CALLER
+    )
+    assert first == []
+    _, found = enqueue.enqueue(
+        cfg, task_id="T-4", module=MODULE, card_list=["A1"], top_caller=CALLER
+    )
     assert found == ["T-4 is already queued"]
     with pytest.raises(ValueError, match="A77"):
         enqueue.enqueue(cfg, task_id="T-5", module=MODULE, card_list=["A77"])
@@ -203,7 +223,7 @@ def test_the_hook_lets_everything_else_through(event: object) -> None:
 
 def test_a_role_without_a_typed_field_is_refused(cfg: config.Config) -> None:
     found = enqueue.problems(
-        cfg, _t("A1 reads `names.properties.scope`." + PARTS), needs=["Project"]
+        cfg, _t("A1 reads `names.properties.scope`." + PARTS + TOP), needs=["Project"]
     )
     assert found == []
     found = enqueue.problems(cfg, _t("A1 reads (:Domain) and `names.properties.score`"))

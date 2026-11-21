@@ -6,7 +6,9 @@ word, an IP, a host or a home path, a card ID does not exist, is not baseline or
 another area than the target file, a named input does not exist on ``main``, a graph name has no
 role in ``names:`` of ``config/graph_schema.yaml`` (the missing roles go to DevOps' inbox), or the
 dependencies are not acyclic, or the text lacks its ``Context:``, ``Acceptance:`` or ``Done:``
-part (every ticket carries all three). ``enqueue`` writes the text from the cards and queues it.
+part (every ticket carries all three), or it names card lines without a
+``Top caller: <dotted.module>:<function>`` part (FLOW-HYBRID.md: a card is built as a working path
+from a named top caller). ``enqueue`` writes the text from the cards and queues it.
 """
 
 from __future__ import annotations
@@ -33,7 +35,12 @@ _ENV = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
 _TICK = re.compile(r"`([A-Za-z_][\w.]*)(?:\(\))?`")
 _CYPHER = re.compile(r"[(\[]\w*:`?([A-Za-z_]\w*)")
 _PARTS = ("Context", "Acceptance", "Done")
-_LABELS = r"Context|Acceptance|Done|Owner words|Existing tests that pin this|Consumers of \S+"
+_HOST = "host name: "  # the prefix of gates.text_problems' host finding
+TOP_CALLER = "Top caller"  # the optional part ``Top caller: <dotted.module>:<function>``
+_LABELS = (
+    rf"Context|Acceptance|Done|{TOP_CALLER}|Owner words|Existing tests that pin this"
+    r"|Consumers of \S+"
+)
 CAPABILITY_FILES = {"A": "archrag", "I": "ingestion", "Q": "query", "T": "tools"}
 
 
@@ -265,7 +272,13 @@ def problems(
 ) -> list[str]:
     """Return every reason the ready gate refuses ``ticket`` (empty: it is ready)."""
     deny = [p for p in cfg.deny_patterns if p != r"\bpytest\b"]
-    out = [f"text: {p}" for p in gates.text_problems(ticket.text, deny)]
+    found = gates.text_problems(ticket.text, deny)
+    top = part(ticket.text, TOP_CALLER)
+    if top:  # a module path such as x.app is no host: hosts are looked for outside this value
+        rest = re.sub(rf"({TOP_CALLER}:\s*){re.escape(top)}", r"\1", ticket.text, count=1)
+        found = [p for p in found if not p.startswith(_HOST)]
+        found += [p for p in gates.text_problems(rest, ()) if p.startswith(_HOST)]
+    out = [f"text: {p}" for p in found]
     known = cards(cfg)
     ids = card_ids(ticket.text, known)
     squads_text: dict[str, str] = {}
@@ -287,6 +300,13 @@ def problems(
         for label in _PARTS
         if not part(ticket.text, label)
     ]
+    if top and not gates.TOP_CALLER.fullmatch(top):
+        out.append(f"{TOP_CALLER}: {top} is not <dotted.module>:<function>")
+    elif not top and any(c in known for c in ids):
+        out.append(
+            f"the ticket names card lines but has no {TOP_CALLER}: part "
+            "(<dotted.module>:<function>)"
+        )
     out += inputs_problems(cfg, ticket)
     out += _names_problems(cfg, ticket, needs)
     cycle = _cycle([*earlier, ticket])
@@ -302,7 +322,12 @@ def tell_devops(cfg: Config, ticket: Ticket, found: Sequence[str]) -> None:
         agent_inbox.notify(cfg, "devops", f"{ticket.id} needs roles in names:: " + "; ".join(roles))
 
 
-def ticket_text(cfg: Config, ids: Sequence[str]) -> str:
+def _top_part(top_caller: str) -> str:
+    """Return the ``Top caller:`` part of a ticket text (``""`` without a top caller)."""
+    return f" {TOP_CALLER}: {top_caller.strip()}." if top_caller.strip() else ""
+
+
+def ticket_text(cfg: Config, ids: Sequence[str], top_caller: str = "") -> str:
     """Write a ticket's text from its cards, with the old code's evidence (ticket_cards.txt)."""
     known = cards(cfg)
     lines = []
@@ -313,7 +338,7 @@ def ticket_text(cfg: Config, ids: Sequence[str]) -> str:
             raise ValueError(msg)
         ev = evidence(cfg, cid)
         lines.append(f"{cid}: {card.text}" + (f" (old code: {ev})" if ev else ""))
-    return engine.render(cfg, "ticket_cards", cards=" ".join(lines)).strip()
+    return engine.render(cfg, "ticket_cards", cards=" ".join(lines)).strip() + _top_part(top_caller)
 
 
 def read_tickets(path: Path) -> list[Ticket]:
@@ -344,12 +369,14 @@ def fix_text(
     context: str = "",
     acceptance: Sequence[str] = (),
     done: str = "",
+    top_caller: str = "",
 ) -> str:
     """Write a structured fix ticket's text and append its consumer list (D3).
 
     ``context`` (what failed: failing test ids, error text, file), ``acceptance`` (one item per
     entry) and ``done`` (the observable end state) become the ``Context:``, ``Acceptance:`` and
-    ``Done:`` parts; the ready gate refuses a ticket without all three.
+    ``Done:`` parts; the ready gate refuses a ticket without all three. ``top_caller`` becomes
+    the ``Top caller:`` part, which a fix that names card lines needs too.
 
     ``touches`` are names the change adds to or extends and ``pinned`` are test files already
     known to pin it: every existing test that mentions a touched name, or a removed or renamed
@@ -386,7 +413,7 @@ def fix_text(
         parts.append(f"Acceptance: {items}.")
     if done.strip():
         parts.append(f"Done: {done.strip().rstrip('.')}.")
-    return " ".join(parts)
+    return " ".join(parts) + _top_part(top_caller)
 
 
 _PINNED = re.compile(r"Existing tests that pin this: ([^.]*\.py(?:, [^.]*\.py)*)\.")
@@ -408,13 +435,14 @@ def enqueue(
     sources: Sequence[str] = (),
     needs: Sequence[str] = (),
     text: str = "",
+    top_caller: str = "",
 ) -> tuple[Ticket, list[str]]:
-    """Build the ticket (from its cards, or the given fix ``text``), gate it, and queue it."""
+    """Build the ticket (from its cards and ``top_caller``, or the fix ``text``), gate, queue it."""
     queue = cfg.stages[0].queue
     earlier = read_tickets(queue)
     if any(t.id == task_id for t in earlier):
         return Ticket(task_id, module, tuple(deps), "", ""), [f"{task_id} is already queued"]
-    body = text or ticket_text(cfg, card_list)
+    body = text or ticket_text(cfg, card_list, top_caller)
     ticket = Ticket(task_id, module, tuple(deps), ",".join(sources), body)
     found = problems(cfg, ticket, earlier, needs)
     if found:

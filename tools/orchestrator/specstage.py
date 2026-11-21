@@ -239,7 +239,8 @@ class _Job:
             task=item.title,
             sources="\n".join(f"  {s}" for s in sources) or "  none",
             cards=enqueue.card_text(cfg, item.title)[1] or "  none",
-            rules=engine.rules_text(cfg),
+            top_caller=self._top_caller() or "none",
+            rules=engine.rules_text(cfg, self._top_caller()),
             failures=failures,
             **self.prompt_values(),
         )
@@ -318,6 +319,11 @@ class _Job:
             for d in item.depends_on
             if d not in sp.depends_on
         ]
+        if sp.top_caller != self._top_caller():  # carried as written: the code stage reads it
+            problems.append(
+                f"spec top_caller {sp.top_caller or 'none'!r} is not the task's "
+                f"{enqueue.TOP_CALLER} {self._top_caller() or 'none'!r}"
+            )
         accepted = str(sp.header.get("acceptance", ""))
         cards = self._card_lines()
         for item_id in self._items():  # per card line or acceptance item: its acceptance line
@@ -338,6 +344,10 @@ class _Job:
             for h in self._deny_hits(str(sp.header.get("interface", "")))
         ]
         return problems + spec.check(self.cfg, sp, item.task_id, known_ids(self.cfg))
+
+    def _top_caller(self) -> str:
+        """Return the task text's ``Top caller:`` part, or ``""``."""
+        return enqueue.part(self.item.title, enqueue.TOP_CALLER)
 
     def _card_lines(self) -> list[str]:
         """Return the card lines the task text names (baseline lines only)."""
