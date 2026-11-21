@@ -18,7 +18,8 @@ import pytest
 from tests.gates.test_orchestrator_enqueue import MODULE, PARTS, _t, cfg  # noqa: F401
 from tests.gates.test_orchestrator_planner import _answer
 from tests.gates.test_orchestrator_skeleton import HEAD, SEP
-from tools.orchestrator import cli, config, enqueue, planner
+from tests.gates.test_orchestrator_stages import _spec_md
+from tools.orchestrator import cli, config, enqueue, planner, spec
 
 OTHER_FILE = "src/memini/other.py"  # the file the other squad's spec lists
 SCAN_FILE = "src/memini/infra/graph/scan.py"
@@ -124,3 +125,36 @@ def test_the_same_ticket_without_a_top_caller_is_refused_as_before(cfg: config.C
     """Without a top caller a card of another squad's module is still refused."""
     found = enqueue.problems(cfg, _t("A1 and A3: write a node." + PARTS))
     assert f"card A3 belongs to beta, whose spec does not list {MODULE}" in found
+
+
+def test_the_plan_command_builds_the_brief_and_queues_a_ready_ticket(
+    cfg: config.Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``plan --version --top-caller --prefix --doc`` exits 0, keeps the brief, queues the unit."""
+    doc = _skeleton(cfg, WRITE, DELETE, SCAN)
+    answer = _answer({"module": MODULE, "cards": ["A1", "A2"], "deps": [], "top_caller": TOP})
+    monkeypatch.setattr(planner, "_ask", lambda _cfg, _prompt: answer)
+    monkeypatch.chdir(cfg.repo)
+    over = {"cards_dir": str(cfg.cards_dir), "state_dir": str(cfg.state_dir)}
+    args = ["plan", "--version", "baseline", "--top-caller", TOP, "--prefix", "FL"]
+    assert cli.main([*args, "--doc", str(doc), "--config-json", json.dumps(over)]) == 0
+    briefs = [p for p in (cfg.state_dir / "plans").glob("FL-*") if TOP in p.read_text("utf-8")]
+    assert briefs, "no built brief under <state_dir>/plans/"
+    [ticket] = enqueue.read_tickets(cfg.stages[0].queue)
+    assert enqueue.problems(cfg, ticket) == []
+    assert enqueue.part(ticket.text, enqueue.TOP_CALLER) == TOP
+
+
+def test_a_spec_across_two_modules_needs_a_top_caller(cfg: config.Config, tmp_path: Path) -> None:
+    """Paths in two modules pass with a ``top_caller`` and are refused without one."""
+    refusal = "paths must lie inside one module"
+    other = next(r for r in cfg.module_roots if not MODULE.startswith(r)) + "calc/add.py"
+    paths = [MODULE, other]
+    units = {spec.module_unit(cfg, p) for p in paths}
+    assert len(units) == len(paths) and None not in units  # two modules, both configured
+    path = tmp_path / "T-1.md"
+    path.write_text(_spec_md("T-1", paths=paths, top_caller=TOP), encoding="utf-8")
+    assert spec.check(cfg, spec.load(path), "T-1", set()) == []
+    path.write_text(_spec_md("T-1", paths=paths), encoding="utf-8")
+    found = spec.check(cfg, spec.load(path), "T-1", set())
+    assert [p for p in found if refusal in p], found

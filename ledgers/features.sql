@@ -3301,3 +3301,5 @@ INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-072', 'te
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-072', 'tests/gates/test_orchestrator_flow_plan.py::test_rows_of_another_top_caller_are_not_in_the_brief');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-072', 'tests/gates/test_orchestrator_flow_plan.py::test_the_brief_names_the_top_caller_its_cards_and_its_functions');
 INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-072', 'tests/gates/test_orchestrator_flow_plan.py::test_the_same_ticket_without_a_top_caller_is_refused_as_before');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-072', 'tests/gates/test_orchestrator_flow_plan.py::test_the_plan_command_builds_the_brief_and_queues_a_ready_ticket');
+INSERT INTO feature_test (feature_id, test_id) VALUES ('F-orchestrator-072', 'tests/gates/test_orchestrator_flow_plan.py::test_a_spec_across_two_modules_needs_a_top_caller');
