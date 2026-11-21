@@ -325,8 +325,32 @@ def _cmd_metrics(cfg: config.Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _skeleton_doc(cfg: config.Config, args: argparse.Namespace) -> Path:
+    doc: Path = args.doc or cfg.cards_dir.parent / "capabilities" / f"SKELETON-{args.version}.md"
+    return doc
+
+
 def _cmd_plan(cfg: config.Config, args: argparse.Namespace) -> int:
-    for line in planner.plan(cfg, Path(args.brief)):
+    """Plan a batch from a brief file, or one flow of a version's skeleton document."""
+    flow = not args.brief
+    if flow:
+        if not (args.version and args.top_caller and args.prefix):
+            msg = "plan needs --brief, or --version, --top-caller and --prefix"
+            raise ValueError(msg)
+        text = planner.flow_brief(
+            cfg,
+            args.version,
+            _skeleton_doc(cfg, args),
+            args.top_caller,
+            prefix=args.prefix,
+            out=args.out,
+        )
+        brief = cfg.state_dir / "plans" / f"{args.prefix}-{args.top_caller.replace(':', '-')}.txt"
+        brief.parent.mkdir(parents=True, exist_ok=True)
+        brief.write_text(text, encoding="utf-8")
+    else:
+        brief = Path(args.brief)
+    for line in planner.plan(cfg, brief, flow=flow):
         print(line)
     return 0
 
@@ -389,7 +413,7 @@ def _cmd_doc_drift(cfg: config.Config, args: argparse.Namespace) -> int:
 
 
 def _cmd_skeleton_check(cfg: config.Config, args: argparse.Namespace) -> int:
-    doc = args.doc or cfg.cards_dir.parent / "capabilities" / f"SKELETON-{args.version}.md"
+    doc = _skeleton_doc(cfg, args)
     rows, bad = skeleton.read(doc)
     squads = {c.id: c.squad for c in enqueue.cards(cfg).values()}
     report = skeleton.check(rows, args.version, docfix.versions(cfg), squads)
@@ -809,7 +833,12 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     mt = add("metrics", "write the batch metrics into STATUS.md (default: the code queue's tasks)")
     mt.add_argument("--ids", default="", help="task ids, comma separated")
     pl = add("plan", "the Planner: a batch brief file in, ready-gated tickets out (D2)")
-    pl.add_argument("--brief", required=True, help="the batch brief file vp-rnd saved")
+    pl.add_argument("--brief", help="the batch brief file vp-rnd saved")
+    pl.add_argument("--version", help="without --brief: plan one flow of this version's skeleton")
+    pl.add_argument("--top-caller", help="the flow: <dotted.module>:<function> of the skeleton")
+    pl.add_argument("--prefix", help="the ticket id prefix of the flow's units")
+    pl.add_argument("--out", default="", help="card lines out of scope, as a brief's out:")
+    pl.add_argument("--doc", type=Path, help="the skeleton document (default: next to VERSIONS.md)")
     rd = add("ready", "run the ready gate over a stage queue's tickets")
     rd.add_argument("ids", nargs="*")
     rd.add_argument("--queue")

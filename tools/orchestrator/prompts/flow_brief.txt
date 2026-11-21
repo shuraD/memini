@@ -1,0 +1,14 @@
+version: $version
+squad: $squad
+prefix: $prefix
+cards: $cards
+out: $out
+decisions: this brief is built from the skeleton document $document, the approved structure of
+  the version. Top caller: $top_caller
+  Cut the card lines into work units along the functions listed below. Each unit is one complete
+  path from the top caller through every layer down to the database, so a unit may write files
+  of more than one squad. The module of every unit is the top caller's file, $module: the squad
+  that owns it builds the unit. The first unit is the heavy one and builds the shared pieces; a
+  later unit depends on it. No unit changes a signature.
+  The files and functions of this flow (file, function: signature, cards):
+$functions

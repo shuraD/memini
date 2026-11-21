@@ -3,3 +3,4 @@ Top caller $top_caller (every agent; checked by the reachability gate and the fa
 - every function the change adds or changes under src/ is reached from $top_caller; one that nothing on that path calls is refused
 - a stub raises NotImplementedError and never returns fake data; a changed function on the path that still raises it is refused
 - the end-to-end test runs $top_caller and checks the real result (what is really stored or returned), never only that a function was called; it fails before the implementation exists
+- the paths of the slice are every file on that path: they may lie outside the task's module, in the module of another squad (this replaces "inside the module" for this task)

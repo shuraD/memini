@@ -191,7 +191,8 @@ def check(
     except gates.GateConfigError as exc:
         return [*problems, str(exc)]
     units = {module_unit(cfg, p) for p in paths}
-    if paths and (None in units or len(units) != 1):
+    # a spec with a top caller is one path through every layer: its paths may cross modules
+    if paths and (None in units or (len(units) != 1 and not spec.top_caller)):
         problems.append(
             "paths must lie inside one module under "
             + ", ".join(cfg.module_roots)

@@ -8,6 +8,10 @@ none twice, dependencies point backwards, a slice's top caller is written in the
 ``enqueue`` (the ready gate, D1), which refuses a card slice with no top caller. A card
 outside the brief refuses the whole plan. The batch summary is kept under
 ``<state_dir>/plans/`` and posted to vp-rnd for approval.
+
+``plan --version <v> --top-caller <module:function>`` builds the brief of one flow from the
+version's skeleton document instead (``flow_brief``, FLOW-HYBRID.md step 6): the flow's cards, its
+top caller and its functions with their signatures. Such a flow may hold cards of several squads.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from pathlib import Path
 
 from tools.orchestrator import (
     agent_inbox,
+    config,
     docfix,
     engine,
     enqueue,
@@ -28,6 +33,7 @@ from tools.orchestrator import (
     gitops,
     moves,
     reconcile,
+    skeleton,
     specstage,
     stages,
     state,
@@ -79,6 +85,52 @@ def read_brief(path: Path) -> Brief:
         msg = f"the brief lacks: {', '.join(missing)}"
         raise ValueError(msg)
     return Brief(**{k: values.get(k, "") for k in _KEYS}, text=text)
+
+
+def flow_brief(
+    cfg: Config, version: str, doc: Path, top: str, *, prefix: str, out: str = ""
+) -> str:
+    """Return the brief text of one flow of the skeleton document ``doc`` (flow_brief.txt).
+
+    The flow is every row whose top callers include ``top``; its cards are those the Version
+    puts in ``version``; the squad is the role that owns the top caller's file. Raises
+    ``ValueError`` when the document has problems, ``top`` is not one of its top callers, or no
+    role owns the top caller's file.
+    """
+    rows, bad = skeleton.read(doc)
+    versions = docfix.versions(cfg)
+    squads = {c.id: c.squad for c in enqueue.cards(cfg).values()}
+    report = skeleton.check(rows, version, versions, squads)
+    if bad or not report.ok:
+        found = [*bad, *report.problems, *(f"card {c} has no function" for c in report.missing)]
+        msg = f"the skeleton document {doc} has problems: " + "; ".join(found)
+        raise ValueError(msg)
+    head = next((r for r in rows if r.top and r.target == top), None)
+    if head is None:
+        msg = f"{top} is not a top caller of the skeleton document {doc}"
+        raise ValueError(msg)
+    squad = config.role_for_module(cfg, head.file)
+    if not squad:
+        msg = f"no role owns the top caller's file {head.file}"
+        raise ValueError(msg)
+    flow = [r for r in rows if top in r.callers]
+    cards = dict.fromkeys(c for r in flow for c in r.cards if versions.get(c) == version)
+    return engine.render(
+        cfg,
+        "flow_brief",
+        version=version,
+        squad=squad,
+        prefix=prefix,
+        cards=", ".join(cards),
+        out=out,
+        document=doc.name,
+        top_caller=top,
+        module=head.file,
+        functions="\n".join(
+            f"  - {r.file} {r.name}: {r.signature} ({', '.join(r.cards) or 'no card'})"
+            for r in flow
+        ),
+    )
 
 
 def _ask(cfg: Config, prompt: str) -> str:
@@ -144,12 +196,19 @@ def _next_number(cfg: Config, prefix: str) -> int:
     return max(nums, default=0) + 1
 
 
-def plan(cfg: Config, brief_path: Path, ask: Callable[[str], str] | None = None) -> list[str]:
-    """Plan one batch from its brief; return the summary lines (also kept and posted)."""
+def plan(
+    cfg: Config, brief_path: Path, ask: Callable[[str], str] | None = None, *, flow: bool = False
+) -> list[str]:
+    """Plan one batch from its brief; return the summary lines (also kept and posted).
+
+    ``flow``: the brief is one flow of the skeleton (``flow_brief``); its cards may be of several
+    squads and its squad is the role that builds it, so the cards are not cut to one squad.
+    """
     brief = read_brief(brief_path)
     known = enqueue.cards(cfg)
     scope = [c for c in enqueue.card_ids(brief.cards, known) if known.get(c, None)]
-    scope = [c for c in scope if known[c].squad == brief.squad]
+    if not flow:
+        scope = [c for c in scope if known[c].squad == brief.squad]
     if not scope:
         msg = f"no baseline card line of squad {brief.squad} is named by the brief"
         raise ValueError(msg)

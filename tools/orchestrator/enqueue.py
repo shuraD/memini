@@ -291,7 +291,8 @@ def problems(
         squads_text.setdefault(
             card.squad, spec.read_text(encoding="utf-8") if spec.exists() else ""
         )
-        if ticket.module not in squads_text[card.squad]:
+        # a ticket with a top caller is one path through every layer: it may cross squads
+        if not top and ticket.module not in squads_text[card.squad]:
             out.append(
                 f"card {cid} belongs to {card.squad}, whose spec does not list {ticket.module}"
             )
