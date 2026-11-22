@@ -9,6 +9,7 @@ runs again by itself.
 # ruff: noqa: F811
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
@@ -46,7 +47,20 @@ def rcfg(tmp_path: Path) -> config.Config:
 
 
 # ------------------------------------------------------------------------------ peer revival
-def _popen_log(monkeypatch: pytest.MonkeyPatch, delay: float = 0.0) -> list[str]:
+_HELD: list[Any] = []
+
+
+@pytest.fixture(autouse=True)
+def _release_run_locks() -> Any:
+    yield
+    for handle in _HELD:
+        handle.close()
+    _HELD.clear()
+
+
+def _popen_log(
+    monkeypatch: pytest.MonkeyPatch, rcfg: config.Config, delay: float = 0.0
+) -> list[str]:
     started: list[str] = []
     lock = threading.Lock()
 
@@ -54,6 +68,12 @@ def _popen_log(monkeypatch: pytest.MonkeyPatch, delay: float = 0.0) -> list[str]
         time.sleep(delay)
         with lock:
             started.append(argv[-1])
+            # like a real supervisor: it holds its run lock for its whole life
+            locks = rcfg.state_dir / "locks"
+            locks.mkdir(parents=True, exist_ok=True)
+            handle = (locks / f"runner-{argv[-1]}.run").open("a+", encoding="utf-8")
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            _HELD.append(handle)
         return _Proc()
 
     monkeypatch.setattr(subprocess, "Popen", popen)
@@ -66,7 +86,7 @@ def test_a_live_runner_restarts_a_dead_peer_and_says_who_did_it(
     """A dead peer (pid file of a dead process) is started again by start_all(trigger=peer)."""
     dead = subprocess.Popen(["true"])  # noqa: S607
     dead.wait()
-    started = _popen_log(monkeypatch)
+    started = _popen_log(monkeypatch, rcfg)
     pid_file = rcfg.state_dir / "locks" / "runner-qa.pid"
     pid_file.parent.mkdir(parents=True)
     pid_file.write_text(str(dead.pid))
@@ -81,7 +101,7 @@ def test_a_live_peer_is_not_started_twice(
     rcfg: config.Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Calling start_all every cycle starts each role once; the second call starts nothing."""
-    started = _popen_log(monkeypatch)
+    started = _popen_log(monkeypatch, rcfg)
     role_start.start_all(rcfg, trigger="peer")
     first = list(started)
     assert role_start.start_all(rcfg, trigger="peer") == []
@@ -92,7 +112,7 @@ def test_start_all_never_starts_devops_even_for_a_peer(
     rcfg: config.Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """devops has no queue and no handlers: a peer cycle must not start it."""
-    started = _popen_log(monkeypatch)
+    started = _popen_log(monkeypatch, rcfg)
     role_start.start_all(rcfg, trigger="peer")
     assert "devops" not in started
     assert not (rcfg.state_dir / "locks" / "runner-devops.pid").exists()
@@ -102,7 +122,7 @@ def test_start_all_defaults_to_the_command_trigger(
     rcfg: config.Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The existing autonomous command keeps its trigger when no argument is given."""
-    _popen_log(monkeypatch)
+    _popen_log(monkeypatch, rcfg)
     role_start.start_all(rcfg)
     assert {r["details"]["trigger"] for r in _actions(rcfg, "runner_started")} == {"command"}
 
@@ -111,7 +131,7 @@ def test_concurrent_callers_start_one_runner(
     rcfg: config.Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Two callers racing for the same dead role start exactly one runner (pid check under lock)."""
-    started = _popen_log(monkeypatch, delay=0.2)
+    started = _popen_log(monkeypatch, rcfg, delay=0.2)
     barrier = threading.Barrier(6)
 
     def call() -> None:
@@ -131,7 +151,7 @@ def test_a_stale_pid_file_with_garbage_is_replaced(
     rcfg: config.Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A pid file that holds no number is not a live runner."""
-    started = _popen_log(monkeypatch)
+    started = _popen_log(monkeypatch, rcfg)
     pid_file = rcfg.state_dir / "locks" / "runner-qa.pid"
     pid_file.parent.mkdir(parents=True)
     pid_file.write_text("not-a-pid")
