@@ -99,7 +99,7 @@ def _problems(
     repo.mkdir(parents=True)
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "user.name", "x")
-    _git(repo, "config", "user.email", "x@example.invalid")
+    _git(repo, "config", "user.email", "t@example.invalid")
     base = _commit(repo, before)
     rev = _commit(repo, after)
     return gates.library_warning_problems(repo, base, rev, modules, PATTERNS, search=[str(site)])

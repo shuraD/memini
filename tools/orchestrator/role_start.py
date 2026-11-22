@@ -29,12 +29,22 @@ def _pid_file(cfg: Config, role: str) -> Path:
     return cfg.state_dir / "locks" / f"runner-{role}.pid"
 
 
-def _alive(pid_file: Path) -> bool:
-    try:
-        os.kill(int(pid_file.read_text()), 0)
-    except (OSError, ValueError):
+def _run_lock(cfg: Config, role: str) -> Path:
+    return cfg.state_dir / "locks" / f"runner-{role}.run"
+
+
+def _running(cfg: Config, role: str) -> bool:
+    """Say whether a supervisor of the role holds its run lock (the pid file is only a note)."""
+    path = _run_lock(cfg, role)
+    if not path.exists():
         return False
-    return True
+    with path.open("a+", encoding="utf-8") as probe:
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        fcntl.flock(probe, fcntl.LOCK_UN)
+    return False
 
 
 def _python(cfg: Config) -> list[str]:
@@ -56,7 +66,7 @@ def start(cfg: Config, role: str, trigger: str = "hook") -> str:
 
 
 def _start_locked(cfg: Config, role: str, trigger: str, pid_file: Path) -> str:
-    if _alive(pid_file):
+    if _running(cfg, role):
         return ""  # already running: say nothing on every prompt
     log = cfg.state_dir / f"runner-{role}.log"
     with log.open("a", encoding="utf-8") as out:
@@ -104,11 +114,12 @@ def supervise(cfg: Config, role: str, poll_s: float = _POLL_S) -> None:
     """
     lock_dir = cfg.state_dir / "locks"
     lock_dir.mkdir(parents=True, exist_ok=True)
-    run_lock = (lock_dir / f"runner-{role}.run").open("a+", encoding="utf-8")
+    run_lock = _run_lock(cfg, role).open("a+", encoding="utf-8")
     try:
         fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # held until this process ends
     except OSError:
         return  # a supervisor of this role already runs: a second one would double-serve moves
+    _pid_file(cfg, role).write_text(str(os.getpid()), encoding="utf-8")  # the lock holder's pid
     base = [*_python(cfg), "-m", "tools.orchestrator"]
     while True:
         start_all(cfg, trigger="peer")  # a runner that died is started again by the ones alive

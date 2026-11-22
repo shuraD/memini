@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
@@ -24,15 +25,22 @@ class _Proc:
 
 
 def test_a_role_session_starts_its_supervisor_once(
-    cfg: config.Config, monkeypatch: pytest.MonkeyPatch
+    cfg: config.Config, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
     calls: list[list[str]] = []
+    held: list[Any] = []
 
     def popen(argv: list[str], **_kw: Any) -> _Proc:
         calls.append(argv)
+        locks = cfg.state_dir / "locks"
+        locks.mkdir(parents=True, exist_ok=True)
+        handle = (locks / "runner-dev4.run").open("a+", encoding="utf-8")
+        fcntl.flock(handle, fcntl.LOCK_EX)  # like a real supervisor: holds its run lock
+        held.append(handle)
         return _Proc()
 
     monkeypatch.setattr(subprocess, "Popen", popen)
+    request.addfinalizer(lambda: [h.close() for h in held])
     told = role_start.start(cfg, "dev4")
     assert "started automatically by a hook" in told
     assert "you did not start it" in told
@@ -45,6 +53,29 @@ def test_a_role_session_starts_its_supervisor_once(
     ledger = (cfg.state_dir / "ops-ledger.jsonl").read_text().splitlines()
     row = json.loads(ledger[-1])
     assert (row["action"], row["details"]["trigger"]) == ("runner_started", "hook")
+
+
+def test_a_held_run_lock_means_running_whatever_the_pid_file_says(
+    cfg: config.Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A role whose run lock is held is running even if the pid file holds a dead pid."""
+    calls: list[list[str]] = []
+
+    def popen(argv: list[str], **_kw: Any) -> _Proc:
+        calls.append(argv)
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: None)
+    locks = cfg.state_dir / "locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    (locks / "runner-dev4.pid").write_text("999999999", encoding="utf-8")
+    with (locks / "runner-dev4.run").open("a+", encoding="utf-8") as holder:
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        assert role_start.start(cfg, "dev4") == ""
+        assert calls == []
+    assert role_start.start(cfg, "dev4") != ""
+    assert len(calls) == 1
 
 
 def test_a_role_outside_the_table_starts_nothing(cfg: config.Config) -> None:
@@ -62,6 +93,7 @@ def test_the_supervisor_serves_moves_and_runs_the_queue_in_fresh_processes(
             raise KeyboardInterrupt
 
     monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "Popen", lambda *_a, **_k: _Proc())
     with pytest.raises(KeyboardInterrupt):
         role_start.supervise(cfg, "dev4", poll_s=0)
     assert [a[-3:] for a in runs] == [
