@@ -191,7 +191,9 @@ def test_deny(cfg: Config) -> list[str]:
 def rules_text(cfg: Config, top_caller: str = "") -> str:
     """Return the whole rule set as text, by who it binds: one source for every agent prompt.
 
-    A task with a top caller adds the outside-in rules (``rules_top_caller.txt``).
+    The rules of every ticket about the database and libraries come first
+    (``rules_real.txt``); a task with a top caller adds the outside-in rules
+    (``rules_top_caller.txt``).
     """
 
     def join(items: Sequence[str], sep: str = ", ") -> str:
@@ -202,6 +204,7 @@ def rules_text(cfg: Config, top_caller: str = "") -> str:
     )
     return "\n".join(
         [
+            render(cfg, "rules_real", phrases=join(cfg.nonproduction_patterns, "  ")).rstrip(),
             "Code (the coder; checked by the deny scan, the AST gate and the graph-name gate):",
             f"- allowed paths: {join(cfg.allow)}",
             f"- never changed, even under the allowed paths: {join(cfg.protected)}",

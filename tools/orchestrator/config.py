@@ -177,6 +177,7 @@ class Config:
     sandbox_neo4j_user: str = ""
     test_review: bool = False
     graph_name_paths: tuple[str, ...] = ()
+    nonproduction_patterns: tuple[str, ...] = ()
     cards_dir: Path = Path()
     # the plan stage refuses a module plan whose dependency chain needs more waves than this
     plan_max_waves: int = 4
@@ -422,11 +423,14 @@ def load_config(
         msg = "worktrees_dir must be outside the repository"
         raise ConfigError(msg)
     deny = _strs(raw, "deny_patterns")
-    for pattern in deny:
+    nonproduction = _strs(raw, "nonproduction_patterns")
+    for kind, pattern in [("deny", p) for p in deny] + [
+        ("nonproduction", p) for p in nonproduction
+    ]:
         try:
             re.compile(pattern)
         except re.error as exc:
-            msg = f"deny pattern {pattern!r} is not a valid regex: {exc}"
+            msg = f"{kind} pattern {pattern!r} is not a valid regex: {exc}"
             raise ConfigError(msg) from exc
     env_allow = _strs(raw, "env_allow")
     if any(name.startswith("MEMINI_ORCH_") for name in env_allow):
@@ -516,6 +520,7 @@ def load_config(
         sandbox_neo4j_user=str(raw.get("sandbox_neo4j_user", "")),
         test_review=bool(raw.get("test_review", False)),
         graph_name_paths=_strs(raw, "graph_name_paths"),
+        nonproduction_patterns=nonproduction,
         cards_dir=_path(repo, str(raw.get("cards_dir") or "../cards")),
         identity_name=ident_name,
         identity_email=ident_email,

@@ -79,6 +79,16 @@ deny_patterns = [
   '\b(enable_)?load_extension\b',
 ]
 
+# Library-warning gate: a function, method or class of a declared dependency whose own docstring
+# matches one of these regexes (case ignored) may not be called by the code a slice adds or
+# changes (owner 2026-11-21: "must not be used in production" code is not acceptable). Bare words
+# that libraries use for other things are narrowed on purpose: "Stabilized from experimental"
+# is a supported call, `alpha` is often a parameter name.
+nonproduction_patterns = [
+  'must not be used in production', 'not (\w+ )?for production', '(?<!from )\bexperimental\b',
+  '\bdeprecated\b', '\balpha (version|release|feature|api|tier|stage)\b',
+]
+
 # AST check of every Python file the coder changed (the main layer; deny_patterns is the
 # extra one). It rejects getattr/setattr/delattr/hasattr with a non-literal name, the calls
 # below, dunder attributes outside ast_dunder_allow, dunder names outside ast_dunder_names,

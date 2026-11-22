@@ -9,6 +9,7 @@ runs: a gate names a ``.github/workflows/ci.yml`` step and runs that step's ``ru
 from __future__ import annotations
 
 import ast
+import functools
 import hashlib
 import re
 import shutil
@@ -594,6 +595,168 @@ def reachability_problems(
             out.append(f"{path}:{qual} is not reachable from {top_caller}")
         elif _not_implemented(node, names, helpers):
             out.append(f"{path}:{qual} still raises not implemented")
+    return out
+
+
+# ------------------------------------------------------------------ library warnings
+def _added_lines(diff: str) -> dict[str, set[int]]:
+    """Return ``{file: line numbers}`` of the lines a ``git diff -U0`` adds or changes."""
+    out: dict[str, set[int]] = {}
+    path = ""
+    for raw in diff.splitlines():
+        if raw.startswith("+++ "):
+            path = raw[6:] if raw.startswith("+++ b/") else ""
+        elif raw.startswith("@@") and path:
+            m = re.search(r"\+(\d+)(?:,(\d+))?", raw)
+            if m:
+                start, count = int(m.group(1)), int(m.group(2) or 1)
+                out.setdefault(path, set()).update(range(start, start + count))
+    return out
+
+
+def _imported(tree: ast.AST, modules: Sequence[str]) -> dict[str, tuple[str, str]]:
+    """Return ``{local name: (package, imported name)}`` of every import of the file.
+
+    ``package`` is the declared dependency the name comes from, ``""`` for any other module;
+    ``imported name`` is ``""`` when the local name stands for a module itself.
+    """
+
+    def package(module: str) -> str:
+        return next((m for m in modules if module == m or module.startswith(m + ".")), "")
+
+    out: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                out[a.asname or a.name.split(".")[0]] = (package(a.name), "")
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for a in node.names:
+                out[a.asname or a.name] = (package(node.module), a.name)
+    return out
+
+
+@functools.cache
+def _library_docs(directory: str, module: str) -> dict[str, tuple[str, ...]] | None:
+    """Return ``{name: docstrings}`` of every function, method and class of an installed package.
+
+    The package is ``<directory>/<module>`` (a directory of ``.py`` files) or
+    ``<directory>/<module>.py``; ``None`` when neither exists. The source is parsed, never run;
+    each docstring comes with its white space folded to single spaces.
+    """
+    base = Path(directory) / module.replace(".", "/")
+    single = base.with_suffix(".py")
+    if not base.is_dir() and not single.is_file():
+        return None
+    docs: dict[str, list[str]] = {}
+    for file in sorted(base.rglob("*.py")) if base.is_dir() else [single]:
+        try:
+            tree = ast.parse(file.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, _Scope):
+                doc = ast.get_docstring(node) or ""
+                docs.setdefault(node.name, []).append(" ".join(doc.split()))
+    return {name: tuple(texts) for name, texts in docs.items()}
+
+
+def _library_uses(
+    tree: ast.AST, lines: set[int], bound: Mapping[str, tuple[str, str]]
+) -> set[tuple[str, str]]:
+    """Return ``(package, name)`` of every library name the changed ``lines`` import or use.
+
+    ``package`` is ``""`` for a method called on an object whose origin the file does not show.
+    """
+    out: set[tuple[str, str]] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.stmt | ast.expr):
+            continue
+        if lines.isdisjoint(range(node.lineno, (node.end_lineno or node.lineno) + 1)):
+            continue
+        if isinstance(node, ast.ImportFrom):
+            out |= {bound[n] for a in node.names if (n := a.asname or a.name) in bound}
+        used = node.func if isinstance(node, ast.Call) else node  # a call that spans the line
+        if isinstance(used, ast.Name) and used.id in bound:
+            out.add(bound[used.id])
+        elif isinstance(used, ast.Attribute):
+            root: ast.expr = used
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name) and root.id in bound:
+                out.add((bound[root.id][0], used.attr))  # reached through an imported name
+            elif isinstance(node, ast.Call):
+                out.add(("", used.attr))
+    return {(package, name) for package, name in out if name}
+
+
+def library_warning_problems(
+    repo: Path,
+    base: str,
+    rev: str,
+    modules: Sequence[str],
+    patterns: Sequence[str],
+    *,
+    root: str = _SRC,
+    search: Sequence[str] | None = None,
+) -> list[str]:
+    """Refuse a call into a library that the library's own documentation warns against.
+
+    ``modules`` are the import names of the project's declared dependencies, ``patterns`` the
+    warning regexes (``nonproduction_patterns``; matched without case), ``search`` the
+    directories the packages are installed in (default: this interpreter's ``sys.path``).
+    Problems, one per file, name and package:
+
+    - ``<file>: <name> of <package> is marked "<phrase>" by its own documentation`` for every
+      name that a line ``base..rev`` adds or changes under ``root`` imports from, calls on or
+      reads from a declared dependency, when the docstring of a function, method or class of
+      that name in the package's installed source matches a pattern (``<phrase>`` is the
+      matched text; for a constructor the class docstring counts);
+    - ``<file>: <package> is not installed where the gate runs; its documentation cannot be
+      checked`` when the changed lines use a package whose source is not found.
+
+    The match is by name, with ``ast`` only (no library code runs), and over-approximates on
+    purpose: every definition of that name anywhere in the package counts, and a warning that
+    the docstring gives about one parameter counts for the whole name. To keep false alarms
+    down, a name imported from a package, or reached through an imported name
+    (``package.Class.method``), is looked up in that package only; a method called on any other
+    object (``driver.session()``) is looked up in every declared dependency the file imports;
+    names reached through an import of anything else (the standard library, the project) are
+    skipped. A call is checked when any of its lines changed. Not seen: a database procedure
+    named inside a query string, a warning the library raises only at run time or declares
+    only through a decorator, and a library the file never imports.
+    """
+    warn = [re.compile(p, re.IGNORECASE) for p in patterns]
+    diff = gitops.out(repo, "diff", "-U0", "--no-color", base, rev, "--", root)
+    out: list[str] = []
+    for path, lines in sorted(_added_lines(diff).items()):
+        if not path.endswith(".py"):
+            continue
+        try:
+            tree = ast.parse(gitops.out(repo, "show", f"{rev}:{path}"))
+        except (SyntaxError, ValueError):
+            continue  # the lint gates report broken syntax
+        bound = _imported(tree, modules)
+        packages = sorted({package for package, _ in bound.values() if package})
+        docs = {}
+        for package in packages:
+            found = (_library_docs(d, package) for d in (sys.path if search is None else search))
+            docs[package] = next((f for f in found if f is not None), None)
+        uses = sorted(_library_uses(tree, lines, bound))
+        for package in packages:
+            if docs[package] is None and any(p in ("", package) for p, _ in uses):
+                out.append(
+                    f"{path}: {package} is not installed where the gate runs; "
+                    "its documentation cannot be checked"
+                )
+        for origin, name in uses:
+            for package in [origin] if origin else packages:
+                texts = (docs.get(package) or {}).get(name, ())
+                hit = next((m for w in warn for t in texts if (m := w.search(t))), None)
+                if hit:
+                    out.append(
+                        f'{path}: {name} of {package} is marked "{hit.group(0)}" '
+                        "by its own documentation"
+                    )
     return out
 
 

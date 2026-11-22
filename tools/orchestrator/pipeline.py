@@ -901,6 +901,15 @@ class _Run:
         status = gitops.name_status(self.repo, qa_sha, snap)
         hits += gates.graph_literal_problems(self.repo, qa_sha, snap, status, cfg.graph_name_paths)
         hits += gates.reachability_problems(self.repo, qa_sha, snap, self.sp.top_caller)
+        venv = (self.wt / cfg.python).parents[1]  # the slice's own environment, when it has one
+        hits += gates.library_warning_problems(
+            self.repo,
+            qa_sha,
+            snap,
+            astcheck.declared_modules(self.wt / "pyproject.toml", dict(cfg.dependency_modules)),
+            cfg.nonproduction_patterns,
+            search=[str(p) for p in venv.glob("lib/python*/site-packages")] or None,
+        )
         if changed:  # edited tests: the deny scan too, minus plain use of pytest itself
             tdiff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap, "--", *changed)
             relaxed = [p for p in cfg.deny_patterns if p != r"\bpytest\b"]
@@ -1127,7 +1136,8 @@ class _Run:
 
     def _audit(self, qa_sha: str, snap: str, files: list[str]) -> audit.Verdict:
         diff = gitops.out(self.repo, "diff", qa_sha, snap)
-        if len(diff) > _DIFF_LIMIT:  # never audit half a change
+        tests = "\n\n".join(f"# {f}\n{gitops.out(self.repo, 'show', f'{snap}:{f}')}" for f in files)
+        if len(diff) + len(tests) > _DIFF_LIMIT:  # never audit half a change
             return audit.Verdict(False, ("diff too large for one audit",))
         prompt = engine.render(
             self.cfg,
@@ -1136,6 +1146,7 @@ class _Run:
             spec=self.sp.text(),
             cards=self._ticket_cards()[1],
             test_files=" ".join(files),
+            tests=tests,
             diff=diff,
             rules=engine.rules_text(self.cfg, self.sp.top_caller),
         )

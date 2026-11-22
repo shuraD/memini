@@ -1178,21 +1178,34 @@ def test_engines_are_recorded(env: dict[str, Any], monkeypatch: pytest.MonkeyPat
     )
 
 
-def test_holdout_and_state_never_enter_the_executor(
+def test_holdout_text_enters_the_executor_only_in_the_audit_call(
     env: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: list[str] = []
+    """Rule: the hold-out directory never reaches any executor call, and the hold-out text
+    reaches none but the audit call.
+
+    Owner 2026-11-21/22 ("approve"): the audit judges whether the slice's tests run against
+    the real database or library, so its prompt carries the text of the slice's tests (the
+    revealed hold-out tests are among them). Every other call (QA, coder, gates, test runs,
+    the Verifier) is held to the old rule.
+    """
+    calls: list[tuple[bool, str]] = []
 
     class Recording(executor.LocalExecutor):
         def run(self, argv: Any, **kw: Any) -> executor.Result:
+            stdin = kw.get("stdin") or ""
+            is_audit = "audit" in list(argv) and not stdin.startswith("You are the Verifier")
             calls.append(
-                " ".join(
-                    [
-                        *argv,
-                        str(kw.get("cwd")),
-                        kw.get("stdin") or "",
-                        *(kw.get("env") or {}).values(),
-                    ]
+                (
+                    is_audit,
+                    " ".join(
+                        [
+                            *argv,
+                            str(kw.get("cwd")),
+                            stdin,
+                            *(kw.get("env") or {}).values(),
+                        ]
+                    ),
                 )
             )
             return super().run(argv, **kw)
@@ -1203,9 +1216,13 @@ def test_holdout_and_state_never_enter_the_executor(
     assert out.status == "merged", out.reason
     assert calls
     holdout = str((env["tmp"] / "holdout").resolve())
-    for call in calls:
+    for is_audit, call in calls:
         assert holdout not in call
-        assert "SECRET-HOLDOUT-TEXT" not in call
+        if not is_audit:
+            assert "SECRET-HOLDOUT-TEXT" not in call
+    audits = [call for is_audit, call in calls if is_audit]
+    assert audits
+    assert all(QA_TEST in call for call in audits)  # the audit sees the slice's tests
     with pytest.raises(ValueError, match="serves only 'local'"):
         executor.executor_for("microvm")
 
