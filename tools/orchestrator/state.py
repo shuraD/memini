@@ -260,13 +260,18 @@ def read_queue(path: Path) -> list[QueueEntry]:
 OPS_LEDGER = "ops-ledger.jsonl"
 
 
-def ops_count(cfg: Config, task_id: str, action: str) -> int:
-    """Return how many ops-ledger rows of ``action`` target ``task_id``."""
+def ops_rows(cfg: Config, task_id: str, action: str) -> list[dict[str, Any]]:
+    """Return the ops-ledger rows of ``action`` that target ``task_id``, oldest first."""
     path = cfg.state_dir / OPS_LEDGER
     if not path.exists():
-        return 0
+        return []
     rows = (json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x)
-    return sum(1 for r in rows if r["action"] == action and r["target"] == task_id)
+    return [r for r in rows if r["action"] == action and r["target"] == task_id]
+
+
+def ops_count(cfg: Config, task_id: str, action: str) -> int:
+    """Return how many ops-ledger rows of ``action`` target ``task_id``."""
+    return len(ops_rows(cfg, task_id, action))
 
 
 def ops_log(cfg: Config, task_id: str, action: str, reason: str, **details: object) -> None:

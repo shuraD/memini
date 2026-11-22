@@ -56,6 +56,9 @@ test_review = true
 # The squads' card files (<cards_dir>/<squad>/CARD.md, and <cards_dir>/../capabilities/*.md for the
 # old code's evidence): the ready gate reads them (D1).
 cards_dir = "../memini-internal-mvp/squads"
+# The Version file: every card line under the "## <version>" section it is built in.
+# Empty = <cards_dir>/../capabilities/VERSIONS.md.
+version_file = ""
 # D12 (FLOW-HARD): in these paths a string literal equal to a graph name of config/graph_schema.yaml
 # is refused; use the typed names. Only the files a slice changes are scanned.
 graph_name_paths = ["src/memini/infra/graph/", "src/memini/core/archrag/"]
@@ -209,6 +212,24 @@ max_budget_usd = "3"
 # a test gate whose output matches this fails: zero skips
 forbid_output = '\b\d+ (skipped|xfailed|xpassed)\b'  # deselection is ours (sandbox markers)
 
+# The skeleton stage (the flow's steps 2 to 5): the author role drafts the documents of one scope
+# (a version, or a feature given as a card list), the reviewer role judges them, the owner
+# approves, one stub ticket is queued. Everything a project differs in is here or on the command.
+[skeleton]
+author = "architect"          # the role (of [roles]) whose runner drafts and revises
+reviewer = "vp-rnd"           # the role that judges the documents against the cards
+dir = ""                      # where the documents are written; empty = next to the Version file
+# the documents, by kind: file-name patterns with {scope}. "skeleton" is the machine-checked one.
+documents = { skeleton = "SKELETON-{scope}.md", schema = "SCHEMA-USAGE-{scope}.md", libraries = "LIBRARY-USAGE-{scope}.md", reuse = "REUSE-REVIEW-{scope}.md" }
+inventories = ""              # the old code's evidence tables; empty = the Version file's folder
+old_code = "../hrag/memini"   # the old code, read only; empty = none
+deny_read = ["../memini-internal-mvp/capabilities/reference-hand-run"]  # never read by the run
+# the size KPI the author works against: the section of kpi_file whose heading starts with kpi_heading
+kpi_file = "../memini-internal-mvp/procedures/FLOW-HYBRID.md"
+kpi_heading = "Size KPI"
+budget_usd = "30"             # the draft run's budget; empty = max_budget_usd
+timeout_s = 5400              # the draft run's time limit; 0 = engine_timeout_s
+
 # import name of a declared dependency when it differs from the distribution name
 [dependency_modules]
 pyyaml = "yaml"
@@ -333,6 +354,14 @@ coder = [
 audit = [
   "claude", "-p", "--setting-sources", "", "--strict-mcp-config",
   "--permission-mode", "dontAsk", "--permission-prompts", "none", "--tools", "",
+  "--no-session-persistence", "--output-format", "json", "--max-budget-usd", "{max_budget_usd}",
+]
+# optional: the skeleton stage's author (reads anywhere the guard allows, writes its documents,
+# runs the read-only skeleton check)
+architect = [
+  "claude", "-p", "--settings", "{settings}", "--setting-sources", "",
+  "--strict-mcp-config", "--permission-mode", "dontAsk", "--permission-prompts", "none",
+  "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash(uv run python -m tools.orchestrator skeleton-check *)",
   "--no-session-persistence", "--output-format", "json", "--max-budget-usd", "{max_budget_usd}",
 ]
 

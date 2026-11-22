@@ -99,6 +99,27 @@ class Role:
 
 
 @dataclass(frozen=True)
+class Skeleton:
+    """The skeleton stage's settings (``[skeleton]``): roles, documents, inputs, limits."""
+
+    author: str = "architect"
+    reviewer: str = "vp-rnd"
+    dir: Path = Path()
+    documents: Mapping[str, str] = dataclasses.field(default_factory=dict)  # kind -> pattern
+    inventories: Path = Path()
+    old_code: Path | None = None
+    deny_read: tuple[Path, ...] = ()
+    kpi_file: Path | None = None
+    kpi_heading: str = ""
+    budget_usd: str = ""
+    timeout_s: int = 0
+
+    def doc(self, kind: str, scope: str) -> Path:
+        """Return the path of the document of ``kind`` for ``scope``."""
+        return self.dir / self.documents[kind].format(scope=scope)
+
+
+@dataclass(frozen=True)
 class Config:
     """Every setting the orchestrator uses (see ``config.toml`` for their meaning)."""
 
@@ -179,6 +200,8 @@ class Config:
     graph_name_paths: tuple[str, ...] = ()
     nonproduction_patterns: tuple[str, ...] = ()
     cards_dir: Path = Path()
+    version_file: Path = Path()
+    skeleton: Skeleton = Skeleton()
     # the plan stage refuses a module plan whose dependency chain needs more waves than this
     plan_max_waves: int = 4
 
@@ -347,8 +370,8 @@ def _gates(raw: list[Mapping[str, Any]]) -> tuple[Gate, ...]:
 def _engines(raw: Mapping[str, Mapping[str, Any]]) -> dict[str, EngineSpec]:
     out = {}
     for name, e in raw.items():
-        roles = {r: tuple(e[r]) for r in ("qa", "coder", "audit") if r in e}
-        if set(roles) != {"qa", "coder", "audit"}:
+        roles = {r: tuple(e[r]) for r in ("qa", "coder", "audit", "architect") if r in e}
+        if not {"qa", "coder", "audit"} <= set(roles):
             msg = f"engine {name}: needs qa, coder and audit commands"
             raise ConfigError(msg)
         out[name] = EngineSpec(
@@ -391,6 +414,37 @@ def _at_least_one(raw: Mapping[str, Any], key: str, default: int | None) -> int:
         msg = f"{key} must be an integer of at least 1, not {value!r}"
         raise ConfigError(msg)
     return value
+
+
+def _skeleton(
+    repo: Path, raw: Mapping[str, Any], version_file: Path, roles: Mapping[str, Role]
+) -> Skeleton:
+    """Return the ``[skeleton]`` settings; empty paths default to the Version file's folder."""
+
+    def path(key: str) -> Path | None:
+        return _path(repo, str(raw[key])) if raw.get(key) else None
+
+    out = Skeleton(
+        author=str(raw.get("author", "")),
+        reviewer=str(raw.get("reviewer", "")),
+        dir=path("dir") or version_file.parent,
+        documents={str(k): str(v) for k, v in raw.get("documents", {}).items()},
+        inventories=path("inventories") or version_file.parent,
+        old_code=path("old_code"),
+        deny_read=tuple(_path(repo, p) for p in _strs(raw, "deny_read")),
+        kpi_file=path("kpi_file"),
+        kpi_heading=str(raw.get("kpi_heading", "")),
+        budget_usd=str(raw.get("budget_usd", "")),
+        timeout_s=int(raw.get("timeout_s", 0)),
+    )
+    for role in (out.author, out.reviewer):
+        if role not in roles:
+            msg = f"[skeleton] role {role!r} is not a configured role"
+            raise ConfigError(msg)
+    if "skeleton" not in out.documents or any("{scope}" not in p for p in out.documents.values()):
+        msg = "[skeleton] documents needs a 'skeleton' entry and {scope} in every pattern"
+        raise ConfigError(msg)
+    return out
 
 
 def load_config(
@@ -458,6 +512,13 @@ def load_config(
     if executor not in ("local", "docker"):
         msg = f"executor {executor!r} is not available (use 'local' or 'docker')"
         raise ConfigError(msg)
+    cards_dir = _path(repo, str(raw.get("cards_dir") or "../cards"))
+    version_file = (
+        _path(repo, str(raw["version_file"]))
+        if raw.get("version_file")
+        else cards_dir.parent / "capabilities" / "VERSIONS.md"
+    )
+    roles = _roles(raw.get("roles", {}), code_queues, [s.name for s in stages])
     return Config(
         repo=repo,
         main_branch=str(raw["main_branch"]),
@@ -521,7 +582,9 @@ def load_config(
         test_review=bool(raw.get("test_review", False)),
         graph_name_paths=_strs(raw, "graph_name_paths"),
         nonproduction_patterns=nonproduction,
-        cards_dir=_path(repo, str(raw.get("cards_dir") or "../cards")),
+        cards_dir=cards_dir,
+        version_file=version_file,
+        skeleton=_skeleton(repo, raw.get("skeleton", {}), version_file, roles),
         identity_name=ident_name,
         identity_email=ident_email,
         flags_file=str(flags.get("file", "")),
@@ -533,7 +596,7 @@ def load_config(
         stages=stages,
         spec_dir=_path(repo, str(raw.get("spec_dir") or "../specs")),
         code_queues=code_queues,
-        roles=_roles(raw.get("roles", {}), code_queues, [s.name for s in stages]),
+        roles=roles,
         plan_max_waves=int(raw.get("plan_max_waves", 4)),
         qa_gate_checks={
             str(k): tuple(str(a) for a in v) for k, v in raw.get("qa_gate_checks", {}).items()

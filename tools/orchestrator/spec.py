@@ -1,7 +1,8 @@
 """Slice specs: a YAML header between ``---`` lines, then free text; and the $0 check.
 
 Header fields: ``id``, ``module``, ``paths``, ``depends_on``, ``flag``, ``reference``
-(optional), ``top_caller`` (optional: the ticket's ``Top caller:``), ``behavior``, ``interface``,
+(optional), ``top_caller`` (optional: the ticket's ``Top caller:``), ``skeleton`` (optional: the
+ticket's ``Skeleton:`` scope, the one ticket that creates the stubs), ``behavior``, ``interface``,
 ``acceptance``, ``out_of_scope``, ``size``.
 :func:`check` runs before anything is dispatched (no engine, no cost): every required
 field is present, the paths lie inside one module, the dependencies exist and the
@@ -36,7 +37,7 @@ REQUIRED = (
 )
 # present but allowed to be empty (no dependency, no flag, nothing out of scope)
 MAY_BE_EMPTY = frozenset({"depends_on", "flag", "out_of_scope"})
-ORDER = (*REQUIRED[:5], "reference", "top_caller", *REQUIRED[5:])
+ORDER = (*REQUIRED[:5], "reference", "top_caller", "skeleton", *REQUIRED[5:])
 
 
 class SpecError(ValueError):
@@ -81,6 +82,11 @@ class Spec:
     def top_caller(self) -> str:
         """Return the ticket's top caller (``<dotted.module>:<function>``), or ``""``."""
         return "".join(_list(self.header.get("top_caller"))[:1])
+
+    @property
+    def skeleton(self) -> str:
+        """Return the scope whose approved skeleton this slice creates as stubs, or ``""``."""
+        return "".join(_list(self.header.get("skeleton"))[:1])
 
     @property
     def title(self) -> str:
@@ -191,8 +197,10 @@ def check(
     except gates.GateConfigError as exc:
         return [*problems, str(exc)]
     units = {module_unit(cfg, p) for p in paths}
-    # a spec with a top caller is one path through every layer: its paths may cross modules
-    if paths and (None in units or (len(units) != 1 and not spec.top_caller)):
+    # a spec with a top caller is one path through every layer: its paths may cross modules;
+    # so may the one that creates the stubs of a skeleton
+    crosses = spec.top_caller or spec.skeleton
+    if paths and (None in units or (len(units) != 1 and not crosses)):
         problems.append(
             "paths must lie inside one module under "
             + ", ".join(cfg.module_roots)

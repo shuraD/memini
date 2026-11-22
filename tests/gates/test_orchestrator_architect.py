@@ -235,7 +235,7 @@ def test_the_registered_handler_serves_an_ask_sent_to_the_architect(
     cfg: config.Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Rule 1: ``cli.HANDLERS['architect']`` answers ``ask`` moves when the role is served."""
-    assert set(cli.HANDLERS["architect"]) == {"ask"}
+    assert set(cli.HANDLERS["architect"]) == {"ask", "skeleton"}
     _ticket(cfg)
     move_id = _ask(cfg)["id"]
     seen = _model(monkeypatch, DECIDE)

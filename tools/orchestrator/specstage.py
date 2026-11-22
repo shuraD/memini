@@ -240,6 +240,7 @@ class _Job:
             sources="\n".join(f"  {s}" for s in sources) or "  none",
             cards=enqueue.card_text(cfg, item.title)[1] or "  none",
             top_caller=self._top_caller() or "none",
+            skeleton=enqueue.part(item.title, enqueue.SKELETON) or "none",
             rules=engine.rules_text(cfg, self._top_caller()),
             failures=failures,
             **self.prompt_values(),
@@ -323,6 +324,12 @@ class _Job:
             problems.append(
                 f"spec top_caller {sp.top_caller or 'none'!r} is not the task's "
                 f"{enqueue.TOP_CALLER} {self._top_caller() or 'none'!r}"
+            )
+        wanted = enqueue.part(item.title, enqueue.SKELETON)
+        if sp.skeleton != wanted:  # carried as written: the code stage's skeleton gate reads it
+            problems.append(
+                f"spec skeleton {sp.skeleton or 'none'!r} is not the task's "
+                f"{enqueue.SKELETON} {wanted or 'none'!r}"
             )
         accepted = str(sp.header.get("acceptance", ""))
         cards = self._card_lines()

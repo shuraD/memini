@@ -32,6 +32,7 @@ from tools.orchestrator import (
     reconcile,
     schedule,
     skeleton,
+    skeletonstage,
     spec,
     specstage,
     stages,
@@ -126,11 +127,12 @@ HANDLERS: dict[str, dict[str, moves.Handler]] = {
         "batch_failure": planner.batch_fix,
         "doc_review": docfix.review,
     },
-    "architect": {"ask": architect.answer},
+    "architect": {"ask": architect.answer, skeletonstage.KIND: skeletonstage.draft},
     "vp-rnd": {
         "ask": vprnd.answer,
         "stale_test_review": vprnd.review_stale,
         "doc_review": vprnd.review_doc,
+        skeletonstage.REVIEW: skeletonstage.review,
     },
 }  # role -> move kind -> handler
 
@@ -326,7 +328,7 @@ def _cmd_metrics(cfg: config.Config, args: argparse.Namespace) -> int:
 
 
 def _skeleton_doc(cfg: config.Config, args: argparse.Namespace) -> Path:
-    doc: Path = args.doc or cfg.cards_dir.parent / "capabilities" / f"SKELETON-{args.version}.md"
+    doc: Path = args.doc or cfg.skeleton.doc(skeletonstage.KIND, args.version)
     return doc
 
 
@@ -416,20 +418,131 @@ def _cmd_skeleton_check(cfg: config.Config, args: argparse.Namespace) -> int:
     doc = _skeleton_doc(cfg, args)
     rows, bad = skeleton.read(doc)
     squads = {c.id: c.squad for c in enqueue.cards(cfg).values()}
-    report = skeleton.check(rows, args.version, docfix.versions(cfg), squads)
+    cards = [c for c in args.cards.split(",") if c]  # a feature: these cards are the scope
+    report = skeleton.check(
+        rows, args.version, skeletonstage._versions(cfg, args.version, cards), squads
+    )
     report.problems[:0] = bad
     print(f"skeleton {doc} against version {args.version}")
     print(skeleton.render(report))
     differs: list[str] = []
     if args.repo:
-
-        def source(file: str) -> str | None:
-            res = gitops.git(cfg.repo, "show", f"HEAD:{file}", check=False)
-            return res.stdout if res.returncode == 0 else None
-
-        differs = skeleton.compare(rows, source)
+        differs = skeleton.compare(rows, skeletonstage.source(cfg.repo, "HEAD"))
         print("\n".join([f"code at HEAD of {cfg.repo} ({len(differs)}):", *differs]))
     return 0 if report.ok and not differs else 1
+
+
+def _cmd_skeleton_draft(cfg: config.Config, args: argparse.Namespace) -> int:
+    """Ask the author role for the skeleton documents of a scope, or send it review comments."""
+    review = args.cmd == "skeleton-review"
+    cards = (
+        skeletonstage.scope_cards(cfg, args.scope)
+        if review
+        else [c for c in args.cards.split(",") if c]
+    )
+    move_id = moves.post(
+        cfg,
+        skeletonstage.task(args.scope),
+        sender=args.sender,
+        to=cfg.skeleton.author,
+        kind=skeletonstage.KIND,
+        text=args.text if review else f"draft the skeleton of {args.scope}",
+        scope=args.scope,
+        cards=cards,
+        comments=review,
+    )
+    print(f"skeleton {args.scope}: moved to {cfg.skeleton.author} as {move_id}")
+    return 0
+
+
+def _cmd_skeleton_approve(cfg: config.Config, args: argparse.Namespace) -> int:
+    """Record the owner's approval (skeleton-approve only), then queue the stub ticket."""
+    if args.cmd == "skeleton-approve":
+        sha = skeletonstage.approve(cfg, args.scope, args.words)
+        print(f"skeleton {args.scope}: approved, content hash {sha}")
+    found = skeletonstage.stub(cfg, args.scope, args.ticket, args.file)
+    for problem in found:
+        print(f"{args.ticket}: refused: {problem}")
+    if not found:
+        print(f"{args.ticket}: queued (the stubs of the skeleton of {args.scope})")
+    return 1 if found else 0
+
+
+def flow_steps(cfg: config.Config) -> list[tuple[str, list[tuple[str, bool]]]]:
+    """Return, per step of the flow, what runs it and whether that exists in this code.
+
+    A command exists when the parser and the command table both have it; a move kind when the
+    receiving role has a handler for it; a prompt when its file is there; an engine command when
+    an engine defines it. Nothing here is assumed.
+    """
+    sk = cfg.skeleton
+    subs = next(a for a in parser()._actions if isinstance(a, argparse._SubParsersAction))
+
+    def command(name: str) -> tuple[str, bool]:
+        return f"command {name}", name in subs.choices and name in _COMMANDS
+
+    def move(role: str, kind: str) -> tuple[str, bool]:
+        return f"move {kind} -> {role}", kind in HANDLERS.get(role, {})
+
+    def prompt(name: str) -> tuple[str, bool]:
+        return f"prompt {name}.txt", (cfg.prompts_dir / f"{name}.txt").is_file()
+
+    run = skeletonstage.ENGINE_ROLE
+    agent = (f"engine command {run}", any(run in e.roles for e in cfg.engines.values()))
+    spec_stage = ("stage spec", any(s.kind == "spec" for s in cfg.stages))
+    return [
+        ("1 scope: the Version names the cards", [command("doc-drift"), command("cards-done")]),
+        (
+            "2 skeleton: the author drafts and revises",
+            [
+                command("skeleton-draft"),
+                command("skeleton-review"),
+                move(sk.author, skeletonstage.KIND),
+                prompt("architect_skeleton"),
+                agent,
+            ],
+        ),
+        (
+            "3 check: the machine, then the reviewer",
+            [
+                command("skeleton-check"),
+                move(sk.reviewer, skeletonstage.REVIEW),
+                prompt(skeletonstage.REVIEW),
+            ],
+        ),
+        ("4 approval: the owner's words are recorded", [command("skeleton-approve")]),
+        (
+            "5 stubs: one ticket, gated against the skeleton",
+            [command("skeleton-stub"), command("enqueue"), prompt("skeleton_stub")],
+        ),
+        ("6 cut: work units by top caller", [command("plan"), move(sk.author, "ask")]),
+        ("7 spec and hidden test", [spec_stage, command("stage-run"), move("qa", "test_review")]),
+        ("8 code: the coder fills the bodies", [command("run-queue"), command("run")]),
+        (
+            "9 gates, audit, Verifier, merge",
+            [("gates", bool(cfg.gates)), prompt("audit"), prompt("verifier"), command("land")],
+        ),
+        (
+            "10 a unit that cannot get green",
+            [
+                move("planner", "dispute"),
+                move("planner", "batch_failure"),
+                move(sk.author, "ask"),
+                move(sk.reviewer, "ask"),
+            ],
+        ),
+    ]
+
+
+def _cmd_flow_check(cfg: config.Config, args: argparse.Namespace) -> int:
+    del args
+    bad = 0
+    for step, parts in flow_steps(cfg):
+        ok = all(found for _, found in parts)
+        bad += not ok
+        print(f"step {step}: {'ok' if ok else 'MISSING'}")
+        print("\n".join(f"  {name}: {'ok' if found else 'MISSING'}" for name, found in parts))
+    return 1 if bad else 0
 
 
 def _cmd_cards_done(cfg: config.Config, args: argparse.Namespace) -> int:
@@ -861,9 +974,29 @@ def parser() -> argparse.ArgumentParser:  # noqa: PLR0915
     df.add_argument("--from", dest="sender", default="devops")
     add("doc-drift", "list cards whose text differs between a squad card and VERSIONS.md")
     sk = add("skeleton-check", "check a version's skeleton document against its cards (and code)")
-    sk.add_argument("version", help="the version section of VERSIONS.md, e.g. baseline")
+    sk.add_argument("version", help="the scope: a version section of the Version file")
     sk.add_argument("--doc", type=Path, help="the skeleton document (default: next to VERSIONS.md)")
     sk.add_argument("--repo", action="store_true", help="also compare with the code at HEAD")
+    sk.add_argument("--cards", default="", help="a feature: its card ids, comma separated")
+    sd = add("skeleton-draft", "ask the author role for the skeleton documents of a scope")
+    sd.add_argument("scope", help="a version section of the Version file, or a feature's name")
+    sd.add_argument("--cards", default="", help="a feature: its card ids, comma separated")
+    sd.add_argument("--from", dest="sender", default="devops")
+    sv = add("skeleton-review", "send review comments on a scope's skeleton to the author role")
+    sv.add_argument("scope")
+    sv.add_argument("--text", required=True, help="the comments")
+    sv.add_argument("--from", dest="sender", default="owner")
+    for name, text in (
+        ("skeleton-approve", "record the owner's approval of a skeleton; queue its stub ticket"),
+        ("skeleton-stub", "queue the stub ticket of an approved skeleton"),
+    ):
+        sa = add(name, text)
+        sa.add_argument("scope")
+        if name == "skeleton-approve":
+            sa.add_argument("--words", required=True, help="the owner's words, with the date")
+        sa.add_argument("--ticket", required=True, help="the id of the stub ticket")
+        sa.add_argument("--file", required=True, help="the path the stub ticket writes under")
+    add("flow-check", "print each step of the flow and what runs it: ok or MISSING")
     add("cards-done", "report: the cards VERSIONS.md marks done against the merges that prove them")
     sm = add("serve-moves", "serve the open moves sent to a role once (the runner calls this)")
     sm.add_argument("role")
@@ -907,6 +1040,11 @@ _COMMANDS = {
     "doc-fix": _cmd_doc_fix,
     "doc-drift": _cmd_doc_drift,
     "skeleton-check": _cmd_skeleton_check,
+    "skeleton-draft": _cmd_skeleton_draft,
+    "skeleton-review": _cmd_skeleton_draft,
+    "skeleton-approve": _cmd_skeleton_approve,
+    "skeleton-stub": _cmd_skeleton_approve,
+    "flow-check": _cmd_flow_check,
     "cards-done": _cmd_cards_done,
     "ci-check": _cmd_ci_check,
     "ci-wait": _cmd_ci_wait,

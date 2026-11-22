@@ -18,6 +18,8 @@ where ``Id`` is a short unique id of the row (one token, e.g. ``F012``) and ``Us
 comma separated ids of the rows that call the function (``-`` for none: a top caller only).
 
 ``check`` compares the rows with the cards of one version; ``compare`` compares them with code.
+A row whose Note carries ``APPROVED-FIX`` is existing code that an approved fix changes: it may
+differ from the code until the fix is merged (``unexplained``).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from pathlib import Path, PurePosixPath
 HEADER = ("File", "Function", "Signature", "Cards", "Top caller", "Note")
 HEADER_IDS = ("Id", *HEADER[:5], "Used by", "Note")
 ROOT = "src"
+FIX = "APPROVED-FIX"
 _CELL = re.compile(r"(?<!\\)\|")
 _NONE = ("", "-")
 _BODY = ast.dump(ast.parse("...").body[0])
@@ -268,6 +271,16 @@ def compare(rows: Sequence[Row], source: Callable[[str], str | None]) -> list[st
             if name not in mine and not any(p.startswith("_") for p in name.split("."))
         ]
     return found
+
+
+def unexplained(rows: Sequence[Row], found: Sequence[str], *, built: bool) -> list[str]:
+    """Return the differences of ``compare`` that the document does not explain.
+
+    A row marked ``APPROVED-FIX`` in its Note may differ. Before the skeleton is created in the
+    code (not ``built``) a missing file or function is expected; afterwards nothing may be missing.
+    """
+    marked = tuple(f"{r.label}: " for r in rows if FIX in r.note)
+    return [d for d in found if not d.startswith(marked) and (built or "is missing" not in d)]
 
 
 def render(report: Report) -> str:

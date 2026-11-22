@@ -20,9 +20,8 @@ _ROW = re.compile(r"^\|\s*([AIQT]\d+)\s*\|\s*([^|]+?)\s*\|", re.MULTILINE)
 
 
 def _files(cfg: Config) -> list[Path]:
-    docs = cfg.cards_dir.parent
     found = [*cfg.cards_dir.glob("*/CARD.md"), *cfg.cards_dir.glob("*/SPEC.md")]
-    found += [docs / "capabilities" / "VERSIONS.md", *cfg.state_dir.glob("queue*.txt")]
+    found += [cfg.version_file, *cfg.state_dir.glob("queue*.txt")]
     found += cfg.spec_dir.glob("*/*.md") if cfg.spec_dir.exists() else []
     return [p for p in found if p.exists()]
 
@@ -40,7 +39,7 @@ def places(cfg: Config, card: str) -> list[str]:
 
 def versions(cfg: Config) -> dict[str, str]:
     """Return each ``VERSIONS.md`` line id mapped to its version (the ``##`` section it sits in)."""
-    path = cfg.cards_dir.parent / "capabilities" / "VERSIONS.md"
+    path = cfg.version_file
     found: dict[str, str] = {}
     section = ""
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -53,7 +52,7 @@ def versions(cfg: Config) -> dict[str, str]:
 
 def marked_done(cfg: Config) -> dict[str, str]:
     """Return each ``VERSIONS.md`` line marked done mapped to what the file says did it."""
-    path = cfg.cards_dir.parent / "capabilities" / "VERSIONS.md"
+    path = cfg.version_file
     found: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
@@ -85,7 +84,7 @@ def cards_done(cfg: Config) -> tuple[list[str], list[str], list[str]]:
 
 def drift(cfg: Config) -> list[str]:
     """Return the cards whose text differs between a squad ``CARD.md`` and ``VERSIONS.md``."""
-    path = cfg.cards_dir.parent / "capabilities" / "VERSIONS.md"
+    path = cfg.version_file
     versions = {m[1]: m[2] for m in _ROW.finditer(path.read_text(encoding="utf-8"))}
     return [
         f"{c.id}: CARD.md and VERSIONS.md differ"
@@ -121,7 +120,7 @@ def apply(cfg: Config, card: str, text: str, evidence: str = "") -> list[Path]:
     docs = cfg.cards_dir.parent
     changed = [
         p
-        for p in (*cfg.cards_dir.glob("*/CARD.md"), docs / "capabilities" / "VERSIONS.md")
+        for p in (*cfg.cards_dir.glob("*/CARD.md"), cfg.version_file)
         if _rewrite(p, card, {2: text})
     ]
     table = docs / "capabilities" / f"{enqueue.CAPABILITY_FILES[card[0]]}.md"

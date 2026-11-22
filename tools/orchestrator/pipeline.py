@@ -39,6 +39,7 @@ from tools.orchestrator import (
     gates,
     gitops,
     moves,
+    skeletonstage,
     spec,
     stages,
     state,
@@ -910,6 +911,9 @@ class _Run:
             cfg.nonproduction_patterns,
             search=[str(p) for p in venv.glob("lib/python*/site-packages")] or None,
         )
+        if self.sp.skeleton:  # the one ticket that creates the stubs: its tree is the skeleton
+            read = skeletonstage.source(self.repo, snap)
+            hits += skeletonstage.stub_problems(cfg, self.sp.skeleton, read)
         if changed:  # edited tests: the deny scan too, minus plain use of pytest itself
             tdiff = gitops.out(self.repo, "diff", "-U0", "--no-color", qa_sha, snap, "--", *changed)
             relaxed = [p for p in cfg.deny_patterns if p != r"\bpytest\b"]

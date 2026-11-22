@@ -37,8 +37,9 @@ _CYPHER = re.compile(r"[(\[]\w*:`?([A-Za-z_]\w*)")
 _PARTS = ("Context", "Acceptance", "Done")
 _HOST = "host name: "  # the prefix of gates.text_problems' host finding
 TOP_CALLER = "Top caller"  # the optional part ``Top caller: <dotted.module>:<function>``
+SKELETON = "Skeleton"  # the part ``Skeleton: <scope>`` of the one ticket that creates the stubs
 _LABELS = (
-    rf"Context|Acceptance|Done|{TOP_CALLER}|Owner words|Existing tests that pin this"
+    rf"Context|Acceptance|Done|{TOP_CALLER}|{SKELETON}|Owner words|Existing tests that pin this"
     r"|Consumers of \S+"
 )
 CAPABILITY_FILES = {"A": "archrag", "I": "ingestion", "Q": "query", "T": "tools"}
